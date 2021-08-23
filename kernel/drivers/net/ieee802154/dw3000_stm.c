@@ -37,6 +37,10 @@
 #include <uapi/linux/sched/types.h>
 #endif
 
+#if (KERNEL_VERSION(5,11,0) < LINUX_VERSION_CODE)
+#define MAX_USER_RT_PRIO MAX_RT_PRIO
+#endif
+
 static int dw3000_min_clamp_value = 0;
 
 module_param_named(min_clamp_value, dw3000_min_clamp_value, int, 0644);
