@@ -109,40 +109,6 @@ void edgetpu_mark_probe_fail(struct edgetpu_dev *etdev)
 {
 }
 
-struct edgetpu_dumpregs_range edgetpu_chip_statusregs_ranges[] = {
-	{
-		.firstreg = EDGETPU_REG_USER_HIB_FIRST_ERROR_STATUS,
-		.lastreg = EDGETPU_REG_USER_HIB_FIRST_ERROR_STATUS,
-	},
-	{
-		.firstreg = EDGETPU_REG_SC_RUNSTATUS,
-		.lastreg = EDGETPU_REG_SC_RUNSTATUS,
-	},
-	{
-		.firstreg = EDGETPU_REG_USER_HIB_OUT_ACTVQ_INT_STAT,
-		.lastreg = EDGETPU_REG_USER_HIB_OUT_ACTVQ_INT_STAT,
-	},
-	{
-		.firstreg = EDGETPU_REG_USER_HIB_IN_ACTVQ_INT_STAT,
-		.lastreg = EDGETPU_REG_USER_HIB_IN_ACTVQ_INT_STAT,
-	},
-	{
-		.firstreg = EDGETPU_REG_USER_HIB_PARAMQ_INT_STAT,
-		.lastreg = EDGETPU_REG_USER_HIB_PARAMQ_INT_STAT,
-	},
-	{
-		.firstreg = EDGETPU_REG_USER_HIB_TOPLVL_INT_STAT,
-		.lastreg = EDGETPU_REG_USER_HIB_TOPLVL_INT_STAT,
-	},
-};
-int edgetpu_chip_statusregs_nranges =
-	ARRAY_SIZE(edgetpu_chip_statusregs_ranges);
-
-struct edgetpu_dumpregs_range edgetpu_chip_tile_statusregs_ranges[] = {
-};
-int edgetpu_chip_tile_statusregs_nranges =
-	ARRAY_SIZE(edgetpu_chip_tile_statusregs_ranges);
-
 static void edgetpu_chip_set_pm_qos(struct edgetpu_dev *etdev, u32 value)
 {
 	abrolhos_pm_set_pm_qos(etdev, value);
@@ -206,8 +172,9 @@ int edgetpu_chip_acquire_ext_mailbox(struct edgetpu_client *client,
 		mutex_unlock(&apdev->tz_mailbox_lock);
 		return -EBUSY;
 	}
-	apdev->secure_client = client;
 	ret = edgetpu_mailbox_enable_ext(client, ABROLHOS_TZ_MAILBOX_ID, NULL);
+	if (!ret)
+		apdev->secure_client = client;
 	mutex_unlock(&apdev->tz_mailbox_lock);
 	return ret;
 }
@@ -246,7 +213,9 @@ void edgetpu_chip_client_remove(struct edgetpu_client *client)
 	struct abrolhos_platform_dev *apdev = to_abrolhos_dev(client->etdev);
 
 	mutex_lock(&apdev->tz_mailbox_lock);
-	if (apdev->secure_client == client)
+	if (apdev->secure_client == client) {
 		apdev->secure_client = NULL;
+		edgetpu_mailbox_disable_ext(client, ABROLHOS_TZ_MAILBOX_ID);
+	}
 	mutex_unlock(&apdev->tz_mailbox_lock);
 }

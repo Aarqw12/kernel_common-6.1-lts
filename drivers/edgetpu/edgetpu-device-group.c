@@ -142,16 +142,11 @@ static int edgetpu_group_activate(struct edgetpu_device_group *group)
 static void edgetpu_group_deactivate(struct edgetpu_device_group *group)
 {
 	u8 mailbox_id;
-	int ret;
 
 	if (edgetpu_group_mailbox_detached_locked(group))
 		return;
 	mailbox_id = edgetpu_group_context_id_locked(group);
-	ret = edgetpu_mailbox_deactivate(group->etdev, mailbox_id);
-	if (ret)
-		etdev_err(group->etdev, "deactivate mailbox for VCID %d failed with %d",
-			  group->vcid, ret);
-	return;
+	edgetpu_mailbox_deactivate(group->etdev, mailbox_id);
 }
 
 /*
@@ -1141,6 +1136,7 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 	int i;
 	int ret;
 	struct vm_area_struct *vma;
+	struct vm_area_struct **vmas;
 	unsigned int foll_flags = FOLL_LONGTERM | FOLL_WRITE;
 
 	if (size == 0)
@@ -1159,10 +1155,12 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 	 * "num_pages" is decided from user-space arguments, don't show warnings
 	 * when facing malicious input.
 	 */
-	pages = kcalloc(num_pages, sizeof(*pages), GFP_KERNEL | __GFP_NOWARN);
-	if (!pages)
+	pages = kvmalloc((num_pages * sizeof(*pages)), GFP_KERNEL | __GFP_NOWARN);
+	if (!pages) {
+		etdev_dbg(etdev, "%s: kvmalloc pages failed (%lu bytes)\n",
+			  __func__, (num_pages * sizeof(*pages)));
 		return ERR_PTR(-ENOMEM);
-
+	}
 	/*
 	 * The host pages might be read-only and could fail if we attempt to pin
 	 * it with FOLL_WRITE.
@@ -1176,10 +1174,43 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 		*preadonly = false;
 	}
 
+	/* Try fast call first, in case it's actually faster. */
 	ret = pin_user_pages_fast(host_addr & PAGE_MASK, num_pages, foll_flags,
 				  pages);
+	if (ret == num_pages) {
+		*pnum_pages = num_pages;
+		return pages;
+	}
 	if (ret < 0) {
-		etdev_dbg(etdev, "get user pages failed %u:%pK-%u: %d",
+		etdev_dbg(etdev, "pin_user_pages failed %u:%pK-%u: %d",
+			  group->workload_id, (void *)host_addr, num_pages,
+			  ret);
+		if (ret != -ENOMEM) {
+			num_pages = 0;
+			goto error;
+		}
+	}
+	etdev_dbg(etdev,
+		  "pin_user_pages_fast error %u:%pK npages=%u ret=%d",
+		  group->workload_id, (void *)host_addr, num_pages,
+		  ret);
+	/* Unpin any partial mapping and start over again. */
+	for (i = 0; i < ret; i++)
+		unpin_user_page(pages[i]);
+
+	/* Allocate our own vmas array non-contiguous. */
+	vmas = kvmalloc((num_pages * sizeof(*vmas)), GFP_KERNEL | __GFP_NOWARN);
+	if (!vmas) {
+		etdev_dbg(etdev, "%s: kvmalloc vmas failed (%lu bytes)\n",
+			  __func__, (num_pages * sizeof(*pages)));
+		kvfree(pages);
+		return ERR_PTR(-ENOMEM);
+	}
+	ret = pin_user_pages(host_addr & PAGE_MASK, num_pages, foll_flags,
+			     pages, vmas);
+	kvfree(vmas);
+	if (ret < 0) {
+		etdev_dbg(etdev, "pin_user_pages failed %u:%pK-%u: %d",
 			  group->workload_id, (void *)host_addr, num_pages,
 			  ret);
 		num_pages = 0;
@@ -1187,7 +1218,7 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 	}
 	if (ret < num_pages) {
 		etdev_dbg(etdev,
-			  "get user pages partial %u:%pK npages=%u pinned=%d",
+			  "pin_user_pages partial %u:%pK npages=%u pinned=%d",
 			  group->workload_id, (void *)host_addr, num_pages,
 			  ret);
 		num_pages = ret;
@@ -1196,13 +1227,12 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 	}
 
 	*pnum_pages = num_pages;
-
 	return pages;
 
 error:
 	for (i = 0; i < num_pages; i++)
 		unpin_user_page(pages[i]);
-	kfree(pages);
+	kvfree(pages);
 
 	return ERR_PTR(ret);
 }
@@ -1467,7 +1497,7 @@ int edgetpu_device_group_map(struct edgetpu_device_group *group,
 
 	mutex_unlock(&group->lock);
 	arg->device_address = map->device_address;
-	kfree(pages);
+	kvfree(pages);
 	return 0;
 
 error:
@@ -1482,7 +1512,7 @@ error:
 			unpin_user_page(pages[i]);
 	}
 	mutex_unlock(&group->lock);
-	kfree(pages);
+	kvfree(pages);
 	return ret;
 }
 
