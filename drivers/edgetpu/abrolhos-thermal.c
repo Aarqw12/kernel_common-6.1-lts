@@ -16,6 +16,7 @@
 #include <linux/slab.h>
 #include <linux/thermal.h>
 #include <linux/version.h>
+#include <soc/google/gs101_tmu.h>
 
 #include "abrolhos-platform.h"
 #include "abrolhos-pm.h"
@@ -77,6 +78,8 @@ static int edgetpu_set_cur_state(struct thermal_cooling_device *cdev,
 			state_original);
 		return -EINVAL;
 	}
+
+	state_original = max(cooling->sysfs_req, state_original);
 
 	mutex_lock(&cooling->lock);
 	pwr_state = state_pwr_map[state_original].state;
@@ -281,6 +284,61 @@ error:
 	return -EINVAL;
 }
 
+static ssize_t
+user_vote_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+        struct thermal_cooling_device *cdev = container_of(dev, struct thermal_cooling_device, device);
+        struct edgetpu_thermal *cooling = cdev->devdata;
+
+        if (!cooling)
+                return -ENODEV;
+
+        return sysfs_emit(buf, "%lu\n", cooling->sysfs_req);
+}
+
+static ssize_t user_vote_store(struct device *dev, struct device_attribute *attr,
+                        const char *buf, size_t count)
+{
+        struct thermal_cooling_device *cdev = container_of(dev, struct thermal_cooling_device, device);
+        struct edgetpu_thermal *cooling = cdev->devdata;
+        int ret;
+        unsigned long state;
+
+        if (!cooling)
+                return -ENODEV;
+
+        ret = kstrtoul(buf, 0, &state);
+        if (ret)
+                return ret;
+
+        if (state >= cooling->tpu_num_states)
+                return -EINVAL;
+
+        mutex_lock(&cdev->lock);
+        cooling->sysfs_req = state;
+        cdev->updated = false;
+        mutex_unlock(&cdev->lock);
+        thermal_cdev_update(cdev);
+        return count;
+}
+
+static DEVICE_ATTR_RW(user_vote);
+
+static int tpu_pause_callback(enum thermal_pause_state action, void *dev)
+{
+	int ret = -EINVAL;
+
+	if (!dev)
+		return ret;
+
+	if (action == THERMAL_SUSPEND)
+		ret = edgetpu_thermal_suspend(dev);
+	else if (action == THERMAL_RESUME)
+		ret = edgetpu_thermal_resume(dev);
+
+	return ret;
+}
+
 static int
 tpu_thermal_cooling_register(struct edgetpu_thermal *thermal, char *type)
 {
@@ -304,7 +362,8 @@ tpu_thermal_cooling_register(struct edgetpu_thermal *thermal, char *type)
 		cooling_node, type, thermal, &edgetpu_cooling_ops);
 	if (IS_ERR(thermal->cdev))
 		return PTR_ERR(thermal->cdev);
-	return 0;
+
+	return device_create_file(&thermal->cdev->device, &dev_attr_user_vote);
 }
 
 static int tpu_thermal_init(struct edgetpu_thermal *thermal, struct device *dev)
@@ -325,6 +384,8 @@ static int tpu_thermal_init(struct edgetpu_thermal *thermal, struct device *dev)
 		tpu_thermal_exit(thermal);
 		return err;
 	}
+
+	register_tpu_thermal_pause_cb(tpu_pause_callback, dev);
 
 	return 0;
 }
@@ -370,7 +431,6 @@ int edgetpu_thermal_suspend(struct device *dev)
 	mutex_unlock(&cooling->lock);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(edgetpu_thermal_suspend);
 
 int edgetpu_thermal_resume(struct device *dev)
 {
@@ -392,4 +452,3 @@ int edgetpu_thermal_resume(struct device *dev)
 	mutex_unlock(&cooling->lock);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(edgetpu_thermal_resume);
