@@ -318,7 +318,8 @@ static ssize_t user_vote_store(struct device *dev, struct device_attribute *attr
         cooling->sysfs_req = state;
         cdev->updated = false;
         mutex_unlock(&cdev->lock);
-        thermal_cdev_update(cdev);
+        /* deprecated API in 5.14 */
+        /* thermal_cdev_update(cdev); */
         return count;
 }
 
