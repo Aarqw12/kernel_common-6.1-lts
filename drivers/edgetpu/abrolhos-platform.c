@@ -202,6 +202,7 @@ static int edgetpu_platform_probe(struct platform_device *pdev)
 		/* Common name for embedded SoC devices */
 		{ .name = "edgetpu-soc" },
 	};
+	const char *scmversion;
 
 	abpdev = devm_kzalloc(dev, sizeof(*abpdev), GFP_KERNEL);
 	if (!abpdev)
@@ -308,8 +309,13 @@ static int edgetpu_platform_probe(struct platform_device *pdev)
 	abpdev->edgetpu_dev.thermal =
 			devm_tpu_thermal_create(dev, &abpdev->edgetpu_dev);
 
+	if (try_module_get(THIS_MODULE) && THIS_MODULE->scmversion)
+		scmversion = THIS_MODULE->scmversion;
+	else
+		scmversion = GIT_REPO_TAG;
+
 	dev_info(dev, "%s edgetpu initialized. Build: %s\n",
-		 abpdev->edgetpu_dev.dev_name, GIT_REPO_TAG);
+		 abpdev->edgetpu_dev.dev_name, scmversion);
 
 	dev_dbg(dev, "Probe finished, powering down\n");
 	/* Turn the device off unless a client request is already received. */
