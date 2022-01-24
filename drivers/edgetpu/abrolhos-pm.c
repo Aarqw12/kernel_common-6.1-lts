@@ -419,7 +419,7 @@ static int abrolhos_get_initial_pwr_state(struct device *dev)
 	case TPU_SLEEP_CLOCKS_OFF:
 		dev_warn(dev, "Power state %d prevents control core booting",
 			 power_state);
-		/* fall-thru */
+		fallthrough;
 	default:
 		dev_warn(dev, "Power state %d is invalid\n", power_state);
 		dev_warn(dev, "defaulting to active nominal\n");
