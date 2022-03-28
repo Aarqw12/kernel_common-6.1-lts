@@ -226,15 +226,14 @@ err_alloc_hw:
  * sysfs/debugfs files, unregister device from the MCPS
  * module and them free all remaining resources.
  *
- * Return: always 0
  */
-static int dw3000_spi_remove(struct spi_device *spi)
+static void dw3000_spi_remove(struct spi_device *spi)
 {
 	struct dw3000 *dw = spi_get_drvdata(spi);
 
 	if (dw == NULL)
 		/* Error during probe, all already freed */
-		return 0;
+		return;
 
 	dev_dbg(dw->dev, "unloading...");
 
@@ -251,8 +250,6 @@ static int dw3000_spi_remove(struct spi_device *spi)
 	/* Release the mcps 802.15.4 device */
 	dw3000_cir_data_alloc_count(dw, 0);
 	dw3000_mcps_free(dw);
-
-	return 0;
 }
 
 enum { DW3000,
