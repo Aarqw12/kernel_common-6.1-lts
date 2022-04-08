@@ -192,42 +192,15 @@ static int check_default_domain(struct edgetpu_dev *etdev,
 				struct edgetpu_iommu *etiommu)
 {
 	struct iommu_domain *domain;
-	int ret;
-	uint pasid;
 
 	domain = iommu_get_domain_for_dev(etdev->dev);
-	/* if default domain exists then we are done */
-	if (domain) {
-		etiommu->context_0_default = true;
-		goto out;
-	}
-	etdev_warn(etdev, "device group has no default iommu domain\n");
-	/* no default domain and no AUX - we can't have any domain */
-	if (!etiommu->aux_enabled)
-		return -EINVAL;
-
-	domain = iommu_domain_alloc(etdev->dev->bus);
 	if (!domain) {
-		etdev_warn(etdev, "iommu domain alloc failed");
+		etdev_warn(etdev, "device group has no default iommu domain\n");
 		return -EINVAL;
 	}
-	ret = iommu_aux_attach_device(domain, etdev->dev);
-	if (ret) {
-		etdev_warn(etdev, "Attach IOMMU aux failed: %d", ret);
-		iommu_domain_free(domain);
-		return ret;
-	}
-	pasid = iommu_aux_get_pasid(domain, etdev->dev);
-	/* the default domain must have pasid = 0 */
-	if (pasid != 0) {
-		etdev_warn(etdev, "Invalid PASID %d returned from iommu\n",
-			   pasid);
-		iommu_aux_detach_device(domain, etdev->dev);
-		iommu_domain_free(domain);
-		return -EINVAL;
-	}
-out:
+	etiommu->context_0_default = true;
 	etiommu->domains[0] = domain;
+
 	return 0;
 }
 
@@ -248,11 +221,7 @@ int edgetpu_mmu_attach(struct edgetpu_dev *etdev, void *mmu_info)
 	else
 		dev_warn(etdev->dev, "device has no iommu group\n");
 
-	iommu_dev_enable_feature(etdev->dev, IOMMU_DEV_FEAT_AUX);
-	if (!iommu_dev_feature_enabled(etdev->dev, IOMMU_DEV_FEAT_AUX))
-		etdev_warn(etdev, "AUX domains not supported\n");
-	else
-		etiommu->aux_enabled = true;
+	etdev_warn(etdev, "AUX domains not supported\n");
 	ret = check_default_domain(etdev, etiommu);
 	if (ret)
 		goto err_free;
@@ -279,7 +248,7 @@ void edgetpu_mmu_reset(struct edgetpu_dev *etdev)
 void edgetpu_mmu_detach(struct edgetpu_dev *etdev)
 {
 	struct edgetpu_iommu *etiommu = etdev->mmu_cookie;
-	int i, ret;
+	int ret;
 
 	if (!etiommu)
 		return;
@@ -290,13 +259,6 @@ void edgetpu_mmu_detach(struct edgetpu_dev *etdev)
 			   "Failed to unregister device fault handler (%d)\n",
 			   ret);
 	edgetpu_mmu_reset(etdev);
-
-	for (i = etiommu->context_0_default ? 1 : 0; i < EDGETPU_NCONTEXTS;
-	     i++) {
-		if (etiommu->domains[i])
-			iommu_aux_detach_device(etiommu->domains[i],
-						etdev->dev);
-	}
 
 	if (etiommu->iommu_group)
 		iommu_group_put(etiommu->iommu_group);
@@ -685,53 +647,14 @@ void edgetpu_mmu_free_domain(struct edgetpu_dev *etdev,
 int edgetpu_mmu_attach_domain(struct edgetpu_dev *etdev,
 			      struct edgetpu_iommu_domain *etdomain)
 {
-	struct edgetpu_iommu *etiommu = etdev->mmu_cookie;
-	struct iommu_domain *domain;
-	int ret;
-	uint pasid;
-
-	/* Changes nothing if domain AUX is not supported. */
-	if (!etiommu->aux_enabled)
-		return 0;
-	if (etdomain->pasid != IOMMU_PASID_INVALID)
-		return -EINVAL;
-	domain = etdomain->iommu_domain;
-	ret = iommu_aux_attach_device(domain, etdev->dev);
-	if (ret) {
-		etdev_warn(etdev, "Attach IOMMU aux failed: %d", ret);
-		return ret;
-	}
-	pasid = iommu_aux_get_pasid(domain, etdev->dev);
-	if (pasid <= 0 || pasid >= EDGETPU_NCONTEXTS) {
-		etdev_warn(etdev, "Invalid PASID %d returned from iommu",
-			   pasid);
-		ret = -EINVAL;
-		goto err_detach;
-	}
-	/* the IOMMU driver returned a duplicate PASID */
-	if (etiommu->domains[pasid]) {
-		ret = -EBUSY;
-		goto err_detach;
-	}
-	etiommu->domains[pasid] = domain;
-	etdomain->pasid = pasid;
+	/* AUX is no longer supported */
 	return 0;
-err_detach:
-	iommu_aux_detach_device(domain, etdev->dev);
-	return ret;
 }
 
 void edgetpu_mmu_detach_domain(struct edgetpu_dev *etdev,
 			       struct edgetpu_iommu_domain *etdomain)
 {
-	struct edgetpu_iommu *etiommu = etdev->mmu_cookie;
-	uint pasid = etdomain->pasid;
 
-	if (!etiommu->aux_enabled)
-		return;
-	if (pasid <= 0 || pasid >= EDGETPU_NCONTEXTS)
-		return;
-	etiommu->domains[pasid] = NULL;
-	etdomain->pasid = IOMMU_PASID_INVALID;
-	iommu_aux_detach_device(etdomain->iommu_domain, etdev->dev);
+	/* AUX is no longer supported */
+	return;
 }
