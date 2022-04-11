@@ -5,7 +5,7 @@
 
 KBUILD_OPTIONS += CONFIG_ABROLHOS=m
 
-include $(KERNEL_SRC)/../gs/google-modules/soc-modules/Makefile.include
+include $(KERNEL_SRC)/../private/google-modules/soc/gs/Makefile.include
 
 modules modules_install clean:
 	$(MAKE) -C $(KERNEL_SRC) M=$(M) W=1 \
