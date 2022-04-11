@@ -16,8 +16,8 @@ kernel_module(
         "net/mcps802154/mcps802154_region_fira.ko",
         "net/mcps802154/mcps802154_region_nfcc_coex.ko",
     ],
-    kernel_build = "//private/gs-google:cloudripper",
+    kernel_build = "//private/google-modules/soc/gs:gs_kernel_build",
     visibility = [
-        "//private/gs-google:__pkg__",
+        "//private/google-modules/soc/gs:__pkg__",
     ],
 )
