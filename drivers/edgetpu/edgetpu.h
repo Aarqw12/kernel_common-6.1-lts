@@ -11,12 +11,17 @@
 #include <linux/types.h>
 
 /* mmap offsets for mailbox CSRs, command queue, and response queue */
+#define EDGETPU_MMAP_EXT_CSR_OFFSET 0x1500000
+#define EDGETPU_MMAP_EXT_CMD_QUEUE_OFFSET 0x1600000
+#define EDGETPU_MMAP_EXT_RESP_QUEUE_OFFSET 0x1700000
 #define EDGETPU_MMAP_CSR_OFFSET 0x1800000
 #define EDGETPU_MMAP_CMD_QUEUE_OFFSET 0x1900000
 #define EDGETPU_MMAP_RESP_QUEUE_OFFSET 0x1A00000
 /* mmap offsets for logging and tracing buffers */
 #define EDGETPU_MMAP_LOG_BUFFER_OFFSET 0x1B00000
 #define EDGETPU_MMAP_TRACE_BUFFER_OFFSET 0x1C00000
+#define EDGETPU_MMAP_LOG1_BUFFER_OFFSET 0x1D00000
+#define EDGETPU_MMAP_TRACE1_BUFFER_OFFSET 0x1E00000
 
 /* EdgeTPU map flag macros */
 
@@ -40,11 +45,12 @@ typedef __u32 edgetpu_map_flag_t;
 /* Offset and mask to set the PBHA bits of IOMMU mappings */
 #define EDGETPU_MAP_ATTR_PBHA_SHIFT	5
 #define EDGETPU_MAP_ATTR_PBHA_MASK	0xf
+/* Create coherent mapping of the buffer */
+#define EDGETPU_MAP_COHERENT		(1u << 9)
 
 /* External mailbox types */
 #define EDGETPU_EXT_MAILBOX_TYPE_TZ		1
 #define EDGETPU_EXT_MAILBOX_TYPE_GSA		2
-#define EDGETPU_EXT_MAILBOX_TYPE_DSP		3
 
 struct edgetpu_map_ioctl {
 	__u64 host_address;	/* user-space address to be mapped */
@@ -78,7 +84,12 @@ struct edgetpu_map_ioctl {
 	 *               1 = Skip CPU sync.
 	 *             Note: This bit is ignored on the map call.
 	 *   [8:5]   - Value of PBHA bits for IOMMU mappings. For Abrolhos only.
-	 *   [31:9]  - RESERVED
+	 *   [9:9]   - Coherent Mapping:
+	 *              0 = Create non-coherent mappings of the buffer.
+	 *              1 = Create coherent mappings of the buffer.
+	 *             Note: this attribute may be ignored on platforms where
+	 *             the TPU is not I/O coherent.
+	 *   [31:10]  - RESERVED
 	 */
 	edgetpu_map_flag_t flags;
 	/*
@@ -289,7 +300,7 @@ struct edgetpu_map_dmabuf_ioctl {
 	 */
 	__u64 device_address;
 	/* A dma-buf FD. */
-	int dmabuf_fd;
+	__s32 dmabuf_fd;
 	/*
 	 * Flags indicating mapping attributes. See edgetpu_map_ioctl.flags for
 	 * details.
@@ -571,5 +582,30 @@ struct edgetpu_ext_mailbox_ioctl {
  */
 #define EDGETPU_GET_FATAL_ERRORS \
 	_IOR(EDGETPU_IOCTL_BASE, 32, __u32)
+
+/*
+ * struct edgetpu_test_ext_ioctl
+ * @fd:			file descriptor of opened TPU device
+ * @mbox_bmap:		bitmap of requested mailboxes
+ * @client_type:	value based on type of client
+ * @cmd:		command to TPU driver on external interface
+ * @attrs:		mailbox attributes (pointer to
+ *			edgetpu_mailbox_attr, can be NULL)
+ */
+struct edgetpu_test_ext_ioctl {
+	__s32 fd;
+	__u32 mbox_bmap;
+	__u32 client_type;
+	__u32 cmd;
+	__u64 attrs;
+};
+
+/*
+ * Invokes external interface used for interoperating with TPU device.
+ *
+ * Usage is only for testing purpose and limited to ROOT user only.
+ */
+#define EDGETPU_TEST_EXTERNAL \
+	_IOW(EDGETPU_IOCTL_BASE, 33, struct edgetpu_test_ext_ioctl)
 
 #endif /* __EDGETPU_H__ */

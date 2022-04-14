@@ -24,7 +24,7 @@
 #include "edgetpu.h"
 
 /* entry of edgetpu_device_group#clients */
-struct edgetpu_list_client {
+struct edgetpu_list_group_client {
 	struct list_head list;
 	struct edgetpu_client *client;
 };
@@ -157,6 +157,11 @@ struct edgetpu_list_group {
 	for (l = list_entry(etdev->groups.next, typeof(*l), list), g = l->grp; \
 	     &l->list != &etdev->groups;                                       \
 	     l = list_entry(l->list.next, typeof(*l), list), g = l->grp)
+
+/* Loop through group->clients (hold group->lock prior). */
+#define for_each_list_group_client(c, group) \
+	list_for_each_entry(c, &group->clients, list)
+
 /*
  * Returns if the group is waiting for members to join.
  *
@@ -330,6 +335,9 @@ int edgetpu_device_group_sync_buffer(struct edgetpu_device_group *group,
 /* Clear all mappings for a device group. */
 void edgetpu_mappings_clear_group(struct edgetpu_device_group *group);
 
+/* Return total size of all mappings for the group in bytes */
+size_t edgetpu_group_mappings_total_size(struct edgetpu_device_group *group);
+
 /*
  * Return context ID for group MMU mappings.
  *
@@ -352,7 +360,7 @@ void edgetpu_group_mappings_show(struct edgetpu_device_group *group,
  * Returns 0 on success.
  */
 int edgetpu_mmap_csr(struct edgetpu_device_group *group,
-		     struct vm_area_struct *vma);
+		     struct vm_area_struct *vma, bool is_external);
 /*
  * Maps the cmd/resp queue memory.
  *
@@ -360,7 +368,7 @@ int edgetpu_mmap_csr(struct edgetpu_device_group *group,
  */
 int edgetpu_mmap_queue(struct edgetpu_device_group *group,
 		       enum mailbox_queue_type type,
-		       struct vm_area_struct *vma);
+		       struct vm_area_struct *vma, bool is_external);
 
 /* Set group eventfd for event notification */
 int edgetpu_group_set_eventfd(struct edgetpu_device_group *group, uint event_id,
