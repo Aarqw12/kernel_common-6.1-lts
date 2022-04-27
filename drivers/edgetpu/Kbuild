@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 
 obj-$(CONFIG_ABROLHOS)		+= abrolhos.o
-ccflags-y			+= -DCONFIG_EDGETPU_TELEMETRY_TRACE=1
-ccflags-y			+= -I$(srctree)/$(src)/include
+ccflags-y			+= -DCONFIG_EDGETPU_TELEMETRY_TRACE=1 -DCONFIG_ABROLHOS=1
 
 GIT_PATH=$(srctree)/$(src)
 ifeq ($(shell git -C $(GIT_PATH) rev-parse --is-inside-work-tree),true)
@@ -24,15 +23,6 @@ abrolhos-objs	:= abrolhos-core.o abrolhos-debug-dump.o \
 		   abrolhos-usage-stats.o abrolhos-wakelock.o \
 		   $(edgetpu-objs)
 
-CFLAGS_abrolhos-fs.o := -DCONFIG_ABROLHOS=1
-CFLAGS_abrolhos-core.o := -DCONFIG_ABROLHOS=1
-CFLAGS_abrolhos-device.o := -DCONFIG_ABROLHOS=1
-CFLAGS_abrolhos-device-group.o := -DCONFIG_ABROLHOS=1
-CFLAGS_abrolhos-firmware.o := -DCONFIG_ABROLHOS=1
-CFLAGS_abrolhos-iommu.o := -DCONFIG_ABROLHOS=1
-CFLAGS_abrolhos-platform.o := -DCONFIG_ABROLHOS=1
-CFLAGS_abrolhos-pm.o := -DCONFIG_ABROLHOS=1
-CFLAGS_abrolhos-thermal.o := -DCONFIG_ABROLHOS=1
-CFLAGS_abrolhos-debug-dump.o := -DCONFIG_ABROLHOS=1
-CFLAGS_abrolhos-usage-stats.o := -DCONFIG_ABROLHOS=1
-CFLAGS_abrolhos-wakelock.o := -DCONFIG_ABROLHOS=1
+# This -I is for the trace file include. It was removed from ccflags-y to avoid
+# including the header stubs.
+CFLAGS_abrolhos-fs.o := -I$(srctree)/$(src)/include
