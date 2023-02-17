@@ -5366,9 +5366,9 @@ static void sec_ts_input_close(struct input_dev *dev)
 #endif
 
 #ifdef I2C_INTERFACE
-static int sec_ts_remove(struct i2c_client *client)
+static void sec_ts_remove(struct i2c_client *client)
 #else
-static int sec_ts_remove(struct spi_device *client)
+static void sec_ts_remove(struct spi_device *client)
 #endif
 {
 #ifdef I2C_INTERFACE
@@ -5382,7 +5382,7 @@ static int sec_ts_remove(struct spi_device *client)
 	input_info(true, &ts->client->dev, "%s\n", __func__);
 
 	if (ts_dup == NULL || ts->probe_done == false)
-		return 0;
+		return;
 
 	/* Force the bus active throughout removal of the client */
 	sec_ts_set_bus_ref(ts, SEC_TS_BUS_REF_FORCE_ACTIVE, true);
@@ -5483,7 +5483,6 @@ static int sec_ts_remove(struct spi_device *client)
 	kfree(ts->pFrameSS);
 	kfree(ts->pFrame);
 	kfree(ts);
-	return 0;
 }
 
 #ifdef I2C_INTERFACE
