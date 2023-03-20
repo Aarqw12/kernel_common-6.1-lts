@@ -167,9 +167,14 @@ static ssize_t enable_store(struct device *dev,
 	struct device_attribute *attr,
 	const char *buf, size_t count) {
 	struct hall_sensor_drv_data *hall_data = dev_get_drvdata(dev);
+	int ret;
 	int val;
 
-	kstrtoint(buf, 10, &val);
+	ret = kstrtoint(buf, 10, &val);
+	if (ret != 0) {
+		dev_err(dev, "Invalid val:%s, err %d\n", buf, ret);
+		return -EINVAL;
+	}
 
 	hall_sensor_enable(hall_data, !!val);
 
