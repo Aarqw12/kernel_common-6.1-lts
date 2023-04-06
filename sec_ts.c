@@ -1877,6 +1877,7 @@ inline void sec_ts_hc_update_and_push(struct sec_ts_data *ts, struct sec_ts_heal
 
 inline void sec_ts_hc_dump(struct sec_ts_data *ts)
 {
+	int __maybe_unused len;
 	int i;
 	s64 delta;
 	s64 sec_delta;
@@ -1884,7 +1885,7 @@ inline void sec_ts_hc_dump(struct sec_ts_data *ts)
 	ktime_t current_time = ktime_get();
 	struct sec_ts_health_check last_hc[SEC_TS_HC_KFIFO_LEN];
 
-	kfifo_out_peek(&hc_fifo, last_hc, kfifo_size(&hc_fifo));
+	len = kfifo_out_peek(&hc_fifo, last_hc, kfifo_size(&hc_fifo));
 	for (i = 0 ; i < ARRAY_SIZE(last_hc) ; i++) {
 		sec_delta = 0;
 		ms_delta = 0;
