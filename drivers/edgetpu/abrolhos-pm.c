@@ -85,5 +85,5 @@ int edgetpu_chip_pm_create(struct edgetpu_dev *etdev)
 	platform_pwr->after_create = abrolhos_pm_after_create;
 	platform_pwr->acpm_set_rate = exynos_acpm_set_rate;
 
-	return mobile_pm_create(etdev);
+	return edgetpu_mobile_pm_create(etdev);
 }

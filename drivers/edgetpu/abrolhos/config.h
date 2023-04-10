@@ -20,6 +20,9 @@
 /* Reserved VCID that uses the extra partition. */
 #define EDGETPU_VCID_EXTRA_PARTITION 0
 
+/* Pre-allocate 1 IOMMU domain per VCID */
+#define EDGETPU_NUM_PREALLOCATED_DOMAINS EDGETPU_NUM_VCIDS
+
 /* Is a "mobile" style device. */
 #define EDGETPU_FEATURE_MOBILE
 #define EDGETPU_HAS_WAKELOCK
@@ -30,6 +33,9 @@
  * non-secure mailbox queues.
  */
 #define EDGETPU_HAS_REMAPPED_DATA
+
+/* Metrics are reported for a single default "cluster" component. */
+#define EDGETPU_TPU_CLUSTER_COUNT	1
 
 /*
  * The TPU VA where the firmware is located.

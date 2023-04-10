@@ -38,8 +38,8 @@
 /* fake-firmware could respond in a short time */
 #define KCI_TIMEOUT	(200)
 #else
-/* 5 secs. */
-#define KCI_TIMEOUT	(5000)
+/* Wait for up to 1 second for FW to respond. */
+#define KCI_TIMEOUT	(1000)
 #endif
 
 /* A macro for KCIs to leave early when the device state is known to be bad. */
@@ -201,10 +201,7 @@ static void edgetpu_reverse_kci_init(struct edgetpu_reverse_kci *rkci)
  * 2. #seq == @resp->seq:
  *   - Copy @resp, pop the head and we're done.
  * 3. #seq < @resp->seq:
- *   - Should not happen, this implies the sequence number of either entries in
- *     wait_list or responses are out-of-order, or remote didn't respond to a
- *     command. In this case, the status of response will be set to
- *     KCI_STATUS_NO_RESPONSE.
+ *   - Probable race with another context also processing KCI responses, ignore.
  *   - Pop until case 1. or 2.
  */
 static void edgetpu_kci_consume_wait_list(
@@ -225,10 +222,7 @@ static void edgetpu_kci_consume_wait_list(
 			kfree(cur);
 			break;
 		}
-		/* #seq < @resp->seq */
-		cur->resp->status = KCI_STATUS_NO_RESPONSE;
-		list_del(&cur->list);
-		kfree(cur);
+		/* #seq < @resp->seq, probable race with another consumer, let it handle. */
 	}
 
 	spin_unlock_irqrestore(&kci->wait_list_lock, flags);
@@ -246,10 +240,9 @@ edgetpu_kci_handle_response(struct edgetpu_kci *kci,
 		int ret = edgetpu_reverse_kci_add_response(kci, resp);
 
 		if (ret)
-			etdev_warn(
-				kci->mailbox->etdev,
-				"Failed to handle reverse KCI code %u (%d)\n",
-				resp->code, ret);
+			etdev_warn_ratelimited(kci->mailbox->etdev,
+					       "Failed to handle reverse KCI code %u (%d)\n",
+					       resp->code, ret);
 		return;
 	}
 	/*
@@ -642,7 +635,12 @@ int edgetpu_kci_push_cmd(struct edgetpu_kci *kci,
 
 	mutex_lock(&kci->cmd_queue_lock);
 
-	cmd->seq = kci->cur_seq;
+	/*
+	 * Only update sequence number for KCI commands.  Do not change
+	 * sequence number for responses to RKCI commands.
+	 */
+	if (!(cmd->seq & KCI_REVERSE_FLAG))
+		cmd->seq = kci->cur_seq;
 	/*
 	 * The lock ensures mailbox->cmd_queue_tail cannot be changed by
 	 * other processes (this method should be the only one to modify the
@@ -681,7 +679,8 @@ int edgetpu_kci_push_cmd(struct edgetpu_kci *kci,
 	/* triggers doorbell */
 	EDGETPU_MAILBOX_CMD_QUEUE_WRITE_SYNC(kci->mailbox, doorbell_set, 1);
 	/* bumps sequence number after the command is sent */
-	kci->cur_seq++;
+	if (!(cmd->seq & KCI_REVERSE_FLAG))
+		kci->cur_seq++;
 	ret = 0;
 out:
 	mutex_unlock(&kci->cmd_queue_lock);
@@ -707,6 +706,10 @@ static int edgetpu_kci_send_cmd_return_resp(
 	ret = edgetpu_kci_push_cmd(kci, cmd, resp);
 	if (ret)
 		return ret;
+
+	if (!resp)
+		return 0;
+
 	ret = wait_event_timeout(kci->wait_list_waitq,
 				 resp->status != KCI_STATUS_WAITING_RESPONSE,
 				 msecs_to_jiffies(KCI_TIMEOUT));
@@ -755,22 +758,11 @@ int edgetpu_kci_send_cmd(struct edgetpu_kci *kci,
 {
 	struct edgetpu_kci_response_element resp;
 
-	return edgetpu_kci_send_cmd_return_resp(kci, cmd, &resp);
-}
-
-int edgetpu_kci_unmap_buffer(struct edgetpu_kci *kci, tpu_addr_t tpu_addr,
-			     u32 size, enum dma_data_direction dir)
-{
-	struct edgetpu_command_element cmd = {
-		.code = KCI_CODE_UNMAP_BUFFER,
-		.dma = {
-			.address = tpu_addr,
-			.size = size,
-			.flags = dir,
-		},
-	};
-
-	return edgetpu_kci_send_cmd(kci, &cmd);
+	/* Don't wait on a response for reverse KCI response. */
+	if (cmd->seq & KCI_REVERSE_FLAG)
+		return edgetpu_kci_send_cmd_return_resp(kci, cmd, NULL);
+	else
+		return edgetpu_kci_send_cmd_return_resp(kci, cmd, &resp);
 }
 
 int edgetpu_kci_map_log_buffer(struct edgetpu_kci *kci, tpu_addr_t tpu_addr,
@@ -926,6 +918,9 @@ int edgetpu_kci_update_usage(struct edgetpu_dev *etdev)
 
 fw_unlock:
 	edgetpu_firmware_unlock(etdev);
+
+	if (ret)
+		etdev_warn_once(etdev, "get firmware usage stats failed: %d", ret);
 	return ret;
 }
 
@@ -933,10 +928,11 @@ int edgetpu_kci_update_usage_locked(struct edgetpu_dev *etdev)
 {
 #define EDGETPU_USAGE_BUFFER_SIZE	4096
 	struct edgetpu_command_element cmd = {
-		.code = KCI_CODE_GET_USAGE,
+		.code = KCI_CODE_GET_USAGE_V2,
 		.dma = {
 			.address = 0,
 			.size = 0,
+			.flags = EDGETPU_USAGE_METRIC_VERSION,
 		},
 	};
 	struct edgetpu_coherent_mem mem;
@@ -952,13 +948,22 @@ int edgetpu_kci_update_usage_locked(struct edgetpu_dev *etdev)
 		return ret;
 	}
 
+	/* TODO(b/271372136): remove v1 when v1 firmware no longer in use. */
+retry_v1:
+	if (etdev->usage_stats && etdev->usage_stats->use_metrics_v1)
+		cmd.code = KCI_CODE_GET_USAGE_V1;
 	cmd.dma.address = mem.tpu_addr;
 	cmd.dma.size = EDGETPU_USAGE_BUFFER_SIZE;
 	memset(mem.vaddr, 0, sizeof(struct edgetpu_usage_header));
 	ret = edgetpu_kci_send_cmd_return_resp(etdev->kci, &cmd, &resp);
 
-	if (ret == KCI_ERROR_UNIMPLEMENTED || ret == KCI_ERROR_UNAVAILABLE)
+	if (ret == KCI_ERROR_UNIMPLEMENTED || ret == KCI_ERROR_UNAVAILABLE) {
+		if (etdev->usage_stats && !etdev->usage_stats->use_metrics_v1) {
+			etdev->usage_stats->use_metrics_v1 = true;
+			goto retry_v1;
+		}
 		etdev_dbg(etdev, "firmware does not report usage\n");
+	}
 	else if (ret == KCI_ERROR_OK)
 		edgetpu_usage_stats_process_buffer(etdev, mem.vaddr);
 	else if (ret != -ETIMEDOUT)
@@ -1084,6 +1089,39 @@ int edgetpu_kci_block_bus_speed_control(struct edgetpu_dev *etdev, bool block)
 		.dma = {
 			.flags = (u32) block,
 		},
+	};
+
+	if (!etdev->kci)
+		return -ENODEV;
+
+	return edgetpu_kci_send_cmd(etdev->kci, &cmd);
+}
+
+int edgetpu_kci_firmware_tracing_level(struct edgetpu_dev *etdev, unsigned long level,
+				       unsigned long *active_level)
+{
+	struct edgetpu_command_element cmd = {
+		.code = KCI_CODE_FIRMWARE_TRACING_LEVEL,
+		.dma = {
+			.flags = (u32)level,
+		},
+	};
+	struct edgetpu_kci_response_element resp;
+	int ret;
+
+	ret = edgetpu_kci_send_cmd_return_resp(etdev->kci, &cmd, &resp);
+	if (ret == KCI_ERROR_OK)
+		*active_level = resp.retval;
+
+	return ret;
+}
+
+int edgetpu_kci_resp_rkci_ack(struct edgetpu_dev *etdev,
+			      struct edgetpu_kci_response_element *rkci_cmd)
+{
+	struct edgetpu_command_element cmd = {
+		.seq = rkci_cmd->seq,
+		.code = KCI_CODE_RKCI_ACK,
 	};
 
 	if (!etdev->kci)

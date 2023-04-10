@@ -11,14 +11,11 @@ else
 	ccflags-y	+= -DGIT_REPO_TAG=\"Not\ a\ git\ repository\"
 endif
 
-edgetpu-objs	:= edgetpu-mailbox.o edgetpu-kci.o edgetpu-telemetry.o edgetpu-mapping.o edgetpu-dmabuf.o edgetpu-async.o edgetpu-iremap-pool.o edgetpu-sw-watchdog.o edgetpu-firmware.o edgetpu-firmware-util.o edgetpu-domain-pool.o
+edgetpu-objs	:= edgetpu-mailbox.o edgetpu-telemetry.o edgetpu-mapping.o edgetpu-dmabuf.o edgetpu-async.o edgetpu-iremap-pool.o edgetpu-sw-watchdog.o edgetpu-firmware.o edgetpu-firmware-util.o edgetpu-domain-pool.o
 
-abrolhos-objs	:= abrolhos-core.o abrolhos-debug-dump.o \
-		   abrolhos-device-group.o abrolhos-fs.o abrolhos-device.o \
-		   abrolhos-firmware.o abrolhos-iommu.o \
-		   abrolhos-platform.o abrolhos-pm.o abrolhos-thermal.o \
-		   abrolhos-usage-stats.o abrolhos-wakelock.o \
-		   $(edgetpu-objs)
+mobile-objs	:= edgetpu-kci.o
+
+abrolhos-y	:= abrolhos-device.o abrolhos-device-group.o abrolhos-fs.o abrolhos-core.o abrolhos-platform.o abrolhos-firmware.o abrolhos-thermal.o abrolhos-pm.o abrolhos-iommu.o abrolhos-debug-dump.o abrolhos-usage-stats.o abrolhos-wakelock.o $(mobile-objs) $(edgetpu-objs)
 
 # This -I is for the trace file include. It was removed from ccflags-y to avoid
 # including the header stubs.
