@@ -281,7 +281,7 @@ int edgetpu_mmap(struct edgetpu_client *client, struct vm_area_struct *vma)
 	/* Mark the VMA's pages as uncacheable. */
 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 	/* Disable fancy things to ensure our event counters work. */
-	vma->vm_flags |= VM_DONTCOPY | VM_DONTEXPAND | VM_DONTDUMP;
+	vm_flags_set(vma, VM_DONTCOPY | VM_DONTEXPAND | VM_DONTDUMP);
 
 	/* map all CSRs for debug purpose */
 	if (type == VMA_FULL_CSR) {
