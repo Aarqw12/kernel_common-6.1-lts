@@ -42,13 +42,15 @@
 #define KCI_TIMEOUT	(1000)
 #endif
 
-/* A macro for KCIs to leave early when the device state is known to be bad. */
-#define RETURN_ERRNO_IF_ETDEV_NOT_GOOD(kci)                                                        \
-	do {                                                                                       \
-		int ret = edgetpu_get_state_errno_locked(kci->mailbox->etdev);                     \
-		if (ret)                                                                           \
-			return ret;                                                                \
-	} while (0)
+static inline int check_etdev_state(struct edgetpu_kci *kci, char *opstring)
+{
+	int ret = edgetpu_get_state_errno_locked(kci->mailbox->etdev);
+
+	if (ret)
+		etdev_err(kci->mailbox->etdev, "%s failed: device state %u (%d)",
+			  opstring, kci->mailbox->etdev->state, ret);
+	return ret;
+}
 
 static inline u32 edgetpu_kci_queue_element_size(enum mailbox_queue_type type)
 {
@@ -802,10 +804,13 @@ int edgetpu_kci_join_group(struct edgetpu_kci *kci, u8 n_dies, u8 vid)
 		.n_dies = n_dies,
 		.vid = vid,
 	};
+	int ret;
 
 	if (!kci)
 		return -ENODEV;
-	RETURN_ERRNO_IF_ETDEV_NOT_GOOD(kci);
+	ret = check_etdev_state(kci, "join group");
+	if (ret)
+		return ret;
 	return edgetpu_kci_send_cmd_with_data(kci, &cmd, &detail, sizeof(detail));
 }
 
@@ -814,10 +819,13 @@ int edgetpu_kci_leave_group(struct edgetpu_kci *kci)
 	struct edgetpu_command_element cmd = {
 		.code = KCI_CODE_LEAVE_GROUP,
 	};
+	int ret;
 
 	if (!kci)
 		return -ENODEV;
-	RETURN_ERRNO_IF_ETDEV_NOT_GOOD(kci);
+	ret = check_etdev_state(kci, "leave group");
+	if (ret)
+		return ret;
 	return edgetpu_kci_send_cmd(kci, &cmd);
 }
 
@@ -1029,10 +1037,11 @@ int edgetpu_kci_get_debug_dump(struct edgetpu_kci *kci, tpu_addr_t tpu_addr,
 	return edgetpu_kci_send_cmd(kci, &cmd);
 }
 
-int edgetpu_kci_open_device(struct edgetpu_kci *kci, u32 mailbox_map, s16 vcid, bool first_open)
+int edgetpu_kci_open_device(struct edgetpu_kci *kci, u32 mailbox_map, u32 client_priv, s16 vcid,
+			    bool first_open)
 {
 	const struct edgetpu_kci_open_device_detail detail = {
-		.mailbox_map = mailbox_map,
+		.client_priv = client_priv,
 		.vcid = vcid,
 		.flags = (mailbox_map << 1) | first_open,
 	};
@@ -1042,10 +1051,13 @@ int edgetpu_kci_open_device(struct edgetpu_kci *kci, u32 mailbox_map, s16 vcid, 
 			.flags = mailbox_map,
 		},
 	};
+	int ret;
 
 	if (!kci)
 		return -ENODEV;
-	RETURN_ERRNO_IF_ETDEV_NOT_GOOD(kci);
+	ret = check_etdev_state(kci, "open device");
+	if (ret)
+		return ret;
 	if (vcid < 0)
 		return edgetpu_kci_send_cmd(kci, &cmd);
 	return edgetpu_kci_send_cmd_with_data(kci, &cmd, &detail, sizeof(detail));
@@ -1059,10 +1071,13 @@ int edgetpu_kci_close_device(struct edgetpu_kci *kci, u32 mailbox_map)
 			.flags = mailbox_map,
 		},
 	};
+	int ret;
 
 	if (!kci)
 		return -ENODEV;
-	RETURN_ERRNO_IF_ETDEV_NOT_GOOD(kci);
+	ret = check_etdev_state(kci, "close device");
+	if (ret)
+		return ret;
 	return edgetpu_kci_send_cmd(kci, &cmd);
 }
 

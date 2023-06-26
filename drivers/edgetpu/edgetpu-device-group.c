@@ -141,7 +141,8 @@ static int edgetpu_group_activate(struct edgetpu_device_group *group)
 		return 0;
 
 	mailbox_id = edgetpu_group_context_id_locked(group);
-	ret = edgetpu_mailbox_activate(group->etdev, mailbox_id, group->vcid, !group->activated);
+	ret = edgetpu_mailbox_activate(group->etdev, mailbox_id, group->mbox_attr.client_priv,
+				       group->vcid, !group->activated);
 	if (ret) {
 		etdev_err(group->etdev, "activate mailbox for VCID %d failed with %d", group->vcid,
 			  ret);
@@ -1257,8 +1258,18 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 		kvfree(pages);
 		return ERR_PTR(-ENOMEM);
 	}
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
+	down_read(&current->mm->mmap_sem);
+#else
+	mmap_read_lock(current->mm);
+#endif
 	ret = pin_user_pages(host_addr & PAGE_MASK, num_pages, foll_flags,
 			     pages, vmas);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
+	up_read(&current->mm->mmap_sem);
+#else
+	mmap_read_unlock(current->mm);
+#endif
 	kvfree(vmas);
 	if (ret < 0) {
 		etdev_dbg(etdev, "pin_user_pages failed %u:%pK-%u: %d",
