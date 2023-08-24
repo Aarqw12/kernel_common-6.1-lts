@@ -10,6 +10,7 @@ ifeq ($(shell git -C $(GIT_PATH) rev-parse --is-inside-work-tree),true)
 else
 	ccflags-y	+= -DGIT_REPO_TAG=\"Not\ a\ git\ repository\"
 endif
+ccflags-y	+= -I$(KERNEL_SRC)/../private/google-modules/power/mitigation -DCONFIG_GOOGLE_BCL
 
 edgetpu-objs	:= edgetpu-mailbox.o edgetpu-telemetry.o edgetpu-mapping.o edgetpu-dmabuf.o edgetpu-async.o edgetpu-iremap-pool.o edgetpu-sw-watchdog.o edgetpu-firmware.o edgetpu-firmware-util.o edgetpu-domain-pool.o
 

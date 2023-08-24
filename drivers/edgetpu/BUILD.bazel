@@ -9,6 +9,7 @@ kernel_module(
         "**/*.h",
         "Kbuild",
     ]) + [
+        "//private/google-modules/power/mitigation:headers",
         "//private/google-modules/soc/gs:gs_soc_headers",
     ],
     outs = [
@@ -20,6 +21,7 @@ kernel_module(
         "//private/google-modules/soc/gs:__pkg__",
     ],
     deps = [
+        "//private/google-modules/power/mitigation:bcl",
         "//private/google-modules/soc/gs:gs_soc_module",
     ],
 )

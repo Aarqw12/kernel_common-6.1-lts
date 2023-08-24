@@ -6,6 +6,7 @@
 KBUILD_OPTIONS += CONFIG_ABROLHOS=m
 
 include $(KERNEL_SRC)/../private/google-modules/soc/gs/Makefile.include
+EXTRA_SYMBOLS	+= $(OUT_DIR)/../private/google-modules/power/mitigation/Module.symvers
 
 modules modules_install clean:
 	$(MAKE) -C $(KERNEL_SRC) M=$(M) W=1 \

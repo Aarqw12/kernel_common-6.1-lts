@@ -10,9 +10,10 @@
 #include <linux/gsa/gsa_tpu.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
-#include <soc/google/bcl.h>
 #include <soc/google/bts.h>
 #include <soc/google/exynos_pm_qos.h>
+
+#include <bcl.h>
 
 #include "edgetpu-config.h"
 #include "edgetpu-firmware.h"
