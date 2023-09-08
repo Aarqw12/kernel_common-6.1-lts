@@ -15,6 +15,10 @@ struct sec_ts_data *tsp_info;
 #include "sec_ts.h"
 #include <samsung/exynos_drm_connector.h>
 
+#if IS_ENABLED(CONFIG_GS_DRM_PANEL_UNIFIED)
+#include <gs_drm/gs_drm_connector.h>
+#endif
+
 /* init the kfifo for health check. */
 #define SEC_TS_HC_KFIFO_LEN 4 /* must be power of 2. */
 DEFINE_KFIFO(hc_fifo, struct sec_ts_health_check, SEC_TS_HC_KFIFO_LEN);
@@ -6167,9 +6171,20 @@ struct drm_connector *get_bridge_connector(struct drm_bridge *bridge)
 static bool bridge_is_lp_mode(struct drm_connector *connector)
 {
 	if (connector && connector->state) {
-		struct exynos_drm_connector_state *s =
-			to_exynos_connector_state(connector->state);
-		return s->exynos_mode.is_lp_mode;
+		if (is_exynos_drm_connector(connector)) {
+			struct exynos_drm_connector_state *s =
+				to_exynos_connector_state(connector->state);
+
+			return s->exynos_mode.is_lp_mode;
+		}
+#if IS_ENABLED(CONFIG_GS_DRM_PANEL_UNIFIED)
+		else if (is_gs_drm_connector(connector)) {
+			struct gs_drm_connector_state *s =
+				to_gs_connector_state(connector->state);
+
+			return s->gs_mode.is_lp_mode;
+		}
+#endif
 	}
 	return false;
 }

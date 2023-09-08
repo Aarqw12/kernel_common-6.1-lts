@@ -34,6 +34,7 @@ kernel_module(
         "//private/google-modules/soc/gs:__pkg__",
     ],
     deps = [
+        "//private/google-modules/display/samsung:display.samsung",
         "//private/google-modules/touch/common:touch.common",
     ],
 )
