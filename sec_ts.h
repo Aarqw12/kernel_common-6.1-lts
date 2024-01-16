@@ -43,6 +43,7 @@
 #include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
 #include <linux/of_gpio.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/platform_device.h>
 #include <linux/pm_qos.h>
 #include <linux/power_supply.h>

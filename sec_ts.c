@@ -1894,7 +1894,7 @@ inline void sec_ts_hc_dump(struct sec_ts_data *ts)
 			  __func__);
 		return;
 	}
-	for (i = 0 ; i < ARRAY_SIZE(last_hc) ; i++) {
+	for (i = 0 ; i < len; i++) {
 		sec_delta = 0;
 		ms_delta = 0;
 		delta = ktime_ms_delta(current_time, last_hc[i].int_ktime);
@@ -3209,6 +3209,9 @@ static void sec_ts_read_event(struct sec_ts_data *ts)
 				switch (status_data_1) {
 				case 0x20:
 					/* watchdog reset !? */
+					input_err(true, &ts->client->dev,
+						"Touch - unexpected reset! Reason : WDT \n");
+
 					sec_ts_locked_release_all_finger(ts);
 					ret = sec_ts_write(ts,
 						SEC_TS_CMD_SENSE_ON, NULL, 0);
