@@ -18,6 +18,7 @@
 #include <linux/mm.h>
 #include <linux/refcount.h>
 #include <linux/scatterlist.h>
+#include <linux/sched/mm.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -60,6 +61,7 @@ struct edgetpu_host_map {
 	 * group uses @map->sgt as its SG table.
 	 */
 	struct sg_table *sg_tables;
+	struct mm_struct *owning_mm;
 };
 
 /*
@@ -88,8 +90,9 @@ struct kci_worker_param {
 	uint idx;
 };
 
-static int edgetpu_kci_join_group_worker(struct kci_worker_param *param)
+static int edgetpu_kci_join_group_worker(void *job_param)
 {
+	struct kci_worker_param *param = (struct kci_worker_param *)job_param;
 	struct edgetpu_device_group *group = param->group;
 	uint i = param->idx;
 	struct edgetpu_dev *etdev = edgetpu_device_group_nth_etdev(group, i);
@@ -103,8 +106,9 @@ static int edgetpu_kci_join_group_worker(struct kci_worker_param *param)
 	return ret;
 }
 
-static int edgetpu_kci_leave_group_worker(struct kci_worker_param *param)
+static int edgetpu_kci_leave_group_worker(void *job_param)
 {
+	struct kci_worker_param *param = (struct kci_worker_param *)job_param;
 	struct edgetpu_device_group *group = param->group;
 	uint i = param->idx;
 	struct edgetpu_dev *etdev = edgetpu_device_group_nth_etdev(group, i);
@@ -1084,9 +1088,10 @@ static void edgetpu_unmap_node(struct edgetpu_mapping *map)
 	struct edgetpu_dev *etdev;
 	struct sg_page_iter sg_iter;
 	uint i;
+	unsigned long num_pages = 0;
 
-	etdev_dbg(group->etdev, "%s: %u: die=%d, iova=%#llx", __func__,
-		  group->workload_id, map->die_index, map->device_address);
+	etdev_dbg(group->etdev, "%s: %u: die=%d, iova=%pad", __func__,
+		  group->workload_id, map->die_index, &map->device_address);
 
 	if (map->device_address) {
 		if (IS_MIRRORED(map->flags)) {
@@ -1107,8 +1112,11 @@ static void edgetpu_unmap_node(struct edgetpu_mapping *map)
 			set_page_dirty(page);
 
 		unpin_user_page(page);
+		num_pages++;
 	}
 
+	atomic64_sub(num_pages, &hmap->owning_mm->pinned_vm);
+	mmdrop(hmap->owning_mm);
 	sg_free_table(&map->sgt);
 	if (IS_MIRRORED(map->flags)) {
 		for (i = 1; i < group->n_clients; i++)
@@ -1125,17 +1133,19 @@ static void edgetpu_host_map_show(struct edgetpu_mapping *map,
 	struct scatterlist *sg;
 	int i;
 	size_t cur_offset = 0;
+	tpu_addr_t offset_addr;
 
 	for_each_sg(map->sgt.sgl, sg, map->sgt.nents, i) {
 		dma_addr_t phys_addr = sg_phys(sg);
 		dma_addr_t dma_addr = sg_dma_address(sg);
+		offset_addr = map->device_address + cur_offset;
 
 		if (IS_MIRRORED(map->flags))
 			seq_puts(s, "  mirrored: ");
 		else
 			seq_printf(s, "  die %u: ", map->die_index);
-		seq_printf(s, "%#llx %lu %s %#llx %pap %pad\n",
-			   map->device_address + cur_offset,
+		seq_printf(s, "%pad %lu %s %#llx %pap %pad\n",
+			   &offset_addr,
 			   DIV_ROUND_UP(sg_dma_len(sg), PAGE_SIZE),
 			   edgetpu_dma_dir_rw_s(map->dir),
 			   map->host_address + cur_offset, &phys_addr,
@@ -1169,7 +1179,9 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 	int i;
 	int ret;
 	struct vm_area_struct *vma;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 	struct vm_area_struct **vmas;
+#endif
 	unsigned int foll_flags = FOLL_LONGTERM | FOLL_WRITE;
 
 	if (size == 0)
@@ -1203,7 +1215,11 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 #else
 	mmap_read_lock(current->mm);
 #endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 1)
 	vma = find_extend_vma(current->mm, host_addr & PAGE_MASK);
+#else
+	vma = vma_lookup(current->mm, host_addr & PAGE_MASK);
+#endif
 	if (vma && !(vma->vm_flags & VM_WRITE)) {
 		foll_flags &= ~FOLL_WRITE;
 		*preadonly = true;
@@ -1221,6 +1237,7 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 				  pages);
 	if (ret == num_pages) {
 		*pnum_pages = num_pages;
+		atomic64_add(num_pages, &current->mm->pinned_vm);
 		return pages;
 	}
 	if (ret == -EFAULT && !*preadonly) {
@@ -1250,6 +1267,7 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 	for (i = 0; i < ret; i++)
 		unpin_user_page(pages[i]);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 	/* Allocate our own vmas array non-contiguous. */
 	vmas = kvmalloc((num_pages * sizeof(*vmas)), GFP_KERNEL | __GFP_NOWARN);
 	if (!vmas) {
@@ -1258,19 +1276,25 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 		kvfree(pages);
 		return ERR_PTR(-ENOMEM);
 	}
+#endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
 	down_read(&current->mm->mmap_sem);
 #else
 	mmap_read_lock(current->mm);
 #endif
-	ret = pin_user_pages(host_addr & PAGE_MASK, num_pages, foll_flags,
-			     pages, vmas);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
+	ret = pin_user_pages(host_addr & PAGE_MASK, num_pages, foll_flags, pages, vmas);
+#else
+	ret = pin_user_pages(host_addr & PAGE_MASK, num_pages, foll_flags, pages);
+#endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
 	up_read(&current->mm->mmap_sem);
 #else
 	mmap_read_unlock(current->mm);
 #endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 	kvfree(vmas);
+#endif
 	if (ret < 0) {
 		etdev_dbg(etdev, "pin_user_pages failed %u:%pK-%u: %d",
 			  group->workload_id, (void *)host_addr, num_pages,
@@ -1293,7 +1317,7 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 		ret = -EFAULT;
 		goto error;
 	}
-
+	atomic64_add(num_pages, &current->mm->pinned_vm);
 	*pnum_pages = num_pages;
 	return pages;
 
@@ -1514,47 +1538,52 @@ int edgetpu_device_group_map(struct edgetpu_device_group *group,
 		flags |= EDGETPU_MAP_DMA_TO_DEVICE;
 	}
 
+	hmap = alloc_mapping_from_useraddr(group, host_addr, flags, pages, num_pages);
+	if (IS_ERR(hmap)) {
+		/* revert edgetpu_pin_user_pages() */
+		for (i = 0; i < num_pages; i++)
+			unpin_user_page(pages[i]);
+		atomic64_sub(num_pages, &current->mm->pinned_vm);
+		kvfree(pages);
+		return PTR_ERR(hmap);
+	}
+
+	kvfree(pages);
+	map = &hmap->map;
+	mmgrab(current->mm);
+	hmap->owning_mm = current->mm;
 	mutex_lock(&group->lock);
 	context_id = edgetpu_group_context_id_locked(group);
 	if (!edgetpu_device_group_is_finalized(group)) {
 		ret = edgetpu_group_errno(group);
-		goto error;
-	}
-	if (!IS_MIRRORED(flags)) {
-		if (arg->die_index >= group->n_clients) {
-			ret = -EINVAL;
-			goto error;
-		}
-	}
-
-	hmap = alloc_mapping_from_useraddr(group, host_addr, flags, pages,
-					   num_pages);
-	if (IS_ERR(hmap)) {
-		ret = PTR_ERR(hmap);
+		mutex_unlock(&group->lock);
 		goto error;
 	}
 
-	map = &hmap->map;
 	if (IS_MIRRORED(flags)) {
 		map->die_index = ALL_DIES;
 		etdev = group->etdev;
 		ret = edgetpu_mmu_map(etdev, map, context_id, mmu_flags);
-		if (ret)
-			goto error;
-		ret = edgetpu_device_group_map_iova_sgt(group, hmap);
-		if (ret) {
-			etdev_dbg(etdev,
-				  "group add translation failed %u:%#llx",
-				  group->workload_id, map->device_address);
-			goto error;
+		if (!ret) {
+			ret = edgetpu_device_group_map_iova_sgt(group, hmap);
+			if (ret)
+				etdev_dbg(etdev,
+					  "group add translation failed %u:%pad",
+					  group->workload_id, &map->device_address);
 		}
 	} else {
-		map->die_index = arg->die_index;
-		etdev = edgetpu_device_group_nth_etdev(group, map->die_index);
-		ret = edgetpu_mmu_map(etdev, map, context_id, mmu_flags);
-		if (ret)
-			goto error;
+		if (arg->die_index >= group->n_clients) {
+			ret = -EINVAL;
+		} else {
+			map->die_index = arg->die_index;
+			etdev = edgetpu_device_group_nth_etdev(group, map->die_index);
+			ret = edgetpu_mmu_map(etdev, map, context_id, mmu_flags);
+		}
 	}
+
+	mutex_unlock(&group->lock);
+	if (ret)
+		goto error;
 
 	map->map_size = arg->size;
 	/*
@@ -1564,28 +1593,17 @@ int edgetpu_device_group_map(struct edgetpu_device_group *group,
 	tpu_addr = map->device_address;
 	ret = edgetpu_mapping_add(&group->host_mappings, map);
 	if (ret) {
-		etdev_dbg(etdev, "duplicate mapping %u:%#llx", group->workload_id, tpu_addr);
+		etdev_dbg(etdev, "duplicate mapping %u:%pad", group->workload_id, &tpu_addr);
 		goto error;
 	}
 
-	mutex_unlock(&group->lock);
 	arg->device_address = tpu_addr;
-	kvfree(pages);
 	return 0;
 
 error:
-	if (map) {
-		edgetpu_mapping_lock(&group->host_mappings);
-		/* this will free @hmap */
-		edgetpu_unmap_node(map);
-		edgetpu_mapping_unlock(&group->host_mappings);
-	} else {
-		/* revert edgetpu_pin_user_pages() */
-		for (i = 0; i < num_pages; i++)
-			unpin_user_page(pages[i]);
-	}
-	mutex_unlock(&group->lock);
-	kvfree(pages);
+	edgetpu_mapping_lock(&group->host_mappings);
+	edgetpu_unmap_node(map); /* this will free @hmap */
+	edgetpu_mapping_unlock(&group->host_mappings);
 	return ret;
 }
 
@@ -1594,13 +1612,6 @@ int edgetpu_device_group_unmap(struct edgetpu_device_group *group,
 			       edgetpu_map_flag_t flags)
 {
 	struct edgetpu_mapping *map;
-	int ret = 0;
-
-	mutex_lock(&group->lock);
-	if (!is_finalized_or_errored(group)) {
-		ret = -EINVAL;
-		goto unlock_group;
-	}
 
 	edgetpu_mapping_lock(&group->host_mappings);
 	map = edgetpu_mapping_find_locked(&group->host_mappings, ALL_DIES,
@@ -1610,20 +1621,16 @@ int edgetpu_device_group_unmap(struct edgetpu_device_group *group,
 						  die_index, tpu_addr);
 	if (!map) {
 		edgetpu_mapping_unlock(&group->host_mappings);
-		etdev_dbg(group->etdev,
-			  "%s: mapping not found for workload %u: %#llx",
-			  __func__, group->workload_id, tpu_addr);
-		ret = -EINVAL;
-		goto unlock_group;
+		etdev_dbg(group->etdev, "%s: mapping not found for workload %u: %pad", __func__,
+			  group->workload_id, &tpu_addr);
+		return -EINVAL;
 	}
 
 	edgetpu_mapping_unlink(&group->host_mappings, map);
 	map->dma_attrs = map_to_dma_attr(flags, false);
 	edgetpu_unmap_node(map);
 	edgetpu_mapping_unlock(&group->host_mappings);
-unlock_group:
-	mutex_unlock(&group->lock);
-	return ret;
+	return 0;
 }
 
 int edgetpu_device_group_sync_buffer(struct edgetpu_device_group *group,
@@ -1718,16 +1725,11 @@ void edgetpu_group_mappings_show(struct edgetpu_device_group *group,
 
 	if (group->vii.cmd_queue_mem.vaddr) {
 		seq_puts(s, "VII queues:\n");
-		seq_printf(s, "  %#llx %lu cmdq %#llx %pad\n",
-			   group->vii.cmd_queue_mem.tpu_addr,
-			   DIV_ROUND_UP(group->vii.cmd_queue_mem.size,
-					PAGE_SIZE),
-			   group->vii.cmd_queue_mem.host_addr,
-			   &group->vii.cmd_queue_mem.dma_addr);
-		seq_printf(s, "  %#llx %lu rspq %#llx %pad\n",
-			   group->vii.resp_queue_mem.tpu_addr,
-			   DIV_ROUND_UP(group->vii.resp_queue_mem.size,
-					PAGE_SIZE),
+		seq_printf(s, "  %pad %lu cmdq %#llx %pad\n", &group->vii.cmd_queue_mem.tpu_addr,
+			   DIV_ROUND_UP(group->vii.cmd_queue_mem.size, PAGE_SIZE),
+			   group->vii.cmd_queue_mem.host_addr, &group->vii.cmd_queue_mem.dma_addr);
+		seq_printf(s, "  %pad %lu rspq %#llx %pad\n", &group->vii.resp_queue_mem.tpu_addr,
+			   DIV_ROUND_UP(group->vii.resp_queue_mem.size, PAGE_SIZE),
 			   group->vii.resp_queue_mem.host_addr,
 			   &group->vii.resp_queue_mem.dma_addr);
 	}

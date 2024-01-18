@@ -469,8 +469,8 @@ int edgetpu_kci_init(struct edgetpu_mailbox_manager *mgr,
 
 	kci->cmd_queue = kci->cmd_queue_mem.vaddr;
 	mutex_init(&kci->cmd_queue_lock);
-	etdev_dbg(mgr->etdev, "%s: cmdq kva=%pK iova=%#llx dma=%pad", __func__,
-		  kci->cmd_queue_mem.vaddr, kci->cmd_queue_mem.tpu_addr,
+	etdev_dbg(mgr->etdev, "%s: cmdq kva=%pK iova=%pad dma=%pad", __func__,
+		  kci->cmd_queue_mem.vaddr, &kci->cmd_queue_mem.tpu_addr,
 		  &kci->cmd_queue_mem.dma_addr);
 
 	ret = edgetpu_kci_alloc_queue(mgr->etdev, mailbox, MAILBOX_RESP_QUEUE,
@@ -482,8 +482,8 @@ int edgetpu_kci_init(struct edgetpu_mailbox_manager *mgr,
 	}
 	kci->resp_queue = kci->resp_queue_mem.vaddr;
 	spin_lock_init(&kci->resp_queue_lock);
-	etdev_dbg(mgr->etdev, "%s: rspq kva=%pK iova=%#llx dma=%pad", __func__,
-		  kci->resp_queue_mem.vaddr, kci->resp_queue_mem.tpu_addr,
+	etdev_dbg(mgr->etdev, "%s: rspq kva=%pK iova=%pad dma=%pad", __func__,
+		  kci->resp_queue_mem.vaddr, &kci->resp_queue_mem.tpu_addr,
 		  &kci->resp_queue_mem.dma_addr);
 
 	mailbox->handle_irq = edgetpu_kci_handle_irq;
@@ -743,15 +743,15 @@ static int edgetpu_kci_send_cmd_with_data(struct edgetpu_kci *kci,
 		return ret;
 	memcpy(mem.vaddr, data, size);
 
-	etdev_dbg(etdev, "%s: map kva=%pK iova=%#llx dma=%pad", __func__, mem.vaddr, mem.tpu_addr,
+	etdev_dbg(etdev, "%s: map kva=%pK iova=%pad dma=%pad", __func__, mem.vaddr, &mem.tpu_addr,
 		  &mem.dma_addr);
 
 	cmd->dma.address = mem.tpu_addr;
 	cmd->dma.size = size;
 	ret = edgetpu_kci_send_cmd(kci, cmd);
 	edgetpu_iremap_free(etdev, &mem, EDGETPU_CONTEXT_KCI);
-	etdev_dbg(etdev, "%s: unmap kva=%pK iova=%#llx dma=%pad", __func__, mem.vaddr,
-		  mem.tpu_addr, &mem.dma_addr);
+	etdev_dbg(etdev, "%s: unmap kva=%pK iova=%pad dma=%pad", __func__, mem.vaddr,
+		  &mem.tpu_addr, &mem.dma_addr);
 	return ret;
 }
 
@@ -806,8 +806,6 @@ int edgetpu_kci_join_group(struct edgetpu_kci *kci, u8 n_dies, u8 vid)
 	};
 	int ret;
 
-	if (!kci)
-		return -ENODEV;
 	ret = check_etdev_state(kci, "join group");
 	if (ret)
 		return ret;
@@ -821,8 +819,6 @@ int edgetpu_kci_leave_group(struct edgetpu_kci *kci)
 	};
 	int ret;
 
-	if (!kci)
-		return -ENODEV;
 	ret = check_etdev_state(kci, "leave group");
 	if (ret)
 		return ret;
@@ -912,6 +908,13 @@ int edgetpu_kci_update_usage(struct edgetpu_dev *etdev)
 
 	if (edgetpu_firmware_status_locked(etdev) != FW_VALID)
 		goto fw_unlock;
+
+	/* Test firmware doesn't implement usage stats, skip and return no error. */
+	if (edgetpu_firmware_get_flavor(etdev->firmware) == FW_FLAVOR_SYSTEST) {
+		ret = 0;
+		goto fw_unlock;
+	}
+
 	/*
 	 * This function may run in a worker that is being canceled when the
 	 * device is powering down, and the power down code holds the PM lock.
@@ -987,19 +990,16 @@ void edgetpu_kci_mappings_show(struct edgetpu_dev *etdev, struct seq_file *s)
 {
 	struct edgetpu_kci *kci = etdev->kci;
 
-	if (!kci || !kci->mailbox)
-		return;
-
 	seq_printf(s, "kci context mbox %u:\n", EDGETPU_CONTEXT_KCI);
-	seq_printf(s, "  %#llx %lu cmdq - %pad\n",
-		   kci->cmd_queue_mem.tpu_addr,
+	seq_printf(s, "  %pad %lu cmdq - %pad\n",
+		   &kci->cmd_queue_mem.tpu_addr,
 		   DIV_ROUND_UP(
 			QUEUE_SIZE *
 			edgetpu_kci_queue_element_size(MAILBOX_CMD_QUEUE),
 			PAGE_SIZE),
 		   &kci->cmd_queue_mem.dma_addr);
-	seq_printf(s, "  %#llx %lu rspq - %pad\n",
-		   kci->resp_queue_mem.tpu_addr,
+	seq_printf(s, "  %pad %lu rspq - %pad\n",
+		   &kci->resp_queue_mem.tpu_addr,
 		   DIV_ROUND_UP(
 			QUEUE_SIZE *
 			edgetpu_kci_queue_element_size(MAILBOX_RESP_QUEUE),
@@ -1015,8 +1015,6 @@ int edgetpu_kci_shutdown(struct edgetpu_kci *kci)
 		.code = KCI_CODE_SHUTDOWN,
 	};
 
-	if (!kci)
-		return -ENODEV;
 	return edgetpu_kci_send_cmd(kci, &cmd);
 }
 
@@ -1032,8 +1030,6 @@ int edgetpu_kci_get_debug_dump(struct edgetpu_kci *kci, tpu_addr_t tpu_addr,
 		},
 	};
 
-	if (!kci)
-		return -ENODEV;
 	return edgetpu_kci_send_cmd(kci, &cmd);
 }
 
@@ -1053,8 +1049,6 @@ int edgetpu_kci_open_device(struct edgetpu_kci *kci, u32 mailbox_map, u32 client
 	};
 	int ret;
 
-	if (!kci)
-		return -ENODEV;
 	ret = check_etdev_state(kci, "open device");
 	if (ret)
 		return ret;
@@ -1073,8 +1067,6 @@ int edgetpu_kci_close_device(struct edgetpu_kci *kci, u32 mailbox_map)
 	};
 	int ret;
 
-	if (!kci)
-		return -ENODEV;
 	ret = check_etdev_state(kci, "close device");
 	if (ret)
 		return ret;
@@ -1090,9 +1082,6 @@ int edgetpu_kci_notify_throttling(struct edgetpu_dev *etdev, u32 level)
 		},
 	};
 
-	if (!etdev->kci)
-		return -ENODEV;
-
 	return edgetpu_kci_send_cmd(etdev->kci, &cmd);
 }
 
@@ -1105,9 +1094,6 @@ int edgetpu_kci_block_bus_speed_control(struct edgetpu_dev *etdev, bool block)
 			.flags = (u32) block,
 		},
 	};
-
-	if (!etdev->kci)
-		return -ENODEV;
 
 	return edgetpu_kci_send_cmd(etdev->kci, &cmd);
 }
@@ -1138,9 +1124,6 @@ int edgetpu_kci_resp_rkci_ack(struct edgetpu_dev *etdev,
 		.seq = rkci_cmd->seq,
 		.code = KCI_CODE_RKCI_ACK,
 	};
-
-	if (!etdev->kci)
-		return -ENODEV;
 
 	return edgetpu_kci_send_cmd(etdev->kci, &cmd);
 }

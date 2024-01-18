@@ -10,8 +10,29 @@
 
 #include <linux/idr.h>
 #include <linux/iommu.h>
+#include <linux/version.h>
 
 #include "edgetpu-internal.h"
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+typedef unsigned int ioasid_t;
+#endif
+
+/*
+ * TODO(b/285410138) This feature was actually added in Linux 6.2, but backported to the 6.1
+ * Android Common Kernel. When compiling for a 6.1.X non-Android Kernel, this flag will be
+ * true, despite the feature not being available.
+ */
+#define HAS_IOMMU_PASID                                                                            \
+	((LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) &&                                         \
+	  IS_ENABLED(CONFIG_ANDROID_VENDOR_HOOKS)) ||                                              \
+	 LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0))
+
+#define HAS_AUX_DOMAINS (LINUX_VERSION_CODE <= KERNEL_VERSION(5, 17, 0))
+
+#if HAS_IOMMU_PASID
+#include <linux/idr.h>
+#endif
 
 struct edgetpu_domain_pool {
 	struct ida idp;			/* ID allocator to keep track of used domains. */
@@ -22,6 +43,13 @@ struct edgetpu_domain_pool {
 	unsigned int size;
 	struct iommu_domain **array;	/* Array holding the pointers to pre-allocated domains. */
 	struct edgetpu_dev *etdev;	/* The edgetpu device used for logging warnings/errors. */
+	ioasid_t min_pasid;
+	ioasid_t max_pasid;
+#if HAS_IOMMU_PASID
+	struct ida pasid_pool;
+#elif HAS_AUX_DOMAINS
+	bool aux_enabled;
+#endif
 };
 
 
@@ -49,5 +77,40 @@ void edgetpu_domain_pool_free(struct edgetpu_domain_pool *pool, struct iommu_dom
 
 /* Cleans up all resources used by the domain pool. */
 void edgetpu_domain_pool_destroy(struct edgetpu_domain_pool *pool);
+
+/* Sets the range of valid PASIDs to be used when attaching a domain
+ *
+ * @min: The smallest acceptable value to be assigned to an attached domain
+ * @max: The largest acceptable value to be assigned to an attached domain
+ */
+void edgetpu_domain_pool_set_pasid_range(struct edgetpu_domain_pool *pool, ioasid_t min,
+					 ioasid_t max);
+
+/*
+ * Attaches an IOMMU domain
+ *
+ * Before calling this function, you must set the valid PASID range by calling
+ * `edgetpu_domain_pool_set_pasid_range()`.
+ *
+ * @pool: IOMMU domain pool @domain was allocated from
+ * @domain: The IOMMU domain to attach
+ *
+ * Returns:
+ * * >= 0    - The PASID the domain was successfully attached with
+ * * -ENOSYS - This device does not support attaching multiple domains
+ * * other   - Failed to attach the domain or obtain a PASID for it
+ */
+int edgetpu_domain_pool_attach_domain(struct edgetpu_domain_pool *pool,
+				      struct iommu_domain *domain);
+
+/*
+ * Detaches an IOMMU domain
+ *
+ * @pool: IOMMU domain pool @domain was allocated from and attached by
+ * @domain: The IOMMU domain to detach
+ * @pasid: The PASID returned when @domain was attached
+ */
+void edgetpu_domain_pool_detach_domain(struct edgetpu_domain_pool *pool,
+				       struct iommu_domain *domain, ioasid_t pasid);
 
 #endif /* __EDGETPU_DOMAIN_POOL_H__ */

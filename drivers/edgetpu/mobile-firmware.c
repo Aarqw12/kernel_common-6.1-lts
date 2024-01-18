@@ -76,15 +76,15 @@ static int mobile_firmware_setup_mappings(struct edgetpu_dev *etdev,
 		size = CONFIG_TO_SIZE(image_config->mappings[i].image_config_value);
 		phys_addr = image_config->mappings[i].image_config_value & ~(0xFFF);
 
-		etdev_dbg(etdev, "Adding IOMMU mapping for firmware : %#llx -> %#llx", tpu_addr,
-			  phys_addr);
+		etdev_dbg(etdev, "Adding IOMMU mapping for firmware : %pad -> %pap", &tpu_addr,
+			  &phys_addr);
 
 		ret = edgetpu_mmu_add_translation(etdev, tpu_addr, phys_addr, size,
 						  IOMMU_READ | IOMMU_WRITE, EDGETPU_CONTEXT_KCI);
 		if (ret) {
 			etdev_err(etdev,
-				  "Unable to Map: %d tpu_addr: %#llx phys_addr: %#llx size: %#lx\n",
-				  ret, tpu_addr, phys_addr, size);
+				  "Unable to Map: %d tpu_addr: %pad phys_addr: %pap size: %#lx\n",
+				  ret, &tpu_addr, &phys_addr, size);
 			goto err;
 		}
 	}
@@ -268,8 +268,8 @@ static int mobile_firmware_gsa_authenticate(struct edgetpu_mobile_platform_dev *
 	}
 
 	memcpy(header_vaddr, fw_buf->vaddr, MOBILE_FW_HEADER_SIZE);
-	etdev_dbg(etdev, "Requesting GSA image load. meta = %llX payload = %llX", header_dma_addr,
-		  (u64)etmdev->fw_region_paddr);
+	etdev_dbg(etdev, "Requesting GSA image load. meta = %pad payload = %pap", &header_dma_addr,
+		  &etmdev->fw_region_paddr);
 
 	ret = gsa_load_tpu_fw_image(etmdev->gsa_dev, header_dma_addr,
 				    etmdev->fw_region_paddr);
