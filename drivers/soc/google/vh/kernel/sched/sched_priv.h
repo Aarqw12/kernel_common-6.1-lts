@@ -703,6 +703,7 @@ static inline void init_vendor_task_struct(struct vendor_task_struct *v_tsk)
 	v_tsk->auto_uclamp_max = false;
 	v_tsk->prefer_high_cap = false;
 	init_vendor_inheritance_struct(&v_tsk->vi);
+	v_tsk->adpf_adj = 0;
 }
 
 extern u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se);

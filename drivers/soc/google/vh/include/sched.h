@@ -113,6 +113,8 @@ struct vendor_task_struct {
 	 * - get_and_reset_vendor_task_struct_private
 	 */
 	unsigned long private;
+	// ADPF scheduler hint value.
+	int adpf_adj;
 };
 
 ANDROID_VENDOR_CHECK_SIZE_ALIGN(u64 android_vendor_data1[64], struct vendor_task_struct t);
