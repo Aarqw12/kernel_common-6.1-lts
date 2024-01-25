@@ -14,19 +14,7 @@
 
 #include "edgetpu-internal.h"
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-typedef unsigned int ioasid_t;
-#endif
-
-/*
- * TODO(b/285410138) This feature was actually added in Linux 6.2, but backported to the 6.1
- * Android Common Kernel. When compiling for a 6.1.X non-Android Kernel, this flag will be
- * true, despite the feature not being available.
- */
-#define HAS_IOMMU_PASID                                                                            \
-	((LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) &&                                         \
-	  IS_ENABLED(CONFIG_ANDROID_VENDOR_HOOKS)) ||                                              \
-	 LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0))
+#define HAS_IOMMU_PASID (!IS_ENABLED(CONFIG_EDGETPU_TEST))
 
 #define HAS_AUX_DOMAINS (LINUX_VERSION_CODE <= KERNEL_VERSION(5, 17, 0))
 

@@ -5,6 +5,7 @@
  * Copyright (C) 2019 Google, Inc.
  */
 
+#include <linux/bits.h>
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
 #include <linux/idr.h>
@@ -234,7 +235,7 @@ int edgetpu_mmu_attach(struct edgetpu_dev *etdev, void *mmu_info)
 			   ret);
 		num_pasids = 8;
 	} else {
-		num_pasids = 1 << num_bits;
+		num_pasids = BIT(num_bits);
 	}
 
 	/* PASID 0 is reserved for the default domain */
@@ -295,8 +296,7 @@ void edgetpu_mmu_detach(struct edgetpu_dev *etdev)
 			   ret);
 	edgetpu_mmu_reset(etdev);
 
-	for (i = etiommu->context_0_default ? 1 : 0; i < EDGETPU_NCONTEXTS;
-	     i++) {
+	for (i = etiommu->context_0_default ? 1 : 0; i < EDGETPU_NCONTEXTS; i++) {
 		if (etiommu->domains[i])
 			edgetpu_domain_pool_detach_domain(&etiommu->domain_pool,
 							  etiommu->domains[i], i);

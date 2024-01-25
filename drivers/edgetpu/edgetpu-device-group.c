@@ -92,7 +92,7 @@ struct kci_worker_param {
 
 static int edgetpu_kci_join_group_worker(void *job_param)
 {
-	struct kci_worker_param *param = (struct kci_worker_param *)job_param;
+	struct kci_worker_param *param = job_param;
 	struct edgetpu_device_group *group = param->group;
 	uint i = param->idx;
 	struct edgetpu_dev *etdev = edgetpu_device_group_nth_etdev(group, i);
@@ -108,7 +108,7 @@ static int edgetpu_kci_join_group_worker(void *job_param)
 
 static int edgetpu_kci_leave_group_worker(void *job_param)
 {
-	struct kci_worker_param *param = (struct kci_worker_param *)job_param;
+	struct kci_worker_param *param = job_param;
 	struct edgetpu_device_group *group = param->group;
 	uint i = param->idx;
 	struct edgetpu_dev *etdev = edgetpu_device_group_nth_etdev(group, i);
@@ -1210,11 +1210,7 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 	 * it with FOLL_WRITE.
 	 * default to read/write if find_extend_vma returns NULL
 	 */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
-	down_read(&current->mm->mmap_sem);
-#else
 	mmap_read_lock(current->mm);
-#endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 1)
 	vma = find_extend_vma(current->mm, host_addr & PAGE_MASK);
 #else
@@ -1226,11 +1222,7 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 	} else {
 		*preadonly = false;
 	}
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
-	up_read(&current->mm->mmap_sem);
-#else
 	mmap_read_unlock(current->mm);
-#endif
 
 	/* Try fast call first, in case it's actually faster. */
 	ret = pin_user_pages_fast(host_addr & PAGE_MASK, num_pages, foll_flags,
@@ -1277,21 +1269,13 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 		return ERR_PTR(-ENOMEM);
 	}
 #endif
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
-	down_read(&current->mm->mmap_sem);
-#else
 	mmap_read_lock(current->mm);
-#endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 	ret = pin_user_pages(host_addr & PAGE_MASK, num_pages, foll_flags, pages, vmas);
 #else
 	ret = pin_user_pages(host_addr & PAGE_MASK, num_pages, foll_flags, pages);
 #endif
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
-	up_read(&current->mm->mmap_sem);
-#else
 	mmap_read_unlock(current->mm);
-#endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 	kvfree(vmas);
 #endif

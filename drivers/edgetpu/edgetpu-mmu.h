@@ -16,16 +16,6 @@
 #include "edgetpu-internal.h"
 #include "edgetpu.h"
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0)
-#ifndef IOMMU_PASID_INVALID
-#define IOMMU_PASID_INVALID	(-1U)
-#endif
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-typedef unsigned int ioasid_t;
-#endif
-
 #define IS_MIRRORED(flag) (!((flag) & EDGETPU_MAP_NONMIRRORED))
 
 /* flags for MMU operations */

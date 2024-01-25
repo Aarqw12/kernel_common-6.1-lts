@@ -905,12 +905,7 @@ static const struct dma_fence_ops edgetpu_dma_fence_ops = {
 	.release = edgetpu_dma_fence_release,
 };
 
-/* the data type of fence->seqno is u64 in 5.1 */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
-#define SEQ_FMT "%u"
-#else
 #define SEQ_FMT "%llu"
-#endif
 
 int edgetpu_sync_fence_create(struct edgetpu_device_group *group,
 			      struct edgetpu_create_sync_fence_data *datap)
