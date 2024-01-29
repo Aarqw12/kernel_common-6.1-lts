@@ -115,6 +115,12 @@ struct vendor_task_struct {
 	unsigned long private;
 	// ADPF scheduler hint value.
 	int adpf_adj;
+	// Definition of real_cap: the current cpu_cap that a task was actually running on.
+	u64 real_cap_avg;
+	// The total durtion for real_cap calculation.
+	u64 real_cap_total_ns;
+	// Last updated timestamp of real_cap calculation.
+	u64 real_cap_update_ns;
 };
 
 ANDROID_VENDOR_CHECK_SIZE_ALIGN(u64 android_vendor_data1[64], struct vendor_task_struct t);
@@ -156,4 +162,7 @@ static inline unsigned long get_and_reset_vendor_task_struct_private(struct vend
 }
 
 int sched_thermal_freq_cap(unsigned int cpu, unsigned int freq);
+
+void update_task_real_cap(struct task_struct *p);
+
 #endif

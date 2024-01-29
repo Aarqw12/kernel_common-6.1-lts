@@ -6,6 +6,7 @@
  * Copyright 2020 Google LLC
  */
 #include <linux/cpuidle.h>
+#include <linux/sched/clock.h>
 #include <linux/sched/cputime.h>
 #include <kernel/sched/autogroup.h>
 #include <kernel/sched/sched.h>
@@ -3115,3 +3116,29 @@ void update_thermal_freq_cap(unsigned int cpu)
 	mutex_unlock(&thermal_cap_mutex);
 }
 EXPORT_SYMBOL_GPL(update_thermal_freq_cap);
+
+void update_task_real_cap(struct task_struct *p)
+{
+	struct vendor_task_struct *vp = get_vendor_task_struct(p);
+	u64 now = sched_clock();
+	u64 dur_ns = now - vp->real_cap_update_ns;
+
+	raw_spin_lock(&vp->lock);
+	if (vp->real_cap_avg) {
+		u64 workload = vp->real_cap_avg * (vp->real_cap_total_ns >> 10)
+			+ (dur_ns >> 10) * capacity_curr_of(task_cpu(p));
+		vp->real_cap_total_ns += dur_ns;
+		vp->real_cap_avg = workload / (vp->real_cap_total_ns >> 10);
+	} else {
+		vp->real_cap_total_ns = dur_ns;
+		vp->real_cap_avg = capacity_curr_of(task_cpu(p));
+	}
+	vp->real_cap_update_ns = now;
+	raw_spin_unlock(&vp->lock);
+	if (trace_clock_set_rate_enabled()) {
+		char trace_name[32] = {0};
+		scnprintf(trace_name, sizeof(trace_name), "%d_REAL_CAP_AVG", (int)(p->pid));
+		trace_clock_set_rate(trace_name, vp->real_cap_avg, raw_smp_processor_id());
+	}
+}
+EXPORT_SYMBOL_GPL(update_task_real_cap);
