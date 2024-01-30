@@ -43,6 +43,12 @@
 #define VMA_DATA_GET(x) ((x) >> VMA_TYPE_WIDTH)
 #define VMA_DATA_SET(x, y) (VMA_TYPE(x) | ((y) << VMA_TYPE_WIDTH))
 
+/* TODO(b/285410138) Determine long-term replacement for CONFIG_ANDROID */
+#define HAS_VMA_FLAGS_API                                                                          \
+	((LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) &&                                         \
+	  IS_ENABLED(CONFIG_ANDROID_VENDOR_HOOKS)) ||                                              \
+	 LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+
 enum edgetpu_vma_type {
 	VMA_INVALID,
 
@@ -281,7 +287,11 @@ int edgetpu_mmap(struct edgetpu_client *client, struct vm_area_struct *vma)
 	/* Mark the VMA's pages as uncacheable. */
 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 	/* Disable fancy things to ensure our event counters work. */
+#if HAS_VMA_FLAGS_API
 	vm_flags_set(vma, VM_DONTCOPY | VM_DONTEXPAND | VM_DONTDUMP);
+#else
+	vma->vm_flags |= VM_DONTCOPY | VM_DONTEXPAND | VM_DONTDUMP;
+#endif
 
 	/* map all CSRs for debug purpose */
 	if (type == VMA_FULL_CSR) {
@@ -380,11 +390,10 @@ int edgetpu_get_state_errno_locked(struct edgetpu_dev *etdev)
 {
 	switch (etdev->state) {
 	case ETDEV_STATE_BAD:
-		return -ENODEV;
+	case ETDEV_STATE_NOFW:
+		return -EIO;
 	case ETDEV_STATE_FWLOADING:
 		return -EAGAIN;
-	case ETDEV_STATE_NOFW:
-		return -EINVAL;
 	default:
 		break;
 	}
@@ -570,12 +579,26 @@ void edgetpu_client_put(struct edgetpu_client *client)
 
 void edgetpu_client_remove(struct edgetpu_client *client)
 {
-	struct edgetpu_dev *etdev;
+	struct edgetpu_dev *etdev = client->etdev;
 	struct edgetpu_list_device_client *lc;
+	uint wakelock_count;
 
-	if (IS_ERR_OR_NULL(client))
-		return;
-	etdev = client->etdev;
+	mutex_lock(&client->group_lock);
+	/*
+	 * Safe to read wakelock->req_count here since req_count is only modified during
+	 * [acquire/release]_wakelock ioctl calls which cannot race with releasing client/fd.
+	 */
+	wakelock_count = NO_WAKELOCK(client->wakelock) ? 1 : client->wakelock->req_count;
+	/*
+	 * @wakelock_count = 0 means the device might be powered off. Mailbox(EXT/VII) is removed
+	 * when the group is released, so we need to ensure the device should not accessed to
+	 * prevent kernel panic on programming mailbox CSRs.
+	 */
+	if (!wakelock_count && client->group)
+		client->group->dev_inaccessible = true;
+
+	mutex_unlock(&client->group_lock);
+
 	mutex_lock(&etdev->clients_lock);
 	/* remove the client from the device list */
 	for_each_list_device_client(etdev, lc) {
@@ -610,6 +633,10 @@ void edgetpu_client_remove(struct edgetpu_client *client)
 		edgetpu_telemetry_unset_event(etdev, EDGETPU_TELEMETRY_TRACE);
 
 	edgetpu_client_put(client);
+
+	/* Releases each acquired wake lock for this client. */
+	while (wakelock_count--)
+		edgetpu_pm_put(etdev->pm);
 }
 
 int edgetpu_register_irq(struct edgetpu_dev *etdev, int irq)

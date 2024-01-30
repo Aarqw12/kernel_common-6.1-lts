@@ -67,8 +67,8 @@ int edgetpu_get_debug_dump(struct edgetpu_dev *etdev, u64 type)
 	ret = edgetpu_kci_get_debug_dump(etdev->kci,
 					 etdev->debug_dump_mem.tpu_addr,
 					 etdev->debug_dump_mem.size, init_fw_dump_buffer);
-	etdev_dbg(etdev, "Sent debug dump request, tpu addr: %llx",
-		  (u64)etdev->debug_dump_mem.tpu_addr);
+	etdev_dbg(etdev, "Sent debug dump request, tpu addr: %pad",
+		  &etdev->debug_dump_mem.tpu_addr);
 	if (ret) {
 		if (ret == KCI_ERROR_UNIMPLEMENTED) {
 			etdev_dbg(etdev, "Debug dump KCI not implemented");

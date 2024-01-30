@@ -17,16 +17,14 @@
  */
 #ifndef FOLL_PIN
 
+#ifndef FOLL_LONGTERM
 /* define as zero to prevent older get_user_pages* returning EINVAL */
 #define FOLL_LONGTERM 0
+#endif
 
 #define pin_user_pages_fast get_user_pages_fast
 #define pin_user_pages get_user_pages
 #define unpin_user_page put_page
-
-#ifndef untagged_addr
-#define untagged_addr(addr) (addr)
-#endif
 
 #endif /* FOLL_PIN */
 

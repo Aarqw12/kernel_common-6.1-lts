@@ -343,13 +343,13 @@ static void dmabuf_map_callback_show(struct edgetpu_mapping *map,
 		container_of(map, struct edgetpu_dmabuf_map, map);
 
 	if (IS_MIRRORED(dmap->map.flags))
-		seq_printf(s, "  <%s> mirrored: iova=%#llx pages=%llu %s",
-			   dmap->dmabufs[0]->exp_name, map->device_address,
+		seq_printf(s, "  <%s> mirrored: iova=%pad pages=%llu %s",
+			   dmap->dmabufs[0]->exp_name, &map->device_address,
 			   DIV_ROUND_UP(dmap->size, PAGE_SIZE),
 			   edgetpu_dma_dir_rw_s(map->dir));
 	else
-		seq_printf(s, "  <%s> die %u: iova=%#llx pages=%llu %s",
-			   dmap->dmabufs[0]->exp_name, map->die_index, map->device_address,
+		seq_printf(s, "  <%s> die %u: iova=%pad pages=%llu %s",
+			   dmap->dmabufs[0]->exp_name, map->die_index, &map->device_address,
 			   DIV_ROUND_UP(dmap->size, PAGE_SIZE),
 			   edgetpu_dma_dir_rw_s(map->dir));
 
@@ -360,8 +360,6 @@ static void dmabuf_map_callback_show(struct edgetpu_mapping *map,
 
 /*
  * Allocates and properly sets fields of an edgetpu_dmabuf_map.
- *
- * Caller holds group->lock and checks @group is finalized.
  *
  * Returns the pointer on success, or NULL on failure.
  */
@@ -442,8 +440,8 @@ static void dmabuf_bulk_map_callback_show(struct edgetpu_mapping *map,
 		container_of(map, struct edgetpu_dmabuf_map, map);
 	int i;
 
-	seq_printf(s, "  bulk: iova=%#llx pages=%llu %s\n",
-		   map->device_address, DIV_ROUND_UP(bmap->size, PAGE_SIZE),
+	seq_printf(s, "  bulk: iova=%pad pages=%llu %s\n",
+		   &map->device_address, DIV_ROUND_UP(bmap->size, PAGE_SIZE),
 		   edgetpu_dma_dir_rw_s(map->dir));
 	for (i = 0; i < bmap->num_entries; i++) {
 		if (!bmap->dmabufs[i]) {
@@ -658,6 +656,15 @@ int edgetpu_map_dmabuf(struct edgetpu_device_group *group,
 		return PTR_ERR(dmabuf);
 	}
 
+	dmap = alloc_dmabuf_map(group, flags);
+	if (!dmap) {
+		ret = -ENOMEM;
+		goto err_put_dmabuf;
+	}
+
+	get_dma_buf(dmabuf);
+	dmap->dmabufs[0] = dmabuf;
+	dmap->map.map_size = dmap->size = size = dmabuf->size;
 	mutex_lock(&group->lock);
 	if (!edgetpu_device_group_is_finalized(group)) {
 		ret = edgetpu_group_errno(group);
@@ -666,16 +673,6 @@ int edgetpu_map_dmabuf(struct edgetpu_device_group *group,
 			  __func__, ret);
 		goto err_unlock_group;
 	}
-
-	dmap = alloc_dmabuf_map(group, flags);
-	if (!dmap) {
-		ret = -ENOMEM;
-		goto err_unlock_group;
-	}
-
-	get_dma_buf(dmabuf);
-	dmap->dmabufs[0] = dmabuf;
-	dmap->map.map_size = dmap->size = size = dmabuf->size;
 	if (IS_MIRRORED(flags)) {
 		for (i = 0; i < group->n_clients; i++) {
 			etdev = edgetpu_device_group_nth_etdev(group, i);
@@ -685,7 +682,7 @@ int edgetpu_map_dmabuf(struct edgetpu_device_group *group,
 				etdev_dbg(group->etdev,
 					  "%s: etdev_attach_dmabuf_to_entry returns %d\n",
 					  __func__, ret);
-				goto err_release_map;
+				goto err_unlock_group;
 			}
 		}
 		ret = group_map_dmabuf(group, dmap, &tpu_addr);
@@ -693,7 +690,7 @@ int edgetpu_map_dmabuf(struct edgetpu_device_group *group,
 			etdev_dbg(group->etdev,
 				  "%s: group_map_dmabuf returns %d\n",
 				  __func__, ret);
-			goto err_release_map;
+			goto err_unlock_group;
 		}
 		dmap->map.die_index = ALL_DIES;
 	} else {
@@ -703,59 +700,53 @@ int edgetpu_map_dmabuf(struct edgetpu_device_group *group,
 				  "%s: edgetpu_device_group_nth_etdev returns NULL\n",
 				  __func__);
 			ret = -EINVAL;
-			goto err_release_map;
+			goto err_unlock_group;
 		}
 		ret = etdev_attach_dmabuf_to_entry(etdev, dmabuf, &dmap->entries[0], size, dir);
 		if (ret) {
 			etdev_dbg(group->etdev,
 				  "%s: etdev_attach_dmabuf_to_entry returns %d\n",
 				  __func__, ret);
-			goto err_release_map;
+			goto err_unlock_group;
 		}
 		ret = etdev_map_dmabuf(etdev, dmap, &tpu_addr);
 		if (ret) {
 			etdev_dbg(group->etdev,
 				  "%s: etdev_map_dmabuf returns %d\n",
 				  __func__, ret);
-			goto err_release_map;
+			goto err_unlock_group;
 		}
 		dmap->map.die_index = arg->die_index;
 	}
 	dmap->map.device_address = tpu_addr;
+	mutex_unlock(&group->lock);
+	/* Save address before add to mapping tree, after which another thread can free it. */
+	arg->device_address = dmap->map.device_address;
 	ret = edgetpu_mapping_add(&group->dmabuf_mappings, &dmap->map);
 	if (ret) {
 		etdev_dbg(group->etdev, "%s: edgetpu_mapping_add returns %d\n",
 			  __func__, ret);
 		goto err_release_map;
 	}
-	arg->device_address = tpu_addr;
-	mutex_unlock(&group->lock);
 	dma_buf_put(dmabuf);
 	return 0;
 
+err_unlock_group:
+	mutex_unlock(&group->lock);
 err_release_map:
 	/* also releases entries if they are set */
 	dmabuf_map_callback_release(&dmap->map);
-err_unlock_group:
-	mutex_unlock(&group->lock);
+err_put_dmabuf:
 	dma_buf_put(dmabuf);
 
 	return ret;
 }
 
-int edgetpu_unmap_dmabuf(struct edgetpu_device_group *group, u32 die_index,
-			 tpu_addr_t tpu_addr)
+int edgetpu_unmap_dmabuf(struct edgetpu_device_group *group, u32 die_index, tpu_addr_t tpu_addr)
 {
 	struct edgetpu_mapping_root *mappings = &group->dmabuf_mappings;
 	struct edgetpu_mapping *map;
-	int ret = -EINVAL;
 
-	mutex_lock(&group->lock);
-	/* allows unmapping on errored groups */
-	if (!edgetpu_device_group_is_finalized(group) && !edgetpu_device_group_is_errored(group)) {
-		ret = -EINVAL;
-		goto out_unlock;
-	}
 	edgetpu_mapping_lock(mappings);
 	map = edgetpu_mapping_find_locked(mappings, die_index, tpu_addr);
 	if (!map)
@@ -763,16 +754,15 @@ int edgetpu_unmap_dmabuf(struct edgetpu_device_group *group, u32 die_index,
 	/* the mapping is not found */
 	if (!map) {
 		edgetpu_mapping_unlock(mappings);
-		goto out_unlock;
+		etdev_err(group->etdev, "unmap group=%u tpu_addr=%pad not found",
+			  group->workload_id, &tpu_addr);
+		return -EINVAL;
 	}
 	edgetpu_mapping_unlink(mappings, map);
 	edgetpu_mapping_unlock(mappings);
 	/* use the callback to handle both normal and bulk requests */
 	map->release(map);
-	ret = 0;
-out_unlock:
-	mutex_unlock(&group->lock);
-	return ret;
+	return 0;
 }
 
 int edgetpu_map_bulk_dmabuf(struct edgetpu_device_group *group,
@@ -829,13 +819,14 @@ int edgetpu_map_bulk_dmabuf(struct edgetpu_device_group *group,
 	ret = group_map_dmabuf(group, bmap, &tpu_addr);
 	if (ret)
 		goto err_release_bmap;
+	mutex_unlock(&group->lock);
 	bmap->map.device_address = tpu_addr;
 	ret = edgetpu_mapping_add(&group->dmabuf_mappings, &bmap->map);
 	if (ret)
-		goto err_release_bmap;
-	arg->device_address = tpu_addr;
-	mutex_unlock(&group->lock);
-	return 0;
+		dmabuf_bulk_map_callback_release(&bmap->map);
+	else
+		arg->device_address = tpu_addr;
+	return ret;
 
 err_release_bmap:
 	/* also releases entries if they are set */
