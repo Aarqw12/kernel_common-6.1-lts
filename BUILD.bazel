@@ -128,13 +128,16 @@ config_setting(
     },
 )
 
-exports_files([
-    "build.config.blktest",
-    "build.config.debug_api",
-    "build.config.debug_kmemleak",
-    "build.config.debug_locking",
-    "build.config.debug_memory",
-    "build.config.debug_memory_accounting",
-    "build.config.kasan",
-    "build.config.khwasan",
-])
+filegroup(
+    name = "debug_build_configs",
+    srcs = [
+        "build.config.blktest",
+        "build.config.debug_api",
+        "build.config.debug_kmemleak",
+        "build.config.debug_locking",
+        "build.config.debug_memory",
+        "build.config.debug_memory_accounting",
+        "build.config.kasan",
+        "build.config.khwasan",
+    ],
+)
