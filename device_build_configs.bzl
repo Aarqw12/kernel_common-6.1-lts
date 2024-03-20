@@ -220,7 +220,7 @@ def device_build_configs(
             name = "{name}.{debug_name}".format(name = name, debug_name = debug_name),
             base_build_config = base_build_config,
             device_name = device_name,
-            debug_fragment = "//private/devices/google/common:build.config.slider.{}".format(debug_name),
+            debug_fragment = "//private/devices/google/common:build.config.{}".format(debug_name),
             gki_staging_fragment = gki_staging_fragment,
         )
         debug_configs_mapping["//private/devices/google/common:{}".format(debug_name)] = \
