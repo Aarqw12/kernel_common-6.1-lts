@@ -8,25 +8,25 @@ build:pixel_debug_common --nokmi_symbol_list_violations_check
 build:pixel_debug_common --config=no_download_gki
 
 build:blktest --config=pixel_debug_common --//private/devices/google/common:debug_fragment=blktest \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.slider.blktest
+    --gki_build_config_fragment=//private/devices/google/common:build.config.blktest
 build:debug_all --config=pixel_debug_common
 build:debug_all --defconfig_fragment=//private/devices/google/common:debug_all_defconfig
 build:debug_api --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_api \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.slider.debug_api
+    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_api
 build:debug_kmemleak --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_kmemleak \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.slider.debug_kmemleak
+    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_kmemleak
 build:debug_locking --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_locking \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.slider.debug_locking
+    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_locking
 build:debug_memory --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_memory \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.slider.debug_memory
+    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_memory
 build:debug_memory_accounting --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_memory_accounting \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.slider.debug_memory_accounting
+    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_memory_accounting
 build:function_tracer --config=pixel_debug_common --//private/devices/google/common:debug_fragment=function_tracer \
     --defconfig_fragment=//private/devices/google/common:function_tracer_defconfig
 build:kasan --config=pixel_debug_common --//private/devices/google/common:debug_fragment=kasan \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.slider.kasan
+    --gki_build_config_fragment=//private/devices/google/common:build.config.kasan
 build:khwasan --config=pixel_debug_common --//private/devices/google/common:debug_fragment=khwasan \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.slider.khwasan
+    --gki_build_config_fragment=//private/devices/google/common:build.config.khwasan
 
 build:aosp_staging --//private/devices/google/common:gki_kernel_dir=aosp-staging
 
