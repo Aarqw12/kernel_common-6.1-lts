@@ -155,7 +155,7 @@ def create_device_build_config(name, base_build_config, device_name, debug_fragm
         set_gki_kernel_dir(
             name = "{}.gen".format(name),
             device_config_dir = "private/devices/google/{}".format(device_name),
-            gki_kernel_dir = "//private/google-modules/soc/gs:gki_kernel_dir",
+            gki_kernel_dir = "//private/devices/google/common:gki_kernel_dir",
             gki_build_config_fragment = debug_fragment,
         )
 
@@ -170,7 +170,7 @@ def create_device_build_config(name, base_build_config, device_name, debug_fragm
 
     set_gki_kernel_dir(
         name = "{}.gki.gen".format(name),
-        gki_kernel_dir = "//private/google-modules/soc/gs:gki_kernel_dir",
+        gki_kernel_dir = "//private/devices/google/common:gki_kernel_dir",
         gki_build_config_fragment = debug_fragment,
     )
 
@@ -180,8 +180,8 @@ def create_device_build_config(name, base_build_config, device_name, debug_fragm
             # do not sort
             ":{}.gki.gen".format(name),
         ] + select({
-            "//private/google-modules/soc/gs:gki_aosp": ["//aosp:build.config.gki.aarch64"],
-            "//private/google-modules/soc/gs:gki_aosp_staging": ["//aosp-staging:build.config.gki.aarch64"],
+            "//private/devices/google/common:gki_aosp": ["//aosp:build.config.gki.aarch64"],
+            "//private/devices/google/common:gki_aosp_staging": ["//aosp-staging:build.config.gki.aarch64"],
         }) + ([gki_staging_fragment] if gki_staging_fragment else []),
     )
 
@@ -220,16 +220,16 @@ def device_build_configs(
             name = "{name}.{debug_name}".format(name = name, debug_name = debug_name),
             base_build_config = base_build_config,
             device_name = device_name,
-            debug_fragment = "//private/google-modules/soc/gs:build.config.slider.{}".format(debug_name),
+            debug_fragment = "//private/devices/google/common:build.config.slider.{}".format(debug_name),
             gki_staging_fragment = gki_staging_fragment,
         )
-        debug_configs_mapping["//private/google-modules/soc/gs:{}".format(debug_name)] = \
+        debug_configs_mapping["//private/devices/google/common:{}".format(debug_name)] = \
             ["//private/devices/google/{device}:{name}.{debug_name}".format(
                 name = name,
                 device = device_name,
                 debug_name = debug_name,
             )]
-        debug_gki_configs_mapping["//private/google-modules/soc/gs:{}".format(debug_name)] = \
+        debug_gki_configs_mapping["//private/devices/google/common:{}".format(debug_name)] = \
             ["//private/devices/google/{device}:{name}.{debug_name}.gki".format(
                 name = name,
                 device = device_name,
@@ -320,8 +320,8 @@ def lto_dependant_kernel_module(
     native.alias(
         name = name,
         actual = select({
-            "//private/google-modules/soc/gs:lto_none": name + "_lto_none",
-            "//private/google-modules/soc/gs:kunit_enabled": name + "_kunit",
+            "//private/devices/google/common:lto_none": name + "_lto_none",
+            "//private/devices/google/common:kunit_enabled": name + "_kunit",
             "//conditions:default": name + "_internal",
         }),
         **kwargs
