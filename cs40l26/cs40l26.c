@@ -2014,8 +2014,10 @@ int cs40l26_num_ram_waves(struct cs40l26_private *cs40l26)
 	if (!cl_dsp_algo_is_present(cs40l26->dsp, CS40L26_VIBEGEN_ALGO_ID))
 		return 0;
 
+	mutex_lock(&cs40l26->cl_dsp_lock);
 	error = cl_dsp_get_reg(cs40l26->dsp, "NUM_OF_WAVES", CL_DSP_XM_UNPACKED_TYPE,
 			CS40L26_VIBEGEN_ALGO_ID, &reg);
+	mutex_unlock(&cs40l26->cl_dsp_lock);
 	if (error)
 		return error;
 
@@ -2035,8 +2037,10 @@ int cs40l26_num_owt_waves(struct cs40l26_private *cs40l26)
 	if (!cl_dsp_algo_is_present(cs40l26->dsp, CS40L26_VIBEGEN_ALGO_ID))
 		return 0;
 
+	mutex_lock(&cs40l26->cl_dsp_lock);
 	error = cl_dsp_get_reg(cs40l26->dsp, "OWT_NUM_OF_WAVES_XM", CL_DSP_XM_UNPACKED_TYPE,
 			CS40L26_VIBEGEN_ALGO_ID, &reg);
+	mutex_unlock(&cs40l26->cl_dsp_lock);
 	if (error)
 		return error;
 
@@ -4618,10 +4622,12 @@ static int cs40l26_cl_dsp_reinit(struct cs40l26_private *cs40l26)
 {
 	int error;
 
+	mutex_lock(&cs40l26->cl_dsp_lock);
 	if (cs40l26->dsp) {
 		error = cl_dsp_destroy(cs40l26->dsp);
 		if (error) {
 			dev_err(cs40l26->dev, "Failed to destroy DSP struct\n");
+			mutex_unlock(&cs40l26->cl_dsp_lock);
 			return error;
 		}
 
@@ -4629,6 +4635,8 @@ static int cs40l26_cl_dsp_reinit(struct cs40l26_private *cs40l26)
 	}
 
 	cs40l26->dsp = cl_dsp_create(cs40l26->dev, cs40l26->regmap);
+	mutex_unlock(&cs40l26->cl_dsp_lock);
+
 	if (IS_ERR(cs40l26->dsp))
 		return PTR_ERR(cs40l26->dsp);
 
@@ -5495,6 +5503,9 @@ void cs40l26_make_reset_decision(struct cs40l26_private *cs40l26, const char *fu
 	if (trigger) {
 		dev_info(dev, "Queue reset work after %s", func);
 		queue_work(cs40l26->vibe_workqueue, &cs40l26->reset_work);
+
+		/* Wait for reset to finish */
+		flush_work(&cs40l26->reset_work);
 	} else
 		dev_info(dev, "Reset event: %d. Skip this trigger from %s.", cs40l26->reset_event,
 			 func);
@@ -5506,6 +5517,7 @@ int cs40l26_probe(struct cs40l26_private *cs40l26)
 	int error;
 
 	mutex_init(&cs40l26->lock);
+	mutex_init(&cs40l26->cl_dsp_lock);
 
 	error = cs40l26_parse_device_id(cs40l26);
 	if(error)
@@ -5653,6 +5665,7 @@ int cs40l26_remove(struct cs40l26_private *cs40l26)
 
 	disable_irq(cs40l26->irq);
 	mutex_destroy(&cs40l26->lock);
+	mutex_destroy(&cs40l26->cl_dsp_lock);
 
 	cs40l26_pm_runtime_teardown(cs40l26);
 

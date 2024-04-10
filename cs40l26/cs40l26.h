@@ -1249,6 +1249,7 @@ struct cs40l26_private {
 	const char *device_name;
 	bool cs40l26_not_probed;
 	u8 device_id;
+	struct mutex cl_dsp_lock;
 	bool reset_enabled;
 	struct work_struct reset_work;
 	enum cs40l26_reset_event reset_event;

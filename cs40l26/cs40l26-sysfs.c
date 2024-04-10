@@ -253,8 +253,10 @@ static ssize_t owt_free_space_show(struct device *dev,
 	if (error)
 		return error;
 
+	mutex_lock(&cs40l26->cl_dsp_lock);
 	error = cl_dsp_get_reg(cs40l26->dsp, "OWT_SIZE_XM",
 			CL_DSP_XM_UNPACKED_TYPE, CS40L26_VIBEGEN_ALGO_ID, &reg);
+	mutex_unlock(&cs40l26->cl_dsp_lock);
 	if (error)
 		goto err_pm;
 
@@ -391,8 +393,10 @@ static ssize_t f0_offset_store(struct device *dev, struct device_attribute *attr
 
 	mutex_lock(&cs40l26->lock);
 
+	mutex_lock(&cs40l26->cl_dsp_lock);
 	error = cl_dsp_get_reg(cs40l26->dsp, "F0_OFFSET", CL_DSP_XM_UNPACKED_TYPE,
 			CS40L26_VIBEGEN_ALGO_ID, &reg);
+	mutex_unlock(&cs40l26->cl_dsp_lock);
 	if (error)
 		goto err_mutex;
 
@@ -1049,9 +1053,12 @@ static ssize_t reset_store(struct device *dev,
 	if (error)
 		return error;
 
-	if (choice == 0) {
-		cs40l26_make_reset_decision(cs40l26, __func__);
-	} else if (choice == 1) {
+	/*
+	 * Calling flush_work() within sysfs function will cause KP.
+	 * cs40l26_make_reset_decision(cs40l26, __func__);
+	 */
+
+	if (choice == 1) {
 		cs40l26->reset_event = CS40L26_RESET_EVENT_NONEED;
 		cs40l26->reset_count = 0;
 		queue_work(cs40l26->vibe_workqueue, &cs40l26->reset_work);
