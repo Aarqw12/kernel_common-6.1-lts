@@ -114,6 +114,27 @@ selects.config_setting_group(
     ],
 )
 
+# Do not use this flag directly, use --config=[no_]download_gki_fips140,
+# which will enable this and any necessary dependencies.
+bool_flag(
+    name = "download_prebuilt_gki_fips140",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "enable_download_fips140",
+    flag_values = {
+        ":download_prebuilt_gki_fips140": "1",
+    },
+)
+
+config_setting(
+    name = "disable_download_fips140",
+    flag_values = {
+        ":download_prebuilt_gki_fips140": "0",
+    },
+)
+
 # Do not use this flag directly, use --config=pixel_kunit,
 # which will enable this and any necessary dependencies.
 bool_flag(
