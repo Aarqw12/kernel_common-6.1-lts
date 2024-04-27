@@ -1018,21 +1018,6 @@ int edgetpu_kci_shutdown(struct edgetpu_kci *kci)
 	return edgetpu_kci_send_cmd(kci, &cmd);
 }
 
-int edgetpu_kci_get_debug_dump(struct edgetpu_kci *kci, tpu_addr_t tpu_addr,
-			       size_t size, bool init_buffer)
-{
-	struct edgetpu_command_element cmd = {
-		.code = KCI_CODE_GET_DEBUG_DUMP,
-		.dma = {
-			.address = tpu_addr,
-			.size = size,
-			.flags = init_buffer,
-		},
-	};
-
-	return edgetpu_kci_send_cmd(kci, &cmd);
-}
-
 int edgetpu_kci_open_device(struct edgetpu_kci *kci, u32 mailbox_map, u32 client_priv, s16 vcid,
 			    bool first_open)
 {
