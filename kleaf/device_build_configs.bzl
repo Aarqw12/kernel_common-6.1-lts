@@ -3,7 +3,6 @@
 """Defines helper functions for creating debug and staging build configs."""
 
 load("@bazel_skylib//lib:paths.bzl", "paths")
-load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//build/kernel/kleaf:hermetic_tools.bzl", "hermetic_toolchain")
 load(
     "//build/kernel/kleaf:kernel.bzl",
@@ -87,54 +86,6 @@ extracted_system_dlkm = rule(
     toolchains = [hermetic_toolchain.type],
 )
 
-def _set_gki_kernel_dir_impl(ctx):
-    output = ctx.actions.declare_file(ctx.label.name)
-
-    output_cmd = ""
-    if not ctx.attr.device_config_dir:
-        output_cmd = "KERNEL_DIR={gki_kernel_dir}\n".format(
-            gki_kernel_dir = str(ctx.attr.gki_kernel_dir[BuildSettingInfo].value),
-        )
-    else:
-        output_cmd = """
-            KERNEL_DIR="{device_config_dir}"
-            GKI_KERNEL_DIR="{gki_kernel_dir}"
-            """.format(
-            device_config_dir = ctx.attr.device_config_dir,
-            gki_kernel_dir = str(ctx.attr.gki_kernel_dir[BuildSettingInfo].value),
-        )
-
-    if ctx.file.gki_build_config_fragment:
-        output_cmd += "GKI_BUILD_CONFIG_FRAGMENT={}\n".format(ctx.file.gki_build_config_fragment.path)
-
-    ctx.actions.write(
-        output = output,
-        content = output_cmd,
-    )
-    return DefaultInfo(files = depset([output]))
-
-set_gki_kernel_dir = rule(
-    doc = """Creates a build config fragment file that defines the kernel
-             directories and GKI_BUILD_CONFIG_FRAGMENT (if set).
-             """,
-    implementation = _set_gki_kernel_dir_impl,
-    attrs = {
-        "device_config_dir": attr.string(
-            doc = "path to the device build config",
-            mandatory = False,
-        ),
-        "gki_kernel_dir": attr.label(
-            doc = "string_flag that contains the path to the GKI kernel source",
-            mandatory = True,
-        ),
-        "gki_build_config_fragment": attr.label(
-            doc = "file used as the debug build config fragment",
-            allow_single_file = True,
-            mandatory = False,
-        ),
-    },
-)
-
 def create_device_build_config(name, base_build_config, device_name, debug_fragment, gki_staging_fragment):
     """Generates device and kernel build configs using the build config fragments.
 
@@ -152,37 +103,24 @@ def create_device_build_config(name, base_build_config, device_name, debug_fragm
     """
 
     if device_name:
-        set_gki_kernel_dir(
-            name = "{}.gen".format(name),
-            device_config_dir = "private/devices/google/{}".format(device_name),
-            gki_kernel_dir = "//private/devices/google/common:gki_kernel_dir",
-            gki_build_config_fragment = debug_fragment,
-        )
-
         kernel_build_config(
             name = name,
             srcs = [
-                # do not sort
-                ":{}.gen".format(name),
-                base_build_config,
-            ] + ([gki_staging_fragment] if gki_staging_fragment else []),
+                       # do not sort
+                       "//common:set_kernel_dir_build_config",
+                       base_build_config,
+                   ] + ([debug_fragment] if debug_fragment else []) +
+                   ([gki_staging_fragment] if gki_staging_fragment else []),
         )
-
-    set_gki_kernel_dir(
-        name = "{}.gki.gen".format(name),
-        gki_kernel_dir = "//private/devices/google/common:gki_kernel_dir",
-        gki_build_config_fragment = debug_fragment,
-    )
 
     kernel_build_config(
         name = "{}.gki".format(name),
         srcs = [
-            # do not sort
-            ":{}.gki.gen".format(name),
-        ] + select({
-            "//private/devices/google/common:gki_aosp": ["//aosp:build.config.gki.aarch64"],
-            "//private/devices/google/common:gki_aosp_staging": ["//aosp-staging:build.config.gki.aarch64"],
-        }) + ([gki_staging_fragment] if gki_staging_fragment else []),
+                   # do not sort
+                   "//common:set_kernel_dir_build_config",
+                   "//common:build.config.gki.aarch64",
+               ] + ([debug_fragment] if debug_fragment else []) +
+               ([gki_staging_fragment] if gki_staging_fragment else []),
     )
 
 def device_build_configs(

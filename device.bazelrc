@@ -28,10 +28,12 @@ build:kasan --config=pixel_debug_common --//private/devices/google/common:debug_
 build:khwasan --config=pixel_debug_common --//private/devices/google/common:debug_fragment=khwasan \
     --gki_build_config_fragment=//private/devices/google/common:build.config.khwasan
 
-build:aosp_staging --//private/devices/google/common:gki_kernel_dir=aosp-staging
+build --flag_alias=kernel_package=//common:kernel_package
 
-build:use_source_tree_aosp --//private/devices/google/common:gki_kernel_dir=aosp
-build:use_source_tree_aosp_staging --//private/devices/google/common:gki_kernel_dir=aosp-staging
+# For compatibility. Recommand to use --kernel_package directly.
+build:aosp_staging --kernel_package=@//aosp-staging
+build:use_source_tree_aosp --kernel_package=@//aosp
+build:use_source_tree_aosp_staging --kernel_package=@//aosp-staging
 
 build:download_gki --use_prebuilt_gki
 #build:download_gki --use_signed_prebuilts
@@ -40,12 +42,6 @@ build:no_download_gki --use_prebuilt_gki=false
 
 build:download_gki_fips140 --//private/devices/google/common:download_prebuilt_gki_fips140=1
 build:no_download_gki_fips140 --//private/devices/google/common:download_prebuilt_gki_fips140=0
-
-# enable GKI Kernel (build from aosp/) by default
-build --config=use_source_tree_aosp
-
-# enable Pixel Staging Kernel (go/pixel-staging, build from aosp-staging/) by default
-#build --config=use_source_tree_aosp_staging
 
 # disable GKI prebuilts by default
 build --config=no_download_gki
