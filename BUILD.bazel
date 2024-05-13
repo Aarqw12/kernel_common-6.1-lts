@@ -162,3 +162,10 @@ filegroup(
         "build.config.khwasan",
     ],
 )
+
+filegroup(
+    name = "sepolicy",
+    srcs = glob([
+        "sepolicy/*",
+    ]),
+)
