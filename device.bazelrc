@@ -2,32 +2,6 @@
 #
 # Copyright (C) 2023 Google LLC
 
-build:pixel_debug_common --notrim
-build:pixel_debug_common --nokmi_symbol_list_strict_mode
-build:pixel_debug_common --nokmi_symbol_list_violations_check
-build:pixel_debug_common --config=no_download_gki
-
-build:blktest --config=pixel_debug_common --//private/devices/google/common:debug_fragment=blktest \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.blktest
-build:debug_all --config=pixel_debug_common
-build:debug_all --defconfig_fragment=//private/devices/google/common:debug_all_defconfig
-build:debug_api --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_api \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_api
-build:debug_kmemleak --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_kmemleak \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_kmemleak
-build:debug_locking --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_locking \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_locking
-build:debug_memory --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_memory \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_memory
-build:debug_memory_accounting --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_memory_accounting \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_memory_accounting
-build:function_tracer --config=pixel_debug_common --//private/devices/google/common:debug_fragment=function_tracer \
-    --defconfig_fragment=//private/devices/google/common:function_tracer_defconfig
-build:kasan --config=pixel_debug_common --//private/devices/google/common:debug_fragment=kasan \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.kasan
-build:khwasan --config=pixel_debug_common --//private/devices/google/common:debug_fragment=khwasan \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.khwasan
-
 build --flag_alias=kernel_package=//common:kernel_package
 
 # For compatibility. Recommand to use --kernel_package directly.
@@ -58,6 +32,9 @@ build --config=download_gki_fips140
 # enable dependencies for KUNIT
 build:pixel_kunit --//private/devices/google/common:enable_kunit
 build:pixel_kunit --notrim
+
+# Debug configs
+import %workspace%/private/devices/google/common/debug/debug.bazelrc
 
 # Placeholders for device specific bazelrc files. Add as many as you need.
 try-import %workspace%/.d1.bazelrc

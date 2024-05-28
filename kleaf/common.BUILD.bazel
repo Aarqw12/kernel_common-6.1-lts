@@ -19,6 +19,7 @@ _KERNEL_TARGETS = [
     "all_headers_aarch64",
     "android/abi_gki_aarch64_pixel",
     "kernel_aarch64",
+    "kernel_aarch64_config",
     "kernel_aarch64_download_or_build",
     "kernel_aarch64_gki_artifacts",
     "kernel_aarch64_gki_artifacts_download_or_build",
