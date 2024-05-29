@@ -6,7 +6,6 @@ load("@bazel_skylib//lib:paths.bzl", "paths")
 load("//build/kernel/kleaf:hermetic_tools.bzl", "hermetic_toolchain")
 load(
     "//build/kernel/kleaf:kernel.bzl",
-    "kernel_build_config",
     "kernel_module",
 )
 
@@ -85,117 +84,6 @@ extracted_system_dlkm = rule(
     },
     toolchains = [hermetic_toolchain.type],
 )
-
-def create_device_build_config(name, base_build_config, device_name, debug_fragment, gki_staging_fragment):
-    """Generates device and kernel build configs using the build config fragments.
-
-    Defines these targets:
-    - `{name}`
-    - `{name}.gki`
-
-    Args:
-      name: name of the main `kernel_build_config` target.
-      base_build_config: the device build config.
-      device_name: name of the device.
-      debug_fragment: the GKI_BUILD_CONFIG_FRAGMENT used to enable debug configs.
-      gki_staging_fragment: the staging kernel's build config fragment which is
-                            concatenated with the base build configs.
-    """
-
-    if device_name:
-        kernel_build_config(
-            name = name,
-            srcs = [
-                       # do not sort
-                       "//common:set_kernel_dir_build_config",
-                       base_build_config,
-                   ] + ([debug_fragment] if debug_fragment else []) +
-                   ([gki_staging_fragment] if gki_staging_fragment else []),
-        )
-
-    kernel_build_config(
-        name = "{}.gki".format(name),
-        srcs = [
-                   # do not sort
-                   "//common:set_kernel_dir_build_config",
-                   "//common:build.config.gki.aarch64",
-               ] + ([debug_fragment] if debug_fragment else []) +
-               ([gki_staging_fragment] if gki_staging_fragment else []),
-    )
-
-def device_build_configs(
-        name,
-        base_build_config,
-        device_name,
-        gki_staging_fragment = None):
-    """Creates the full set of debug configs for a pixel device.
-
-    Defines these targets for each debug config:
-    - `{name}.{debug_name}`
-    - `{name}.{debug_name}.gki`
-
-    Args:
-      name: name of the base `kernel_build_config` target
-      base_build_config: the device build config
-      device_name: name of the device
-      gki_staging_fragment: the staging kernel's build config fragment
-    """
-
-    debug_types = [
-        "blktest",
-        "debug_api",
-        "debug_kmemleak",
-        "debug_locking",
-        "debug_memory",
-        "debug_memory_accounting",
-        "kasan",
-        "khwasan",
-    ]
-    debug_configs_mapping = {}
-    debug_gki_configs_mapping = {}
-    for debug_name in debug_types:
-        create_device_build_config(
-            name = "{name}.{debug_name}".format(name = name, debug_name = debug_name),
-            base_build_config = base_build_config,
-            device_name = device_name,
-            debug_fragment = "//private/devices/google/common:build.config.{}".format(debug_name),
-            gki_staging_fragment = gki_staging_fragment,
-        )
-        debug_configs_mapping["//private/devices/google/common:{}".format(debug_name)] = \
-            ["//private/devices/google/{device}:{name}.{debug_name}".format(
-                name = name,
-                device = device_name,
-                debug_name = debug_name,
-            )]
-        debug_gki_configs_mapping["//private/devices/google/common:{}".format(debug_name)] = \
-            ["//private/devices/google/{device}:{name}.{debug_name}.gki".format(
-                name = name,
-                device = device_name,
-                debug_name = debug_name,
-            )]
-
-    create_device_build_config(
-        name = "{}_mod".format(name),
-        base_build_config = base_build_config,
-        device_name = device_name,
-        debug_fragment = None,
-        gki_staging_fragment = gki_staging_fragment,
-    )
-
-    debug_configs_mapping["//conditions:default"] = \
-        [":{name}_mod".format(name = name)]
-    debug_gki_configs_mapping["//conditions:default"] = \
-        [":{name}_mod.gki".format(name = name)]
-
-    native.filegroup(
-        name = "device_build_config",
-        srcs = select(debug_configs_mapping),
-    )
-
-    native.filegroup(
-        name = "gki_build_config",
-        srcs = select(debug_gki_configs_mapping),
-    )
 
 def lto_dependant_kernel_module(
         name,
