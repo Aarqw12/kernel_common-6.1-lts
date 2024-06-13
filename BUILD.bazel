@@ -8,13 +8,6 @@ package(
     ],
 )
 
-config_setting(
-    name = "lto_none",
-    flag_values = {
-        "//build/kernel/kleaf:lto": "none",
-    },
-)
-
 # Do not use this flag directly, use --config=[no_]download_gki_fips140,
 # which will enable this and any necessary dependencies.
 bool_flag(

@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""Defines helper functions for creating debug and staging build configs."""
+"""
+Defines helper functions or rules for devices.
+"""
 
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("//build/kernel/kleaf:hermetic_tools.bzl", "hermetic_toolchain")
-load(
-    "//build/kernel/kleaf:kernel.bzl",
-    "kernel_module",
-)
 
 def _extracted_system_dlkm(ctx):
     hermetic_tools = hermetic_toolchain.get(ctx)
@@ -84,71 +82,3 @@ extracted_system_dlkm = rule(
     },
     toolchains = [hermetic_toolchain.type],
 )
-
-def lto_dependant_kernel_module(
-        name,
-        outs,
-        lto_outs,
-        test_outs = [],
-        srcs = None,
-        kernel_build = None,
-        makefile = None,
-        deps = None,
-        **kwargs):
-    """Wrapper over kernel_module to conditionally modify outs when LTO is set differently.
-
-    Args:
-        name: name of the module
-        outs: See kernel_module.outs
-        lto_outs: Like outs, but only appended to outs when LTO is not set to none
-        test_outs: KUnit test output modules
-        srcs: sources for the kernel module
-        kernel_build: See kernel_module.kernel_build
-        makefile: See kernel_module.makefile
-        deps: See kernel_module.deps
-        **kwargs: common kwargs for all rules
-    """
-    kwargs_with_private_visibility = dict(
-        kwargs,
-        visibility = ["//visibility:private"],
-    )
-
-    kernel_module(
-        name = name + "_internal",
-        srcs = srcs,
-        outs = outs + lto_outs,
-        kernel_build = kernel_build,
-        makefile = makefile,
-        deps = deps,
-        **kwargs_with_private_visibility
-    )
-
-    kernel_module(
-        name = name + "_lto_none",
-        srcs = srcs,
-        outs = outs,
-        kernel_build = kernel_build,
-        makefile = makefile,
-        deps = deps,
-        **kwargs_with_private_visibility
-    )
-
-    kernel_module(
-        name = name + "_kunit",
-        srcs = srcs,
-        outs = outs + test_outs + lto_outs,
-        kernel_build = kernel_build,
-        makefile = makefile,
-        deps = deps,
-        **kwargs_with_private_visibility
-    )
-
-    native.alias(
-        name = name,
-        actual = select({
-            "//private/devices/google/common:lto_none": name + "_lto_none",
-            "//private/devices/google/common:kunit_enabled": name + "_kunit",
-            "//conditions:default": name + "_internal",
-        }),
-        **kwargs
-    )
