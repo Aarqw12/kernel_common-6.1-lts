@@ -110,7 +110,6 @@ selects.config_setting_group(
         # keep sorted
         ":cmdline_lto_is_none",
         ":function_tracer",
-        ":kasan",
     ],
 )
 
