@@ -7,6 +7,7 @@
  */
 
 #include <dt-bindings/thermal/thermal.h>
+#include <dt-bindings/soc/google/gs101-bcl.h>
 
 / {
 	fragment@battery {
@@ -33,11 +34,121 @@
 				cpu0_clkdivstep = <0x1>;
 				batoilo_lower = <3800>;
 				batoilo_upper = <6800>;
+				batoilo_trig_lvl = <5000>;
+				batoilo_det = <0x1>;   /* 30us */
+				uvlo1_det = <0x0>;   /* 0us */
+				uvlo2_det = <0x0>;   /* 0us */
+				odpm_ratio = <3>;
 				gpios = <&gpa5 5 0>,		/* VDROOP1 */
 					<&gpa5 6 0>;		/* VDROOP2 */
 				cpu0_cluster = <0>;
 				cpu1_cluster = <4>;
 				cpu2_cluster = <6>;
+
+				irq_config {
+					irq,uvlo1;
+					irq,uvlo2;
+					irq,batoilo;
+					irq,smpl_warn;
+					/* Disabled IRQ
+					* irq,ocp_cpu1;
+					* irq,ocp_cpu2;
+					* irq,ocp_tpu;
+					* irq,ocp_gpu;
+					* irq,soft_ocp_cpu1;
+					* irq,soft_ocp_cpu2;
+					* irq,soft_ocp_tpu;
+					* irq,soft_ocp_gpu;
+					*/
+				};
+				main_limit {
+					pmic = "main_limit";
+					ch1 { setting = <209>; };
+					ch2 { setting = <157>; };
+					ch3 { setting = <182>; };
+					ch4 { setting = <202>; };
+					ch5 { setting = <143>; };
+					ch6 { setting = <89>; };
+					ch7 { setting = <238>; };
+					ch8 { setting = <74>; };
+					ch9 { setting = <177>; };
+					ch10 { setting = <171>; };
+					ch11 { setting = <60>; };
+					ch12 { setting = <60>; };
+				};
+				sub_limit {
+					pmic = "sub_limit";
+					ch1 { setting = <85>; };
+					ch2 { setting = <144>; };
+					ch3 { setting = <107>; };
+					ch4 { setting = <25>; };
+					ch5 { setting = <40>; };
+					ch6 { setting = <34>; };
+					ch7 { setting = <199>; };
+					ch8 { setting = <113>; };
+					ch9 { setting = <85>; };
+					ch10 { setting = <114>; };
+					ch11 { setting = <137>; };
+					ch12 { setting = <106>; };
+				};
+				freq_qos {
+					batoilo {
+						cpucl0 = <955000>;
+						cpucl1 = <1221000>;
+						cpucl2 = <1557000>;
+						gpu = <723000>;
+						tpu = <845000>;
+					};
+					vdroop1 {
+						cpucl0 = <1704000>;
+						cpucl1 = <1945000>;
+						cpucl2 = <2294000>;
+						gpu = <890000>;
+						tpu = <845000>;
+					};
+					vdroop2 {
+						cpucl0 = <1704000>;
+						cpucl1 = <1945000>;
+						cpucl2 = <2294000>;
+						gpu = <649000>;
+						tpu = <627000>;
+					};
+					smpl_gm {
+						cpucl0 = <1704000>;
+						cpucl1 = <1945000>;
+						cpucl2 = <2294000>;
+						gpu = <649000>;
+						tpu = <627000>;
+					};
+					ocp_cpu2 {
+						cpucl0 = <1704000>;
+						cpucl1 = <2367000>;
+						cpucl2 = <2914000>;
+						gpu = <890000>;
+						tpu = <1119000>;
+					};
+					ocp_cpu1 {
+						cpucl0 = <1704000>;
+						cpucl1 = <2367000>;
+						cpucl2 = <2914000>;
+						gpu = <890000>;
+						tpu = <1119000>;
+					};
+					ocp_gpu {
+						cpucl0 = <1704000>;
+						cpucl1 = <2367000>;
+						cpucl2 = <2914000>;
+						gpu = <890000>;
+						tpu = <1119000>;
+					};
+					ocp_tpu {
+						cpucl0 = <1704000>;
+						cpucl1 = <2367000>;
+						cpucl2 = <2914000>;
+						gpu = <890000>;
+						tpu = <1119000>;
+					};
+				};
 			};
 		};
 	};
