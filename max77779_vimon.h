@@ -53,6 +53,9 @@ struct max77779_vimon_data {
 	u8 debug_buffer_page;
 
 	struct delayed_work read_data_work;
+
+	int (*direct_reg_read)(struct max77779_vimon_data*, u8, unsigned int*);
+	int (*direct_reg_write)(struct max77779_vimon_data*, u8, unsigned int);
 };
 
 int max77779_vimon_init(struct max77779_vimon_data *data);
