@@ -7,6 +7,7 @@
  */
 #include <linux/cpuidle.h>
 #include <linux/cpumask.h>
+#include <linux/cpuset.h>
 #include <linux/lockdep.h>
 #include <linux/kobject.h>
 #include <linux/sched.h>
@@ -1158,23 +1159,6 @@ UTILIZATION_GROUP_UCLAMP_ATTRIBUTE(ug_bg, uclamp_max, UG_BG, UCLAMP_MAX);
 /// ******************************************************************************** ///
 /// ********************* New code section ***************************************** ///
 /// ******************************************************************************** ///
-static inline bool check_cred(struct task_struct *p)
-{
-	const struct cred *cred, *tcred;
-	bool ret = true;
-
-	cred = current_cred();
-	tcred = get_task_cred(p);
-	if (!uid_eq(cred->euid, GLOBAL_ROOT_UID) &&
-	    !uid_eq(cred->euid, tcred->uid) &&
-	    !uid_eq(cred->euid, tcred->suid) &&
-	    !ns_capable(tcred->user_ns, CAP_SYS_NICE)) {
-		ret = false;
-	}
-	put_cred(tcred);
-	return ret;
-}
-
 static int update_vendor_tunables(const char *buf, int count, int type)
 {
 	char *tok, *str1, *str2;
@@ -1316,6 +1300,24 @@ static int update_teo_util_threshold(const char *buf, int count)
 fail:
 	kfree(str1);
 	return -EINVAL;
+}
+
+/*
+ * Reset cpumask to task's cpuset for all tasks in the system.
+ */
+static inline void reset_sched_setaffinity(void)
+{
+	struct task_struct *p, *t;
+	struct cpumask out_mask;
+
+	rcu_read_lock();
+	for_each_process_thread(p, t) {
+		if (t->flags & (PF_SUPERPRIV | PF_WQ_WORKER | PF_IDLE | PF_NO_SETAFFINITY | PF_KTHREAD))
+			continue;
+		cpuset_cpus_allowed(t, &out_mask);
+		set_cpus_allowed_ptr(t, &out_mask);
+	}
+	rcu_read_unlock();
 }
 
 static inline struct task_struct *get_next_task(int group, struct list_head *head)
@@ -3202,13 +3204,43 @@ static ssize_t sched_lib_mask_in_store(struct file *filp,
 
 PROC_OPS_RW(sched_lib_mask_in);
 
-
 extern ssize_t sched_lib_name_store(struct file *filp,
 				const char __user *ubuffer, size_t count,
 				loff_t *ppos);
 extern int sched_lib_name_show(struct seq_file *m, void *v);
 
 PROC_OPS_RW(sched_lib_name);
+
+extern bool disable_sched_setaffinity;
+static int disable_sched_setaffinity_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%d\n", disable_sched_setaffinity);
+	return 0;
+}
+static ssize_t disable_sched_setaffinity_store(struct file *filp,
+						   const char __user *ubuf,
+						   size_t count, loff_t *pos)
+{
+	bool val = 0;
+	char buf[MAX_PROC_SIZE];
+
+	if (count >= sizeof(buf))
+		return -EINVAL;
+
+	if (copy_from_user(buf, ubuf, count))
+		return -EFAULT;
+
+	buf[count] = '\0';
+
+	if (kstrtobool(buf, &val))
+		return -EINVAL;
+
+	disable_sched_setaffinity = val;
+	if (disable_sched_setaffinity)
+		reset_sched_setaffinity();
+	return count;
+}
+PROC_OPS_RW(disable_sched_setaffinity);
 #endif /* CONFIG_RVH_SCHED_LIB */
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
@@ -3875,6 +3907,7 @@ static struct pentry entries[] = {
 	PROC_ENTRY(sched_lib_mask_out),
 	PROC_ENTRY(sched_lib_mask_in),
 	PROC_ENTRY(sched_lib_name),
+	PROC_ENTRY(disable_sched_setaffinity),
 #endif /* CONFIG_RVH_SCHED_LIB */
 	// uclamp filter
 	PROC_ENTRY(uclamp_min_filter_enable),

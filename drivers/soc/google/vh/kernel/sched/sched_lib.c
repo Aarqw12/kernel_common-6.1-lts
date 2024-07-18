@@ -6,17 +6,18 @@
  * Copyright 2021 Google LLC
  */
 
+#include <linux/cpuset.h>
 #include <linux/maple_tree.h>
 #include <linux/sched.h>
 #include <linux/sched/cputime.h>
 #include <kernel/sched/sched.h>
-#include <../../../vh/include/sched.h>
 
 #include "sched_priv.h"
 
 static char sched_lib_name[LIB_PATH_LENGTH];
 unsigned long sched_lib_mask_out_val;
 unsigned long sched_lib_mask_in_val;
+bool disable_sched_setaffinity;
 
 extern unsigned int vendor_sched_priority_task_boost_value;
 char priority_task_name[LIB_PATH_LENGTH];
@@ -122,6 +123,15 @@ void rvh_sched_setaffinity_mod(void *data, struct task_struct *task,
 
 	if (*res != 0)
 		return;
+
+	if (disable_sched_setaffinity && !check_cred(task)) {
+		cpuset_cpus_allowed(task, &out_mask);
+		set_cpus_allowed_ptr(task, &out_mask);
+		pr_debug("schedlib setaff tid: %d, mask out: %*pb\n",
+			 task_pid_nr(task), cpumask_pr_args(&out_mask));
+		*res = -EPERM;
+		return;
+	}
 
 	if (!(sched_lib_mask_in_val && sched_lib_mask_out_val))
 		return;
