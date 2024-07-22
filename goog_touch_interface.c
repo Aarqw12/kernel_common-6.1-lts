@@ -12,8 +12,6 @@
 #include <linux/power_supply.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <samsung/exynos_drm_connector.h>
-#include <samsung/panel/panel-samsung-drv.h>
 #include <trace/hooks/systrace.h>
 #if IS_ENABLED(CONFIG_QCOM_QBT_HANDLER)
 #include <qbt_handler.h>
@@ -22,6 +20,8 @@
 #if IS_ENABLED(CONFIG_GS_DRM_PANEL_UNIFIED)
 #include <gs_drm/gs_drm_connector.h>
 #endif
+#include <samsung/exynos_drm_connector.h>
+#include <samsung/panel/panel-samsung-drv.h>
 
 #include "goog_touch_interface.h"
 #include "touch_bus_negotiator.h"
@@ -87,8 +87,8 @@ static void goog_proc_heatmap_show(struct seq_file *m, void *v)
 {
 	struct goog_touch_interface *gti = m->private;
 	struct gti_sensor_data_cmd *cmd = &gti->cmd.manual_sensor_data_cmd;
-	u16 tx = gti->offload.caps.tx_size;
-	u16 rx = gti->offload.caps.rx_size;
+	u16 tx = gti->offload.caps.heatmap_width;
+	u16 rx = gti->offload.caps.heatmap_height;
 	int x, y;
 
 	if (cmd->size == 0 || cmd->buffer == NULL) {
@@ -217,7 +217,7 @@ static int goog_proc_dump_show(struct seq_file *m, void *v)
 {
 	char trace_tag[128];
 	u64 i, hc_cnt, input_cnt;
-	int ret;
+	int ret, slot;
 	ktime_t delta_time;
 	time64_t time64_utc;
 	s32 remainder;
@@ -279,6 +279,17 @@ static int goog_proc_dump_show(struct seq_file *m, void *v)
 			input_history[i].pressed.irq_index, input_history[i].released.irq_index,
 			input_history[i].released.coord.x - input_history[i].pressed.coord.x,
 			input_history[i].released.coord.y - input_history[i].pressed.coord.y);
+	}
+	seq_puts(m, "\n");
+
+	seq_puts(m, "\t### Unreleased Coordinate(s) ###\n");
+	seq_printf(m, "%8s %12s %12s %12s %12s %12s\n", "SLOT#", "X", "Y",
+		"PRESSURE", "MAJOR", "MINOR");
+	for_each_set_bit(slot, &gti->slot_bit_active, MAX_SLOTS) {
+		seq_printf(m, "%8d %12u %12u %12u %12u %12u\n", slot,
+			gti->offload.coords[slot].x, gti->offload.coords[slot].y,
+			gti->offload.coords[slot].pressure,
+			gti->offload.coords[slot].major, gti->offload.coords[slot].minor);
 	}
 	seq_puts(m, "\n");
 
@@ -1304,6 +1315,7 @@ static ssize_t self_test_show(struct device *dev,
 	struct goog_touch_interface *gti = dev_get_drvdata(dev);
 
 	gti->cmd.selftest_cmd.result = GTI_SELFTEST_RESULT_NA;
+	gti->cmd.selftest_cmd.is_ical = false;
 	memset(gti->cmd.selftest_cmd.buffer, 0, sizeof(gti->cmd.selftest_cmd.buffer));
 	ret = goog_do_selftest(gti);
 	if (ret == -EOPNOTSUPP) {
@@ -1631,6 +1643,7 @@ void ical_state_init_test(struct goog_touch_interface *gti, u32 next_state,
 		/* Begin selftest */
 
 		gti->cmd.selftest_cmd.result = GTI_SELFTEST_RESULT_NA;
+		gti->cmd.selftest_cmd.is_ical = true;
 		memset(gti->cmd.selftest_cmd.buffer, 0,
 		       sizeof(gti->cmd.selftest_cmd.buffer));
 		ret = goog_do_selftest(gti);
@@ -2084,7 +2097,9 @@ void gti_debug_input_dump(struct goog_touch_interface *gti)
 	}
 	/* Extra check for unexpected case. */
 	for_each_set_bit(slot, &gti->slot_bit_active, MAX_SLOTS) {
-		GOOG_INFO(gti, "slot #%d is active!\n", slot);
+		GOOG_INFO(gti, "slot #%d(%u, %u, %u) is active!\n", slot,
+			gti->offload.coords[slot].x, gti->offload.coords[slot].y,
+			gti->offload.coords[slot].pressure);
 	}
 }
 #endif /* GTI_DEBUG_INPUT_KFIFO_LEN */
@@ -2135,6 +2150,15 @@ static int panel_notifier_call(
 
 	if (!gti->connector) return 0;
 
+#if IS_ENABLED(CONFIG_GS_DRM_PANEL_UNIFIED)
+	if (is_gs_drm_connector(gti->connector)) {
+		if (id == GS_PANEL_NOTIFIER_SET_OP_HZ) {
+			gti->panel_op_hz = *(unsigned int*)data;
+			if (gti->event_wq != NULL)
+				queue_work(gti->event_wq, &gti->set_op_hz_work);
+		}
+	}
+#endif
 	if (is_exynos_drm_connector(gti->connector)) {
 		if (id == EXYNOS_PANEL_NOTIFIER_SET_OP_HZ) {
 			gti->panel_op_hz = *(unsigned int*)data;
@@ -2161,6 +2185,10 @@ static int panel_bridge_attach(struct drm_bridge *bridge, enum drm_bridge_attach
 		}
 
 		gti->panel_notifier.notifier_call = panel_notifier_call;
+#if IS_ENABLED(CONFIG_GS_DRM_PANEL_UNIFIED)
+		if (is_gs_drm_connector(gti->connector))
+			gs_connector_register_op_hz_notifier(gti->connector, &gti->panel_notifier);
+#endif
 		if (is_exynos_drm_connector(gti->connector))
 			exynos_panel_register_notifier(gti->connector, &gti->panel_notifier);
 	}
@@ -2179,6 +2207,10 @@ static void panel_bridge_detach(struct drm_bridge *bridge)
 
 		if (!gti->connector) return;
 
+#if IS_ENABLED(CONFIG_GS_DRM_PANEL_UNIFIED)
+		if (is_gs_drm_connector(gti->connector))
+			gs_connector_unregister_op_hz_notifier(gti->connector, &gti->panel_notifier);
+#endif
 		if (is_exynos_drm_connector(gti->connector))
 			exynos_panel_unregister_notifier(gti->connector, &gti->panel_notifier);
 	}
@@ -2215,20 +2247,20 @@ static void panel_bridge_disable(struct drm_bridge *bridge)
 static bool panel_bridge_is_lp_mode(struct drm_connector *connector)
 {
 	if (connector && connector->state) {
-		if (is_exynos_drm_connector(connector)) {
-			struct exynos_drm_connector_state *s =
-				to_exynos_connector_state(connector->state);
-
-			return s->exynos_mode.is_lp_mode;
-		}
 #if IS_ENABLED(CONFIG_GS_DRM_PANEL_UNIFIED)
-		else if (is_gs_drm_connector(connector)) {
+		if (is_gs_drm_connector(connector)) {
 			struct gs_drm_connector_state *s =
 				to_gs_connector_state(connector->state);
 
 			return s->gs_mode.is_lp_mode;
 		}
 #endif
+		if (is_exynos_drm_connector(connector)) {
+			struct exynos_drm_connector_state *s =
+				to_exynos_connector_state(connector->state);
+
+			return s->exynos_mode.is_lp_mode;
+		}
 	}
 	return false;
 }
@@ -2804,13 +2836,13 @@ int goog_offload_populate_mutual_channel(struct goog_touch_interface *gti,
 	}
 
 	mutual = (struct TouchOffloadData2d *)frame->channel_data[channel];
-	mutual->tx_size = gti->offload.caps.tx_size;
-	mutual->rx_size = gti->offload.caps.rx_size;
+	mutual->heatmap_width = gti->offload.caps.heatmap_width;
+	mutual->heatmap_height = gti->offload.caps.heatmap_height;
 	mutual->header.channel_type = frame->channel_type[channel];
 	mutual->header.channel_size =
-		TOUCH_OFFLOAD_FRAME_SIZE_2D(mutual->rx_size, mutual->tx_size);
+		TOUCH_OFFLOAD_FRAME_SIZE_2D(mutual->heatmap_height, mutual->heatmap_width);
 	if (IS_ERR_OR_NULL(buffer) ||
-		size != TOUCH_OFFLOAD_DATA_SIZE_2D(mutual->rx_size, mutual->tx_size)) {
+		size != TOUCH_OFFLOAD_DATA_SIZE_2D(mutual->heatmap_height, mutual->heatmap_width)) {
 		GOOG_LOGW(gti, "invalid buffer %p or size %u!\n", buffer, size);
 		return -EINVAL;
 	}
@@ -2830,13 +2862,13 @@ int goog_offload_populate_self_channel(struct goog_touch_interface *gti,
 	}
 
 	self = (struct TouchOffloadData1d *)frame->channel_data[channel];
-	self->tx_size = gti->offload.caps.tx_size;
-	self->rx_size = gti->offload.caps.rx_size;
+	self->heatmap_width = gti->offload.caps.heatmap_width;
+	self->heatmap_height = gti->offload.caps.heatmap_height;
 	self->header.channel_type = frame->channel_type[channel];
 	self->header.channel_size =
-		TOUCH_OFFLOAD_FRAME_SIZE_1D(self->rx_size, self->tx_size);
+		TOUCH_OFFLOAD_FRAME_SIZE_1D(self->heatmap_height, self->heatmap_width);
 	if (IS_ERR_OR_NULL(buffer) ||
-		size != TOUCH_OFFLOAD_DATA_SIZE_1D(self->rx_size, self->tx_size)) {
+		size != TOUCH_OFFLOAD_DATA_SIZE_1D(self->heatmap_height, self->heatmap_width)) {
 		GOOG_LOGW(gti, "invalid buffer %p or size %u!\n", buffer, size);
 		return -EINVAL;
 	}
@@ -2909,8 +2941,8 @@ static int goog_get_sensor_data(struct goog_touch_interface *gti,
 {
 	int ret = 0;
 	int err = 0;
-	u16 tx = gti->offload.caps.tx_size;
-	u16 rx = gti->offload.caps.rx_size;
+	u16 tx = gti->offload.caps.heatmap_width;
+	u16 rx = gti->offload.caps.heatmap_height;
 
 	if (reset_data) {
 		if (cmd->type == GTI_SENSOR_DATA_TYPE_MS) {
@@ -3395,19 +3427,20 @@ void goog_offload_input_report(void *handle,
 		gti->lptw_track_finger = false;
 	}
 
-	error = goog_pm_wake_lock(gti, GTI_PM_WAKELOCK_TYPE_OFFLOAD_REPORT, true);
-	if (error < 0) {
-		if (gti->pm.state == GTI_PM_RESUME) {
+	if (gti->pm.state == GTI_PM_RESUME) {
+		error = goog_pm_wake_lock(gti, GTI_PM_WAKELOCK_TYPE_OFFLOAD_REPORT, true);
+		if (error < 0) {
 			GOOG_WARN(gti, "Error while obtaining OFFLOAD_REPORT wakelock: %d!\n",
 				error);
+			ATRACE_END();
+			return;
 		}
-		ATRACE_END();
-		return;
+		goog_update_motion_filter(gti, slot_bit_active);
+		error = goog_pm_wake_unlock(gti, GTI_PM_WAKELOCK_TYPE_OFFLOAD_REPORT);
+		if (error < 0)
+			GOOG_WARN(gti, "Error while releasing OFFLOAD_REPORT wakelock: %d!\n",
+					error);
 	}
-	goog_update_motion_filter(gti, slot_bit_active);
-	error = goog_pm_wake_unlock(gti, GTI_PM_WAKELOCK_TYPE_OFFLOAD_REPORT);
-	if (error < 0)
-		GOOG_WARN(gti, "Error while releasing OFFLOAD_REPORT wakelock: %d!\n", error);
 	ATRACE_END();
 }
 
@@ -3456,7 +3489,7 @@ int gti_charger_state_change(struct notifier_block *nb, unsigned long action,
 
 int goog_offload_probe(struct goog_touch_interface *gti)
 {
-	int ret;
+	int ret = 0;
 	int err = 0;
 	u16 values[2];
 	struct device_node *np = gti->vendor_dev->of_node;
@@ -3514,19 +3547,15 @@ int goog_offload_probe(struct goog_touch_interface *gti)
 	gti->offload.caps.touch_offload_major_version = TOUCH_OFFLOAD_INTERFACE_MAJOR_VERSION;
 	gti->offload.caps.touch_offload_minor_version = TOUCH_OFFLOAD_INTERFACE_MINOR_VERSION;
 	gti->offload.caps.device_id = gti->offload_id;
-
-	if (of_property_read_u16_array(np, "goog,display-resolution",
-					  values, 2) == 0) {
-		gti->offload.caps.display_width = values[0];
-		gti->offload.caps.display_height = values[1];
-	} else {
-		GOOG_ERR(gti, "Please set \"goog,display-resolution\" in dts!");
-	}
+	gti->offload.caps.touch_width =
+		input_abs_get_max(gti->vendor_input_dev, ABS_MT_POSITION_X) + 1;
+	gti->offload.caps.touch_height =
+		input_abs_get_max(gti->vendor_input_dev, ABS_MT_POSITION_Y) + 1;
 
 	if (of_property_read_u16_array(np, "goog,channel-num",
 					  values, 2) == 0) {
-		gti->offload.caps.tx_size = values[0];
-		gti->offload.caps.rx_size = values[1];
+		gti->offload.caps.heatmap_width = values[0];
+		gti->offload.caps.heatmap_height = values[1];
 	} else {
 		GOOG_ERR(gti, "Please set \"goog,channel-num\" in dts!");
 		ret = -EINVAL;
@@ -3584,13 +3613,17 @@ int goog_offload_probe(struct goog_touch_interface *gti)
 	}
 
 	gti->offload_enabled = of_property_read_bool(np, "goog,offload-enabled");
-	GOOG_INFO(gti, "offload.caps: display W/H: %d * %d (Tx/Rx: %d * %d).\n",
-		gti->offload.caps.display_width, gti->offload.caps.display_height,
-		gti->offload.caps.tx_size, gti->offload.caps.rx_size);
+	GOOG_INFO(gti, "offload.caps: Coord W/H: %d * %d (Heatmap W/H: %d * %d).\n",
+		gti->offload.caps.touch_width, gti->offload.caps.touch_height,
+		gti->offload.caps.heatmap_width, gti->offload.caps.heatmap_height);
 
 	GOOG_INFO(gti, "offload ID: \"%c%c%c%c\" / 0x%08X, offload_enabled=%d.\n",
 		gti->offload_id_byte[0], gti->offload_id_byte[1], gti->offload_id_byte[2],
 		gti->offload_id_byte[3], gti->offload_id, gti->offload_enabled);
+
+	GOOG_INFO(gti, "offload.caps: version: %u.%u\n",
+		gti->offload.caps.touch_offload_major_version,
+		gti->offload.caps.touch_offload_minor_version);
 
 	gti->default_grip_enabled = of_property_read_bool(np,
 			"goog,default-grip-disabled") ? GTI_GRIP_DISABLE : GTI_GRIP_ENABLE;
@@ -3600,7 +3633,8 @@ int goog_offload_probe(struct goog_touch_interface *gti)
 			"goog,default-coord-filter-disabled") ?
 			GTI_COORD_FILTER_DISABLE : GTI_COORD_FILTER_ENABLE;
 
-	gti->heatmap_buf_size = gti->offload.caps.tx_size * gti->offload.caps.rx_size * sizeof(u16);
+	gti->heatmap_buf_size =
+		gti->offload.caps.heatmap_width * gti->offload.caps.heatmap_height * sizeof(u16);
 	gti->heatmap_buf = devm_kzalloc(gti->vendor_dev, gti->heatmap_buf_size, GFP_KERNEL);
 	if (!gti->heatmap_buf) {
 		GOOG_ERR(gti, "heamap alloc failed!\n");
@@ -3617,8 +3651,8 @@ int goog_offload_probe(struct goog_touch_interface *gti)
 	gti->v4l2.parent_dev = gti->vendor_dev;
 	gti->v4l2.input_dev = gti->vendor_input_dev;
 	gti->v4l2.read_frame = goog_v4l2_read_frame_cb;
-	gti->v4l2.width = gti->offload.caps.tx_size;
-	gti->v4l2.height = gti->offload.caps.rx_size;
+	gti->v4l2.width = gti->offload.caps.heatmap_width;
+	gti->v4l2.height = gti->offload.caps.heatmap_height;
 	gti->v4l2.frame_index_enabled = true;
 
 	/* 120 Hz operation */
@@ -3658,7 +3692,12 @@ err_offload_probe:
 
 void goog_offload_remove(struct goog_touch_interface *gti)
 {
+	gti->offload_enabled = false;
+	gti->v4l2_enabled = false;
+	power_supply_unreg_notifier(&gti->charger_notifier);
 	touch_offload_cleanup(&gti->offload);
+	heatmap_remove(&gti->v4l2);
+	devm_kfree(gti->vendor_dev, gti->heatmap_buf);
 }
 
 static void goog_input_flush_offload_fingers(struct goog_touch_interface *gti)
@@ -4230,6 +4269,8 @@ void goog_init_options(struct goog_touch_interface *gti,
 		struct gti_optional_configuration *options)
 {
 	u32 coords[4];
+	int touch_max_x = 0;
+	int display_max_x = 0;
 
 	/* Initialize the common features. */
 	gti->mf_mode = GTI_MF_MODE_DEFAULT;
@@ -4258,6 +4299,16 @@ void goog_init_options(struct goog_touch_interface *gti,
 			gti->lptw_track_max_x = coords[1];
 			gti->lptw_track_min_y = coords[2];
 			gti->lptw_track_max_y = coords[3];
+			/* Scale the tracking area to touch resolution. */
+			touch_max_x = input_abs_get_max(gti->vendor_input_dev, ABS_MT_POSITION_X) + 1;
+			display_max_x = gti->lptw_track_min_x + gti->lptw_track_max_x;
+			gti->lptw_track_min_x = gti->lptw_track_min_x * touch_max_x / display_max_x;
+			gti->lptw_track_max_x = gti->lptw_track_max_x * touch_max_x / display_max_x;
+			gti->lptw_track_min_y = gti->lptw_track_min_y * touch_max_x / display_max_x;
+			gti->lptw_track_max_y = gti->lptw_track_max_y * touch_max_x / display_max_x;
+			GOOG_LOGI(gti, "goog,lptw-tracking-area %d, %d, %d, %d\n",
+					gti->lptw_track_min_x, gti->lptw_track_max_x,
+					gti->lptw_track_min_y, gti->lptw_track_max_y);
 			INIT_DELAYED_WORK(&gti->lptw_cancel_delayed_work, goog_lptw_cancel_delayed_work);
 		}
 		gti->panel_notifier_enabled = of_property_read_bool(np,
@@ -4708,6 +4759,9 @@ static int goog_pm_probe(struct goog_touch_interface *gti)
 	mutex_init(&pm->lock_mutex);
 	INIT_WORK(&pm->state_update_work, goog_pm_state_update_work);
 
+	device_init_wakeup(gti->dev, true);
+	pm_stay_awake(gti->dev);
+
 	/* init pm_qos. */
 	cpu_latency_qos_add_request(&gti->pm_qos_req, PM_QOS_DEFAULT_VALUE);
 	pm->enabled = true;
@@ -4722,6 +4776,9 @@ static int goog_pm_remove(struct goog_touch_interface *gti)
 	if (pm->enabled) {
 		pm->enabled = false;
 		cpu_latency_qos_remove_request(&gti->pm_qos_req);
+
+		pm_relax(gti->dev);
+		device_init_wakeup(gti->dev, false);
 	}
 
 	return 0;
@@ -5160,6 +5217,14 @@ int goog_touch_interface_remove(struct goog_touch_interface *gti)
 		gti->event_wq = NULL;
 	}
 
+	unregister_panel_bridge(&gti->panel_bridge);
+	goog_pm_remove(gti);
+
+	if (gti->tbn_enabled && gti->tbn_register_mask)
+		unregister_tbn(&gti->tbn_register_mask);
+
+	goog_offload_remove(gti);
+
 	if (gti->dev) {
 		sysfs_remove_group(&gti->dev->kobj, &goog_attr_group);
 		if (gti->vendor_dev)
@@ -5181,17 +5246,6 @@ int goog_touch_interface_remove(struct goog_touch_interface *gti)
 		}
 	}
 
-	unregister_panel_bridge(&gti->panel_bridge);
-	goog_pm_remove(gti);
-
-	if (gti->tbn_enabled && gti->tbn_register_mask)
-		unregister_tbn(&gti->tbn_register_mask);
-
-	gti->offload_enabled = false;
-	gti->v4l2_enabled = false;
-	goog_offload_remove(gti);
-	heatmap_remove(&gti->v4l2);
-	devm_kfree(gti->vendor_dev, gti->heatmap_buf);
 	devm_kfree(gti->vendor_dev, gti);
 
 	return 0;
