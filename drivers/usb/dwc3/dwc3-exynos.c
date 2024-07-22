@@ -34,6 +34,9 @@
 #include "core-exynos.h"
 #include "dwc3-exynos-ldo.h"
 #include "exynos-otg.h"
+#if IS_ENABLED(CONFIG_USB_XHCI_GOOG_DMA)
+#include "xhci-goog-dma.h"
+#endif
 
 static const struct of_device_id exynos_dwc3_match[] = {
 	{
@@ -635,6 +638,43 @@ static int dwc3_exynos_remove_child(struct device *dev, void *unused)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_USB_XHCI_GOOG_DMA)
+static struct xhci_goog_dma_coherent_mem **dwc3_exynos_get_dma_coherent_mem(struct device *dev)
+{
+	struct xhci_goog_dma_coherent_mem **dma_mem = NULL;
+	struct device *dwc3_exynos = dev->parent;
+	struct dwc3_exynos *exynos = dev_get_drvdata(dwc3_exynos);
+
+	if (exynos) {
+		if (!exynos->mem) {
+			exynos->mem = devm_kzalloc(dev,
+				XHCI_GOOG_DMA_RMEM_MAX*sizeof(struct xhci_goog_dma_coherent_mem *),
+				GFP_KERNEL);
+		}
+
+		dma_mem = exynos->mem;
+	}
+
+	return dma_mem;
+}
+
+static void dwc3_exynos_put_dma_coherent_mem(struct device *dev)
+{
+	struct device *dwc3_exynos = dev->parent;
+	struct dwc3_exynos *exynos = dev_get_drvdata(dwc3_exynos);
+
+	if (exynos) {
+		if (exynos->mem) {
+			dev_dbg(dev, "Free the DMA memory.\n");
+			exynos->mem[XHCI_GOOG_DMA_RMEM_SRAM] = NULL;
+			exynos->mem[XHCI_GOOG_DMA_RMEM_DRAM] = NULL;
+			devm_kfree(dev, exynos->mem);
+			exynos->mem = NULL;
+		}
+	}
+}
+#endif
+
 int dwc3_exynos_host_init(struct dwc3_exynos *exynos)
 {
 	struct dwc3		*dwc = exynos->dwc;
@@ -669,6 +709,11 @@ int dwc3_exynos_host_init(struct dwc3_exynos *exynos)
 	dwc->xhci_resources[1].end = irq;
 	dwc->xhci_resources[1].flags = IORESOURCE_IRQ | irq_get_trigger_type(irq);
 	dwc->xhci_resources[1].name = of_node_full_name(dwc3_pdev->dev.of_node);
+
+#if IS_ENABLED(CONFIG_USB_XHCI_GOOG_DMA)
+	xhci_goog_register_get_cb(dwc3_exynos_get_dma_coherent_mem);
+	xhci_goog_register_put_cb(dwc3_exynos_put_dma_coherent_mem);
+#endif
 
 	xhci = platform_device_alloc("xhci-hcd-exynos", PLATFORM_DEVID_AUTO);
 	if (!xhci) {
@@ -732,6 +777,11 @@ void dwc3_exynos_host_exit(struct dwc3_exynos *exynos)
 	struct dwc3		*dwc = exynos->dwc;
 
 	platform_device_unregister(dwc->xhci);
+
+#if IS_ENABLED(CONFIG_USB_XHCI_GOOG_DMA)
+	xhci_goog_unregister_get_cb();
+	xhci_goog_unregister_put_cb();
+#endif
 }
 EXPORT_SYMBOL_GPL(dwc3_exynos_host_exit);
 
@@ -1185,7 +1235,11 @@ static int dwc3_exynos_probe(struct platform_device *pdev)
 	ret = pm_runtime_put(dev);
 	pm_runtime_allow(dev);
 
-	dwc3_exynos_otg_init(exynos->dwc, exynos);
+	ret = dwc3_exynos_otg_init(exynos->dwc, exynos);
+	if (ret < 0) {
+		dev_err(dev, "failed to initialize dwc3_exynos_otg\n");
+		goto populate_err;
+	}
 
 	/* disconnect gadget in probe */
 	usb_udc_vbus_handler(exynos->dwc->gadget, false);
@@ -1229,6 +1283,8 @@ static int dwc3_exynos_remove(struct platform_device *pdev)
 	struct dwc3_exynos	*exynos = platform_get_drvdata(pdev);
 	struct dwc3	*dwc = exynos->dwc;
 
+	dwc3_exynos_otg_exit(dwc, exynos);
+
 	pm_runtime_get_sync(&pdev->dev);
 
 	dwc3_ulpi_exit(dwc);
@@ -1266,6 +1322,8 @@ static void dwc3_exynos_shutdown(struct platform_device *pdev)
 	/* unregister the notifiers for USB and USB_HOST*/
 	extcon_unregister_notifier(exynos->edev, EXTCON_USB, &exynos->device_nb);
 	extcon_unregister_notifier(exynos->edev, EXTCON_USB_HOST, &exynos->host_nb);
+
+	dwc3_exynos_remove(pdev);
 
 	return;
 }
@@ -1322,6 +1380,24 @@ static int dwc3_exynos_runtime_resume(struct device *dev)
 	pm_runtime_mark_last_busy(dev);
 	return 0;
 }
+
+static int dwc3_exynos_runtime_idle(struct device *dev)
+{
+#if IS_ENABLED(CONFIG_EXYNOS_PD_HSI0)
+	struct dwc3_exynos *exynos = dev_get_drvdata(dev);
+	u32 reg;
+
+	if (exynos->dwc && exynos_pd_hsi0_get_ldo_status()) {
+		reg = dwc3_exynos_readl(exynos->dwc->regs, DWC3_DALEPENA);
+		if (reg)
+			return -EBUSY;
+	}
+#endif
+
+	pm_runtime_mark_last_busy(dev);
+
+	return 0;
+}
 #endif
 
 #ifdef CONFIG_PM_SLEEP
@@ -1358,7 +1434,7 @@ static int dwc3_exynos_resume(struct device *dev)
 static const struct dev_pm_ops dwc3_exynos_dev_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(dwc3_exynos_suspend, dwc3_exynos_resume)
 	SET_RUNTIME_PM_OPS(dwc3_exynos_runtime_suspend,
-			   dwc3_exynos_runtime_resume, NULL)
+			   dwc3_exynos_runtime_resume, dwc3_exynos_runtime_idle)
 };
 
 #define DEV_PM_OPS	(&dwc3_exynos_dev_pm_ops)

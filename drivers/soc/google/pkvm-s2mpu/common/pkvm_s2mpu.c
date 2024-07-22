@@ -284,8 +284,9 @@ static int s2mpu_probe(struct platform_device *pdev)
 	struct device_node *np = pdev->dev.of_node;
 	struct resource *res;
 	struct s2mpu_data *data;
-	bool off_at_boot, has_sync, dma_at_boot;
+	bool off_at_boot, has_sync, dma_at_boot, deny_all;
 	int ret, nr_devs = 0;
+	u8 flags = 0;
 
 	data = devm_kmalloc(dev, sizeof(*data), GFP_KERNEL);
 	if (!data)
@@ -310,6 +311,7 @@ static int s2mpu_probe(struct platform_device *pdev)
 	has_sync = !!of_get_property(np, "built-in-sync", NULL);
 	data->has_pd = !!of_get_property(np, "power-domains", NULL);
 	dma_at_boot = !!of_get_property(np, "dma-cons", NULL);
+	deny_all = !!of_get_property(np, "deny-all", NULL);
 	/*
 	 * Try to parse IRQ information. This is optional as it only affects
 	 * runtime fault reporting, and therefore errors do not fail the whole
@@ -317,10 +319,15 @@ static int s2mpu_probe(struct platform_device *pdev)
 	 */
 	s2mpu_probe_irq(pdev, data);
 
+	if (has_sync)
+		flags |= S2MPU_HAS_SYNC;
+	if (deny_all)
+		flags |= S2MPU_DENY_ALL;
+
 	/* If a device have a dma-cons property link it as a consumer. */
 	WARN_ON(pkvm_s2mpu_of_link_with_cons(dev));
 
-	ret = pkvm_iommu_s2mpu_register(dev, res->start, has_sync);
+	ret = pkvm_iommu_s2mpu_register(dev, res->start, flags);
 	if (ret && ret != -ENODEV) {
 		dev_err(dev, "could not register: %d\n", ret);
 		return ret;
@@ -361,7 +368,8 @@ static int s2mpu_probe(struct platform_device *pdev)
 	else if (!off_at_boot)
 		WARN_ON(__pkvm_s2mpu_suspend(dev));
 
-	pm_runtime_enable(dev);
+	if (!deny_all)
+		pm_runtime_enable(dev);
 
 	/*
 	 * We get a reference for nodes with dma-cons as if we enabled run time pm for them, it will

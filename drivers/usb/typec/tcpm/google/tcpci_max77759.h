@@ -40,6 +40,7 @@ struct max77759_plat {
 	struct gvotable_election *usb_icl_proto_el;
 	struct gvotable_election *usb_icl_el;
 	struct gvotable_election *charger_mode_votable;
+	struct gvotable_election *bcl_usb_votable;
 	bool vbus_enabled;
 	/* Data role notified to the data stack */
 	enum typec_data_role active_data_role;
@@ -99,6 +100,7 @@ struct max77759_plat {
 	u8 debug_acc_connected:1;
 	/* Cache status when sourcing vbus. Used to modify vbus_present status */
 	u8 sourcing_vbus:1;
+	u8 sourcing_vbus_high:1;
 	/* Cache vbus_present as MAX77759 reports vbus present = 0 when vbus < 4V */
 	u8 vbus_present:1;
 	u8 cc1;
@@ -146,11 +148,14 @@ struct max77759_plat {
 	int typec_current_max;
 	struct kthread_worker *wq;
 	struct kthread_worker *dp_notification_wq;
+	struct kthread_worker *bcl_usb_wq;
 	struct kthread_delayed_work icl_work;
 	struct kthread_delayed_work enable_vbus_work;
 	struct kthread_delayed_work vsafe0v_work;
 	struct kthread_delayed_work reset_ovp_work;
 	struct kthread_delayed_work check_missing_rp_work;
+	struct kthread_delayed_work bcl_usb_votable_work;
+	u8 bcl_usb_vote;
 
 	/* Notifier for data role */
 	struct usb_role_switch *usb_sw;
@@ -203,6 +208,13 @@ struct max77759_plat {
 
 	/* When true debounce disconnects to prevent user notifications during brief disconnects */
 	bool debounce_adapter_disconnect;
+
+	/* Read from device tree and denotes the vbus voltage threshold for ovp during source */
+	u32 ext_bst_ovp_clear_mv;
+	/* Used to check voltage again after a second to see if it meets the ovp threshold */
+	struct kthread_delayed_work ext_bst_ovp_clear_work;
+	/* protects checking and setting sourcing_vbus_high in check_and_clear_ext_bst */
+	struct mutex ext_bst_ovp_clear_lock;
 
 	int device_id;
 	int product_id;

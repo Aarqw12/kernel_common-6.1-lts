@@ -744,9 +744,8 @@ static int mfc_dec_s_fmt_vid_out_mplane(struct file *file, void *priv,
 	mfc_debug(2, "[STREAM] sizeimage: %d\n", pix_fmt_mp->plane_fmt[0].sizeimage);
 	pix_fmt_mp->plane_fmt[0].bytesperline = 0;
 
-	/* Increase hw_run_cnt to prevent the HW idle checker from entering idle mode */
 	core = mfc_get_main_core_wait(dev, ctx);
-	atomic_inc(&core->hw_run_cnt);
+	atomic_inc(&core->during_idle_resume);
 	/* Trigger idle resume if core is in the idle mode for starting NAL_Q */
 	mfc_rm_qos_control(ctx, MFC_QOS_TRIGGER);
 
@@ -754,6 +753,7 @@ static int mfc_dec_s_fmt_vid_out_mplane(struct file *file, void *priv,
 	if (ret)
 		mfc_ctx_err("Failed to instance open\n");
 
+	atomic_dec(&core->during_idle_resume);
 	mfc_debug_leave();
 
 	return ret;
@@ -995,7 +995,7 @@ static int mfc_dec_dqbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 		ret = vb2_dqbuf(&ctx->vq_dst, buf, file->f_flags & O_NONBLOCK);
 		mfc_debug(4, "dec dst buf[%d] DQ\n", buf->index);
 
-		if (buf->index >= MFC_MAX_DPBS) {
+		if (buf->index >= MFC_MAX_BUFFERS) {
 			mfc_ctx_err("buffer index[%d] range over\n", buf->index);
 			return -EINVAL;
 		}
@@ -1096,9 +1096,8 @@ static int mfc_dec_streamoff(struct file *file, void *priv,
 
 	mfc_debug_enter();
 
-	/* Increase hw_run_cnt to prevent the HW idle checker from entering idle mode */
 	core = mfc_get_main_core_wait(dev, ctx);
-	atomic_inc(&core->hw_run_cnt);
+	atomic_inc(&core->during_idle_resume);
 	/* Trigger idle resume if core is in the idle mode for stopping NAL_Q */
 	mfc_rm_qos_control(ctx, MFC_QOS_TRIGGER);
 
@@ -1116,6 +1115,7 @@ static int mfc_dec_streamoff(struct file *file, void *priv,
 		mfc_ctx_err("unknown v4l2 buffer type\n");
 	}
 
+	atomic_dec(&core->during_idle_resume);
 	mfc_debug_leave();
 
 	return ret;

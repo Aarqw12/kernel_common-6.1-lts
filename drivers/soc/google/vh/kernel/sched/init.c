@@ -13,6 +13,7 @@
 #include <trace/hooks/binder.h>
 #include <trace/hooks/cgroup.h>
 #include <trace/hooks/sched.h>
+#include <trace/hooks/suspend.h>
 #include <trace/hooks/topology.h>
 #include <trace/hooks/cpufreq.h>
 
@@ -40,12 +41,14 @@ extern void rvh_cpu_overutilized_pixel_mod(void *data, int cpu, int *overutilize
 extern void rvh_uclamp_eff_get_pixel_mod(void *data, struct task_struct *p,
 					 enum uclamp_id clamp_id, struct uclamp_se *uclamp_max,
 					 struct uclamp_se *uclamp_eff, int *ret);
-#if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 extern void rvh_util_est_update_pixel_mod(void *data, struct cfs_rq *cfs_rq, struct task_struct *p,
 					   bool task_sleep, int *ret);
+#if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 extern void rvh_cpu_cgroup_online_pixel_mod(void *data, struct cgroup_subsys_state *css);
 #endif
 extern void rvh_post_init_entity_util_avg_pixel_mod(void *data, struct sched_entity *se);
+extern void rvh_check_preempt_wakeup_ignore_pixel_mod(void *data, struct task_struct *curr,
+			bool *ignore);
 extern void rvh_check_preempt_wakeup_pixel_mod(void *data, struct rq *rq, struct task_struct *p,
 			bool *preempt, bool *nopreempt, int wake_flags, struct sched_entity *se,
 			struct sched_entity *pse, int next_buddy_marked, unsigned int granularity);
@@ -115,6 +118,7 @@ extern void rvh_util_fits_cpu_pixel_mod(void *data, unsigned long util, unsigned
 extern int pmu_poll_init(void);
 extern void set_cluster_enabled_cb(int cluster, int enabled);
 extern void register_set_cluster_enabled_cb(void (*func)(int, int));
+extern void vh_sched_resume_end(void *data, void *unused);
 
 extern struct cpufreq_governor sched_pixel_gov;
 extern bool wait_for_init;
@@ -291,9 +295,19 @@ out_no_pixel_cluster_start_cpu:
 	return -ENOMEM;
 }
 
+static void init_sched_params(void)
+{
+	vh_sched_max_load_balance_interval = max_load_balance_interval;
+	vh_sched_min_granularity_ns = sysctl_sched_min_granularity;
+	vh_sched_wakeup_granularity_ns = sysctl_sched_wakeup_granularity;
+	vh_sched_latency_ns = sysctl_sched_latency;
+}
+
 static int vh_sched_init(void)
 {
 	int ret;
+
+	init_sched_params();
 
 	ret = init_pixel_cpu();
 	if (ret) {
@@ -439,10 +453,11 @@ static int vh_sched_init(void)
 	if (ret)
 		return ret;
 
-#if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 	ret = register_trace_android_rvh_util_est_update(rvh_util_est_update_pixel_mod, NULL);
 	if (ret)
 		return ret;
+
+#if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 
 	ret = register_trace_android_rvh_cpu_cgroup_online(
 		rvh_cpu_cgroup_online_pixel_mod, NULL);
@@ -462,6 +477,11 @@ static int vh_sched_init(void)
 
 	ret = register_trace_android_rvh_post_init_entity_util_avg(
 		rvh_post_init_entity_util_avg_pixel_mod, NULL);
+	if (ret)
+		return ret;
+
+	ret = register_trace_android_rvh_check_preempt_wakeup_ignore(
+		rvh_check_preempt_wakeup_ignore_pixel_mod, NULL);
 	if (ret)
 		return ret;
 
@@ -550,6 +570,10 @@ static int vh_sched_init(void)
 #endif
 
 	ret = register_trace_android_rvh_util_fits_cpu(rvh_util_fits_cpu_pixel_mod, NULL);
+	if (ret)
+		return ret;
+
+	ret = register_trace_android_vh_resume_end(vh_sched_resume_end, NULL);
 	if (ret)
 		return ret;
 

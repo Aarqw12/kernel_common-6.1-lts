@@ -46,6 +46,7 @@ extern unsigned int sched_dvfs_headroom[CONFIG_VH_SCHED_MAX_CPU_NR];
 extern unsigned int sched_auto_uclamp_max[CONFIG_VH_SCHED_MAX_CPU_NR];
 extern unsigned int sched_per_cpu_iowait_boost_max_value[CONFIG_VH_SCHED_MAX_CPU_NR];
 extern unsigned int sched_per_task_iowait_boost_max_value;
+extern unsigned int vendor_sched_adpf_rampup_multiplier;
 
 extern int pixel_cpu_num;
 extern int pixel_cluster_num;
@@ -54,6 +55,11 @@ extern int *pixel_cluster_cpu_num;
 extern int *pixel_cpu_to_cluster;
 extern int *pixel_cluster_enabled;
 extern unsigned int *pixel_cpd_exit_latency;
+
+extern unsigned int vh_sched_max_load_balance_interval;
+extern unsigned int vh_sched_min_granularity_ns;
+extern unsigned int vh_sched_wakeup_granularity_ns;
+extern unsigned int vh_sched_latency_ns;
 
 DECLARE_STATIC_KEY_FALSE(auto_migration_margins_enable);
 DECLARE_STATIC_KEY_FALSE(auto_dvfs_headroom_enable);
@@ -143,6 +149,7 @@ struct vendor_group_property {
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 	unsigned int group_throttle;
 #endif
+	cpumask_t group_cfs_skip_mask;
 	cpumask_t preferred_idle_mask_low;
 	cpumask_t preferred_idle_mask_mid;
 	cpumask_t preferred_idle_mask_high;
@@ -164,6 +171,7 @@ struct vendor_group_property {
 	enum utilization_group ug;
 #endif
 	struct uclamp_se uc_req[UCLAMP_CNT];
+	unsigned int rampup_multiplier;
 };
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
@@ -533,6 +541,10 @@ static inline void init_vendor_task_struct(struct vendor_task_struct *v_tsk)
 	v_tsk->uclamp_pi[UCLAMP_MIN] = uclamp_none(UCLAMP_MIN);
 	v_tsk->uclamp_pi[UCLAMP_MAX] = uclamp_none(UCLAMP_MAX);
 	v_tsk->runnable_start_ns = -1;
+	v_tsk->delta_exec = 0;
+	v_tsk->util_enqueued = 0;
+	v_tsk->prev_util_enqueued = 0;
+	v_tsk->ignore_util_est_update = false;
 }
 
 extern u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se);
@@ -857,10 +869,10 @@ static inline void __update_util_est_invariance(struct rq *rq,
 						bool update_cfs_rq)
 {
 	struct vendor_task_struct *vp = get_vendor_task_struct(p);
-	unsigned long se_enqueued, cfs_rq_enqueued;
+	unsigned long se_enqueued, cfs_rq_enqueued, new_util_est;
 	struct cfs_rq *cfs_rq = &rq->cfs;
 	struct sched_entity *se = &p->se;
-	int cpu = cpu_of(rq);
+	unsigned int rampup_multiplier;
 	u64 delta_exec;
 	int __maybe_unused group;
 
@@ -873,12 +885,25 @@ static inline void __update_util_est_invariance(struct rq *rq,
 	if (!fair_policy(p->policy) && !idle_policy(p->policy))
 		return;
 
-	if (se->avg.util_avg >= arch_scale_cpu_capacity(cpu))
+	if (get_uclamp_fork_reset(p, true))
+		rampup_multiplier = vendor_sched_adpf_rampup_multiplier;
+	else
+		rampup_multiplier = vg[get_vendor_group(p)].rampup_multiplier;
+
+	if (unlikely(!rampup_multiplier))
 		return;
 
 	delta_exec = (se->sum_exec_runtime - vp->prev_sum_exec_runtime)/1000;
-	delta_exec = min_t(u64, delta_exec, TICK_USEC);
+	delta_exec *= rampup_multiplier;
+
+	vp->delta_exec += delta_exec;
 	vp->prev_sum_exec_runtime = se->sum_exec_runtime;
+
+	/* Is the task util increasing? */
+	if (task_util(p) < vp->util_enqueued)
+		return;
+
+	new_util_est = approximate_util_avg(vp->util_enqueued, vp->delta_exec);
 
 	se_enqueued = READ_ONCE(se->avg.util_est.enqueued) & ~UTIL_AVG_UNCHANGED;
 	se_enqueued = max_t(unsigned long, se->avg.util_est.ewma, se_enqueued);
@@ -894,17 +919,16 @@ static inline void __update_util_est_invariance(struct rq *rq,
 		lsub_positive(&cfs_rq_enqueued, se_enqueued);
 	}
 
-	se_enqueued = approximate_util_avg(se_enqueued, delta_exec);
-	WRITE_ONCE(se->avg.util_est.enqueued, se_enqueued | UTIL_AVG_UNCHANGED);
+	WRITE_ONCE(se->avg.util_est.enqueued, new_util_est);
 	trace_sched_util_est_se_tp(se);
 
 	if (update_cfs_rq) {
-		cfs_rq_enqueued += se_enqueued;
+		cfs_rq_enqueued += new_util_est;
 		WRITE_ONCE(cfs_rq->avg.util_est.enqueued, cfs_rq_enqueued);
 		trace_sched_util_est_cfs_tp(cfs_rq);
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
-		vendor_cfs_util[group][rq->cpu].util_est += se_enqueued;
+		vendor_cfs_util[group][rq->cpu].util_est += new_util_est;
 		raw_spin_unlock(&vendor_cfs_util[group][rq->cpu].lock);
 #endif
 	}

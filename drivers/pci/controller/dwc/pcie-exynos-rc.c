@@ -80,6 +80,9 @@ static struct pci_dev *exynos_pcie_get_pci_dev(struct dw_pcie_rp *pp);
 struct exynos_pm_qos_request exynos_pcie_int_qos[MAX_RC_NUM];
 #endif
 
+/* Set this value slightly larger than PCIe CPL timeout, which is 44 ms by default */
+#define EP_CONFIG_ACCESS_TIMEOUT_MS	(50)
+
 /*
  * PCIe channel0 is in the HSI1 block.
  * PCIe channel1 is in the HSI2 block.
@@ -884,12 +887,138 @@ static ssize_t power_stats_show(struct device *dev, struct device_attribute *att
 	return ret;
 }
 
+static void link_duration_update(struct exynos_pcie *pcie, u32 opcode)
+{
+	int i;
+	int link_speed;
+	int last_speed;
+	u64 current_ts;
+	u64 link_duration_delta;
+	unsigned long flags;
+
+	if (opcode >= LINK_DURATION_OPCODE_MAX)
+		return;
+
+	spin_lock_irqsave(&pcie->link_duration_lock, flags);
+
+	switch(opcode) {
+		case LINK_DURATION_INIT:
+			pcie->link_duration_stats.last_link_speed = 0;
+			for(i = 0; i < NUM_LINK_SPEEDS; i++) {
+				pcie->link_duration_stats.speed[i].count = 0;
+				pcie->link_duration_stats.speed[i].duration = 0;
+				pcie->link_duration_stats.speed[i].last_entry_ts = 0;
+			}
+
+			break;
+		case LINK_DURATION_UP:
+			link_speed = pcie->target_link_speed;
+			pcie->link_duration_stats.last_link_speed = link_speed;
+
+			if (link_speed > NUM_LINK_SPEEDS || link_speed <= 0)
+				break;
+
+			current_ts = power_stats_get_ts();
+
+			pcie->link_duration_stats.speed[link_speed - 1].count++;
+			pcie->link_duration_stats.speed[link_speed - 1].last_entry_ts =
+				current_ts;
+
+			break;
+		case LINK_DURATION_DOWN:
+			link_speed = pcie->target_link_speed;
+			pcie->link_duration_stats.last_link_speed = link_speed;
+
+			if (link_speed > NUM_LINK_SPEEDS || link_speed <= 0)
+				break;
+
+			current_ts = power_stats_get_ts();
+			link_duration_delta = current_ts -
+				pcie->link_duration_stats.speed[link_speed - 1].last_entry_ts;
+
+			pcie->link_duration_stats.speed[link_speed - 1].duration +=
+				link_duration_delta;
+			pcie->link_duration_stats.speed[link_speed - 1].last_entry_ts =
+				current_ts;
+			break;
+		case LINK_DURATION_SPD_CHG:
+			link_speed = pcie->target_link_speed;
+			last_speed = pcie->link_duration_stats.last_link_speed;
+
+			if (link_speed > NUM_LINK_SPEEDS || link_speed <= 0)
+				break;
+
+			current_ts = power_stats_get_ts();
+
+			if (link_speed != last_speed) {
+				link_duration_delta = current_ts -
+					pcie->link_duration_stats.speed[last_speed - 1].last_entry_ts;
+
+				pcie->link_duration_stats.speed[last_speed - 1].duration +=
+					link_duration_delta;
+				pcie->link_duration_stats.speed[last_speed - 1].last_entry_ts =
+					current_ts;
+
+				pcie->link_duration_stats.speed[link_speed - 1].count++;
+				pcie->link_duration_stats.speed[link_speed - 1].last_entry_ts =
+					current_ts;
+				pcie->link_duration_stats.last_link_speed = link_speed;
+			}
+
+			break;
+	}
+
+	spin_unlock_irqrestore(&pcie->link_duration_lock, flags);
+}
+
+static ssize_t link_duration_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	int i;
+	int ret = 0;
+	int link_speed;
+	u64 current_ts;
+	u64 link_duration_delta = 0;
+	unsigned long flags;
+	enum exynos_pcie_state pcie_state;
+	struct link_duration_stats link_duration_copy;
+	struct exynos_pcie *pcie = dev_get_drvdata(dev);
+
+	spin_lock_irqsave(&pcie->link_duration_lock, flags);
+	memcpy(&link_duration_copy, &pcie->link_duration_stats,
+		sizeof(struct link_duration_stats));
+	current_ts = power_stats_get_ts();
+	pcie_state = pcie->state;
+	link_speed = pcie->target_link_speed;
+	spin_unlock_irqrestore(&pcie->link_duration_lock, flags);
+
+	if (link_speed <= NUM_LINK_SPEEDS &&
+			(pcie_state == STATE_LINK_UP || pcie_state == STATE_LINK_DOWN_TRY))
+		link_duration_delta = current_ts -
+			link_duration_copy.speed[link_speed - 1].last_entry_ts;
+
+	ret += sysfs_emit(buf, "link_speed:\n    GEN%d\n", link_speed);
+
+	for (i = 0; i < NUM_LINK_SPEEDS; i++) {
+		if (link_duration_copy.speed[i].count) {
+			ret += sysfs_emit_at(buf, ret,
+				"Gen%d:\n    count: %#llx\n    duration msec: %#llx\n",
+				i + 1,
+				link_duration_copy.speed[i].count,
+				(link_duration_copy.speed[i].duration +
+					(i == (link_speed - 1) ? link_duration_delta : 0)));
+		}
+	}
+
+	return ret;
+}
+
 static DEVICE_ATTR_RW(link_speed);
 static DEVICE_ATTR_RW(link_width);
 static DEVICE_ATTR_RO(link_state);
 static DEVICE_ATTR_RO(power_stats);
 static DEVICE_ATTR_RW(sbb_debug);
-
+static DEVICE_ATTR_RO(link_duration);
 
 /* percentage (0-100) to weight new datapoints in moving average */
 #define NEW_DATA_AVERAGE_WEIGHT  10
@@ -1272,6 +1401,12 @@ static inline int create_pcie_sys_file(struct device *dev)
 		return ret;
 	}
 
+	ret = device_create_file(dev, &dev_attr_link_duration);
+	if (ret) {
+		dev_err(dev, "couldn't create device file for link_duration(%d)\n", ret);
+		return ret;
+	}
+
 	ret = sysfs_create_group(&pdev->dev.kobj, &link_stats_group);
 	if (ret) {
 		dev_err(dev, "couldn't create sysfs group for link_stats(%d)\n", ret);
@@ -1297,6 +1432,7 @@ static inline void remove_pcie_sys_file(struct device *dev)
 	device_remove_file(dev, &dev_attr_sbb_debug);
 	device_remove_file(dev, &dev_attr_link_state);
 	device_remove_file(dev, &dev_attr_power_stats);
+	device_remove_file(dev, &dev_attr_link_duration);
 	sysfs_remove_group(&pdev->dev.kobj, &link_stats_group);
 	sysfs_remove_group(&pdev->dev.kobj, &l1ss_group);
 }
@@ -1620,6 +1756,14 @@ static int exynos_pcie_rc_link_up(struct dw_pcie *pci)
 	return 0;
 }
 
+static int exynos_pcie_get_next_online_cpu(void)
+{
+	int cpu = cpumask_next(smp_processor_id(), cpu_online_mask);
+	if (cpu >= nr_cpu_ids)
+		cpu = cpumask_first(cpu_online_mask);
+	return cpu;
+}
+
 static int exynos_pcie_rc_rd_other_conf(struct dw_pcie_rp *pp, struct pci_bus *bus, u32 devfn,
 					int where, int size, u32 *val)
 {
@@ -1643,7 +1787,16 @@ static int exynos_pcie_rc_rd_other_conf(struct dw_pcie_rp *pp, struct pci_bus *b
 	/* setup ATU for cfg/mem outbound */
 	exynos_pcie_rc_prog_viewport_cfg0(pp, busdev);
 
-	ret = dw_pcie_read(va_cfg_base + where, size, val);
+	if ((exynos_pcie->ch_num == 0) && (where == 0x44)) {
+		/* Failure case for b/328825657 */
+		queue_delayed_work_on(exynos_pcie_get_next_online_cpu(), exynos_pcie->pcie_wq,
+				      &exynos_pcie->cfg_access_work,
+				      msecs_to_jiffies(EP_CONFIG_ACCESS_TIMEOUT_MS));
+		ret = dw_pcie_read(va_cfg_base + where, size, val);
+		cancel_delayed_work_sync(&exynos_pcie->cfg_access_work);
+	}
+	else
+		ret = dw_pcie_read(va_cfg_base + where, size, val);
 
 	exynos_elbi_write(exynos_pcie, 0x0, PCIE_APP_XFER_PENDING);
 	// Fake code for Samsung Modem.
@@ -2144,6 +2297,13 @@ static int exynos_pcie_rc_parse_dt(struct device *dev, struct exynos_pcie *exyno
 			exynos_pcie->ch_num);
 	} else {
 		gpio_direction_output(exynos_pcie->ssd_gpio, 0);
+	}
+
+	if (of_property_read_u32(np, "de-emphasis-level", &exynos_pcie->de_emphasis_level)) {
+		dev_info(dev, "failed to parse the de-emphasis level, default 0\n");
+		exynos_pcie->de_emphasis_level = 0;
+	} else {
+		dev_dbg(dev, "parse de-emphasis level: %d\n", exynos_pcie->de_emphasis_level);
 	}
 
 	return 0;
@@ -3143,6 +3303,7 @@ static irqreturn_t exynos_pcie_rc_irq_handler(int irq, void *arg)
 					      "in cpl recovery");
 			else {
 				logbuffer_log(exynos_pcie->log, "start cpl recovery");
+				cancel_delayed_work_sync(&exynos_pcie->cfg_access_work);
 				exynos_pcie->cpl_timeout_recovery = 1;
 				exynos_pcie->state = STATE_LINK_DOWN_TRY;
 				queue_work(exynos_pcie->pcie_wq,
@@ -3698,6 +3859,7 @@ int exynos_pcie_rc_poweron(int ch_num)
 		spin_unlock_irqrestore(&exynos_pcie->reg_lock, flags);
 
 		power_stats_update_up(exynos_pcie);
+		link_duration_update(exynos_pcie, LINK_DURATION_UP);
 
 		dev_dbg(dev, "[%s] exynos_pcie->probe_ok : %d\n", __func__, exynos_pcie->probe_ok);
 		if (!exynos_pcie->probe_ok) {
@@ -3824,6 +3986,7 @@ void exynos_pcie_rc_poweroff(int ch_num)
 		exynos_pcie->state = STATE_LINK_DOWN;
 		exynos_pcie_rc_send_pme_turn_off(exynos_pcie);
 		power_stats_update_down(exynos_pcie);
+		link_duration_update(exynos_pcie, LINK_DURATION_DOWN);
 
 		/* Disable SysMMU */
 		if (exynos_pcie->use_sysmmu)
@@ -4598,6 +4761,8 @@ int exynos_pcie_rc_change_link_speed(int ch_num, int target_speed)
 
 	exynos_pcie->target_link_speed = new_speed;
 
+	link_duration_update(exynos_pcie, LINK_DURATION_SPD_CHG);
+
 	dev_dbg(pci->dev, "%s: restore l1ss status\n", __func__);
 	exynos_pcie_rc_l1ss_ctrl(1, PCIE_L1SS_CTRL_SPEED, ch_num);
 
@@ -5330,6 +5495,22 @@ static void exynos_d3_sleep_hook(void *unused, struct pci_dev *dev,
 }
 #endif
 
+static void exynos_pcie_wait_cfg_access_work(struct work_struct *work)
+{
+	struct exynos_pcie *exynos_pcie =
+		container_of(work, struct exynos_pcie, cfg_access_work.work);
+
+	logbuffer_logk(exynos_pcie->log, LOGLEVEL_ERR, "[ERR] config access timeout");
+
+	if (exynos_pcie->cpl_timeout_recovery) {
+		logbuffer_logk(exynos_pcie->log, LOGLEVEL_ERR, "in cpl timeout recovery");
+		return;
+	}
+
+	exynos_pcie_rc_dump_all_status(exynos_pcie->ch_num);
+	BUG_ON(1);
+}
+
 static int exynos_pcie_rc_probe(struct platform_device *pdev)
 {
 	struct exynos_pcie *exynos_pcie;
@@ -5384,6 +5565,7 @@ static int exynos_pcie_rc_probe(struct platform_device *pdev)
 	spin_lock_init(&exynos_pcie->pcie_l1_exit_lock);
 	spin_lock_init(&exynos_pcie->conf_lock);
 	spin_lock_init(&exynos_pcie->power_stats_lock);
+	spin_lock_init(&exynos_pcie->link_duration_lock);
 	spin_lock_init(&exynos_pcie->reg_lock);
 	spin_lock_init(&exynos_pcie->s2mpu_refcnt_lock);
 
@@ -5422,6 +5604,7 @@ static int exynos_pcie_rc_probe(struct platform_device *pdev)
 	dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(36));
 	platform_set_drvdata(pdev, exynos_pcie);
 	power_stats_init(exynos_pcie);
+	link_duration_update(exynos_pcie, LINK_DURATION_INIT);
 	link_stats_init(exynos_pcie);
 
 #if IS_ENABLED(CONFIG_GS_S2MPU)
@@ -5533,6 +5716,7 @@ static int exynos_pcie_rc_probe(struct platform_device *pdev)
 
 	INIT_DELAYED_WORK(&exynos_pcie->dislink_work, exynos_pcie_rc_dislink_work);
 	INIT_DELAYED_WORK(&exynos_pcie->cpl_timeout_work, exynos_pcie_rc_cpl_timeout_work);
+	INIT_DELAYED_WORK(&exynos_pcie->cfg_access_work, exynos_pcie_wait_cfg_access_work);
 
 #if IS_ENABLED(CONFIG_EXYNOS_ITMON)
 	exynos_pcie->itmon_nb.notifier_call = exynos_pcie_rc_itmon_notifier;
@@ -5568,6 +5752,8 @@ static int __exit exynos_pcie_rc_remove(struct platform_device *pdev)
 	struct exynos_pcie *exynos_pcie = to_exynos_pcie(pci);
 
 	dev_info(&pdev->dev, "%s\n", __func__);
+
+	cancel_delayed_work_sync(&exynos_pcie->cfg_access_work);
 
 	mutex_destroy(&exynos_pcie->power_onoff_lock);
 

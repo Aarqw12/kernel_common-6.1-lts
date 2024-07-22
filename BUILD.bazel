@@ -27,10 +27,7 @@ filegroup(
     name = "gs_soc.kconfig",
     srcs = glob([
         "**/Kconfig",
-    ]) + [
-        "Kconfig.ext",
-        "Kconfig.ext_modules",
-    ],
+    ]),
     visibility = [
         "//private/devices/google:__subpackages__",
     ],
@@ -44,7 +41,6 @@ filegroup(
     ]),
     visibility = [
         "//private/devices/google:__subpackages__",
-        "//private/google-modules/soc/gs/arch/arm64/boot/dts:__pkg__",
     ],
 )
 
@@ -77,6 +73,7 @@ filegroup(
         # List of headers needed by external modules
         "drivers/dma-buf/heaps/samsung/samsung-dma-heap.h",
         "drivers/usb/host/xhci-exynos.h",
+        "drivers/usb/host/xhci-goog-dma.h",
         "drivers/usb/typec/tcpm/google/google_tcpci_shim.h",
         "drivers/usb/typec/tcpm/google/tcpci_max77759.h",
         "drivers/usb/typec/tcpm/google/usb_psy.h",
@@ -95,17 +92,4 @@ exports_files([
     # keep sorted
     "Kconfig.ext",
     "Makefile",
-    "build.config.gs101",
-    "build.config.gs201",
-    "build.config.zuma",
-    "build.config.zumapro",
-    "system_dlkm.props.zuma",
-    "vendor_dlkm.blocklist.zuma",
-    "vendor_dlkm.blocklist.zumapro",
-    "vendor_dlkm.props.zuma",
-    "vendor_dlkm.props.zumapro",
-    "vendor_dlkm_modules.zuma",
-    "vendor_dlkm_modules.zumapro",
-    "vendor_kernel_boot_modules.zuma",
-    "vendor_kernel_boot_modules.zumapro",
 ])

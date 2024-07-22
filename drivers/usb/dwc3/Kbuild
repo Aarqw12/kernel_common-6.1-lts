@@ -13,7 +13,11 @@
 ##
 
 ccflags-y				+= -I$(srctree)/drivers/usb
+ccflags-y				+= -I$(srctree)/../private/google-modules/soc/gs/drivers/usb/host
 
 obj-$(CONFIG_USB_DWC3_EXYNOS_GS)	+= dwc3-exynos-usb.o
 dwc3-exynos-usb-y			+= dwc3-exynos.o
 dwc3-exynos-usb-y			+= dwc3-exynos-otg.o
+
+# This gives the drivers access to the logbuffer.h and gvotable.h header
+subdir-ccflags-y += -I$(KERNEL_SRC)/../private/google-modules/bms

@@ -31,7 +31,10 @@ bool __read_mostly vendor_sched_npi_packing = true; //non prefer idle packing
 bool __read_mostly vendor_sched_reduce_prefer_idle = true;
 bool __read_mostly vendor_sched_auto_prefer_idle = false;
 bool __read_mostly vendor_sched_boost_adpf_prio = true;
-struct cpumask cpu_skip_mask;
+unsigned int __read_mostly vendor_sched_adpf_rampup_multiplier = 1;
+struct cpumask cpu_skip_mask_rt;
+struct cpumask skip_prefer_prev_mask;
+
 static struct proc_dir_entry *vendor_sched;
 struct proc_dir_entry *group_dirs[VG_MAX];
 extern struct vendor_group_list vendor_group_list[VG_MAX];
@@ -133,6 +136,7 @@ enum vendor_procfs_type {
 		__PROC_GROUP_ENTRY(prefer_idle, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(prefer_high_cap, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(task_spreading, __group_name, __vg),	\
+		__PROC_GROUP_ENTRY(group_cfs_skip_mask, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(preferred_idle_mask_low, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(preferred_idle_mask_mid, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(preferred_idle_mask_high, __group_name, __vg),	\
@@ -152,6 +156,7 @@ enum vendor_procfs_type {
 		__PROC_GROUP_ENTRY(uclamp_max_on_nice_low_prio, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(uclamp_max_on_nice_mid_prio, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(uclamp_max_on_nice_high_prio, __group_name, __vg),	\
+		__PROC_GROUP_ENTRY(rampup_multiplier, __group_name, __vg),	\
 		__PROC_SET_GROUP_ENTRY(set_task_group, __group_name, __vg),	\
 		__PROC_SET_GROUP_ENTRY(set_proc_group, __group_name, __vg)
 
@@ -431,6 +436,11 @@ static inline bool check_uclamp_##__uclamp_id##_on_nice_prio(enum vendor_group g
 	return true; \
 }
 
+static inline bool check_rampup_multiplier(enum vendor_group group)
+{
+	return true;
+}
+
 /// ******************************************************************************** ///
 /// ********************* Create vendor group procfs nodes*************************** ///
 /// ******************************************************************************** ///
@@ -454,6 +464,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(ta, task_spreading, VG_TOPAPP);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(ta, group_throttle, VG_TOPAPP);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(ta, group_cfs_skip_mask, VG_TOPAPP);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(ta, preferred_idle_mask_low, VG_TOPAPP);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(ta, preferred_idle_mask_mid, VG_TOPAPP);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(ta, preferred_idle_mask_high, VG_TOPAPP);
@@ -479,6 +490,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ta, uclamp_max_on_nice_high_prio, VG_TOPAPP, \
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(ta, uclamp_min_on_nice_enable, VG_TOPAPP);
 VENDOR_GROUP_BOOL_ATTRIBUTE(ta, uclamp_max_on_nice_enable, VG_TOPAPP);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ta, rampup_multiplier, VG_TOPAPP, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ta, ug, VG_TOPAPP, check_ug);
 #endif
@@ -489,6 +502,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(fg, task_spreading, VG_FOREGROUND);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(fg, group_throttle, VG_FOREGROUND);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(fg, group_cfs_skip_mask, VG_FOREGROUND);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(fg, preferred_idle_mask_low, VG_FOREGROUND);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(fg, preferred_idle_mask_mid, VG_FOREGROUND);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(fg, preferred_idle_mask_high, VG_FOREGROUND);
@@ -514,6 +528,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg, uclamp_max_on_nice_high_prio, VG_FOREGROUN
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(fg, uclamp_min_on_nice_enable, VG_FOREGROUND);
 VENDOR_GROUP_BOOL_ATTRIBUTE(fg, uclamp_max_on_nice_enable, VG_FOREGROUND);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg, rampup_multiplier, VG_FOREGROUND, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg, ug, VG_FOREGROUND, check_ug);
 #endif
@@ -524,6 +540,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(sys, task_spreading, VG_SYSTEM);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(sys, group_throttle, VG_SYSTEM);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(sys, group_cfs_skip_mask, VG_SYSTEM);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(sys, preferred_idle_mask_low, VG_SYSTEM);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(sys, preferred_idle_mask_mid, VG_SYSTEM);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(sys, preferred_idle_mask_high, VG_SYSTEM);
@@ -549,6 +566,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sys, uclamp_max_on_nice_high_prio, VG_SYSTEM, 
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(sys, uclamp_min_on_nice_enable, VG_SYSTEM);
 VENDOR_GROUP_BOOL_ATTRIBUTE(sys, uclamp_max_on_nice_enable, VG_SYSTEM);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sys, rampup_multiplier, VG_SYSTEM, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sys, ug, VG_SYSTEM, check_ug);
 #endif
@@ -559,6 +578,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(cam, task_spreading, VG_CAMERA);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(cam, group_throttle, VG_CAMERA);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(cam, group_cfs_skip_mask, VG_CAMERA);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(cam, preferred_idle_mask_low, VG_CAMERA);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(cam, preferred_idle_mask_mid, VG_CAMERA);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(cam, preferred_idle_mask_high, VG_CAMERA);
@@ -584,6 +604,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam, uclamp_max_on_nice_high_prio, VG_CAMERA, 
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(cam, uclamp_min_on_nice_enable, VG_CAMERA);
 VENDOR_GROUP_BOOL_ATTRIBUTE(cam, uclamp_max_on_nice_enable, VG_CAMERA);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam, rampup_multiplier, VG_CAMERA, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam, ug, VG_CAMERA, check_ug);
 #endif
@@ -594,6 +616,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, task_spreading, VG_CAMERA_POWER);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(cam_power, group_throttle, VG_CAMERA_POWER);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(cam_power, group_cfs_skip_mask, VG_CAMERA_POWER);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(cam_power, preferred_idle_mask_low, VG_CAMERA_POWER);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(cam_power, preferred_idle_mask_mid, VG_CAMERA_POWER);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(cam_power, preferred_idle_mask_high, VG_CAMERA_POWER);
@@ -619,6 +642,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam_power, uclamp_max_on_nice_high_prio, VG_CA
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, uclamp_min_on_nice_enable, VG_CAMERA_POWER);
 VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, uclamp_max_on_nice_enable, VG_CAMERA_POWER);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam_power, rampup_multiplier, VG_CAMERA_POWER, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam_power, ug, VG_CAMERA_POWER, check_ug);
 #endif
@@ -629,6 +654,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(bg, task_spreading, VG_BACKGROUND);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(bg, group_throttle, VG_BACKGROUND);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(bg, group_cfs_skip_mask, VG_BACKGROUND);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(bg, preferred_idle_mask_low, VG_BACKGROUND);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(bg, preferred_idle_mask_mid, VG_BACKGROUND);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(bg, preferred_idle_mask_high, VG_BACKGROUND);
@@ -654,6 +680,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(bg, uclamp_max_on_nice_high_prio, VG_BACKGROUN
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(bg, uclamp_min_on_nice_enable, VG_BACKGROUND);
 VENDOR_GROUP_BOOL_ATTRIBUTE(bg, uclamp_max_on_nice_enable, VG_BACKGROUND);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(bg, rampup_multiplier, VG_BACKGROUND, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(bg, ug, VG_BACKGROUND, check_ug);
 #endif
@@ -664,6 +692,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, task_spreading, VG_SYSTEM_BACKGROUND);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(sysbg, group_throttle, VG_SYSTEM_BACKGROUND);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(sysbg, group_cfs_skip_mask, VG_SYSTEM_BACKGROUND);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(sysbg, preferred_idle_mask_low, VG_SYSTEM_BACKGROUND);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(sysbg, preferred_idle_mask_mid, VG_SYSTEM_BACKGROUND);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(sysbg, preferred_idle_mask_high, VG_SYSTEM_BACKGROUND);
@@ -689,6 +718,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sysbg, uclamp_max_on_nice_high_prio, VG_SYSTEM
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, uclamp_min_on_nice_enable, VG_SYSTEM_BACKGROUND);
 VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, uclamp_max_on_nice_enable, VG_SYSTEM_BACKGROUND);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sysbg, rampup_multiplier, VG_SYSTEM_BACKGROUND, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sysbg, ug, VG_SYSTEM_BACKGROUND, check_ug);
 #endif
@@ -699,6 +730,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, task_spreading, VG_NNAPI_HAL);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(nnapi, group_throttle, VG_NNAPI_HAL);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(nnapi, group_cfs_skip_mask, VG_NNAPI_HAL);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(nnapi, preferred_idle_mask_low, VG_NNAPI_HAL);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(nnapi, preferred_idle_mask_mid, VG_NNAPI_HAL);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(nnapi, preferred_idle_mask_high, VG_NNAPI_HAL);
@@ -724,6 +756,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(nnapi, uclamp_max_on_nice_high_prio, VG_NNAPI_
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, uclamp_min_on_nice_enable, VG_NNAPI_HAL);
 VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, uclamp_max_on_nice_enable, VG_NNAPI_HAL);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(nnapi, rampup_multiplier, VG_NNAPI_HAL, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(nnapi, ug, VG_NNAPI_HAL, check_ug);
 #endif
@@ -734,6 +768,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(rt, task_spreading, VG_RT);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(rt, group_throttle, VG_RT);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(rt, group_cfs_skip_mask, VG_RT);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(rt, preferred_idle_mask_low, VG_RT);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(rt, preferred_idle_mask_mid, VG_RT);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(rt, preferred_idle_mask_high, VG_RT);
@@ -759,6 +794,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(rt, uclamp_max_on_nice_high_prio, VG_RT, \
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(rt, uclamp_min_on_nice_enable, VG_RT);
 VENDOR_GROUP_BOOL_ATTRIBUTE(rt, uclamp_max_on_nice_enable, VG_RT);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(rt, rampup_multiplier, VG_RT, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(rt, ug, VG_RT, check_ug);
 #endif
@@ -769,6 +806,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, task_spreading, VG_DEX2OAT);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(dex2oat, group_throttle, VG_DEX2OAT);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(dex2oat, group_cfs_skip_mask, VG_DEX2OAT);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(dex2oat, preferred_idle_mask_low, VG_DEX2OAT);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(dex2oat, preferred_idle_mask_mid, VG_DEX2OAT);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(dex2oat, preferred_idle_mask_high, VG_DEX2OAT);
@@ -794,6 +832,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(dex2oat, uclamp_max_on_nice_high_prio, VG_DEX2
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, uclamp_min_on_nice_enable, VG_DEX2OAT);
 VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, uclamp_max_on_nice_enable, VG_DEX2OAT);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(dex2oat, rampup_multiplier, VG_DEX2OAT, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(dex2oat, ug, VG_DEX2OAT, check_ug);
 #endif
@@ -804,6 +844,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(ota, task_spreading, VG_OTA);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(ota, group_throttle, VG_OTA);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(ota, group_cfs_skip_mask, VG_OTA);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(ota, preferred_idle_mask_low, VG_OTA);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(ota, preferred_idle_mask_mid, VG_OTA);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(ota, preferred_idle_mask_high, VG_OTA);
@@ -829,6 +870,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ota, uclamp_max_on_nice_high_prio, VG_OTA, \
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(ota, uclamp_min_on_nice_enable, VG_OTA);
 VENDOR_GROUP_BOOL_ATTRIBUTE(ota, uclamp_max_on_nice_enable, VG_OTA);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ota, rampup_multiplier, VG_OTA, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ota, ug, VG_OTA, check_ug);
 #endif
@@ -839,6 +882,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(sf, task_spreading, VG_SF);
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE(sf, group_throttle, VG_SF);
 #endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(sf, group_cfs_skip_mask, VG_SF);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(sf, preferred_idle_mask_low, VG_SF);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(sf, preferred_idle_mask_mid, VG_SF);
 VENDOR_GROUP_CPUMASK_ATTRIBUTE(sf, preferred_idle_mask_high, VG_SF);
@@ -864,6 +908,8 @@ VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sf, uclamp_max_on_nice_high_prio, VG_SF, \
 	check_uclamp_max_on_nice_prio);
 VENDOR_GROUP_BOOL_ATTRIBUTE(sf, uclamp_min_on_nice_enable, VG_SF);
 VENDOR_GROUP_BOOL_ATTRIBUTE(sf, uclamp_max_on_nice_enable, VG_SF);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sf, rampup_multiplier, VG_SF, \
+	check_rampup_multiplier);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sf, ug, VG_SF, check_ug);
 #endif
@@ -1835,6 +1881,26 @@ static ssize_t boost_adpf_prio_store(struct file *filp, const char __user *ubuf,
 
 PROC_OPS_RW(boost_adpf_prio);
 
+static int skip_prefer_prev_mask_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "0x%lx\n", skip_prefer_prev_mask.bits[0]);
+
+	return 0;
+}
+static ssize_t skip_prefer_prev_mask_store(struct file *filp,
+					  const char __user *ubuf,
+					  size_t count, loff_t *pos)
+{
+	int ret;
+
+	ret = cpumask_parse_user(ubuf, count, &skip_prefer_prev_mask);
+	if (ret)
+		return ret;
+
+	return count;
+}
+PROC_OPS_RW(skip_prefer_prev_mask);
+
 #if IS_ENABLED(CONFIG_UCLAMP_STATS)
 static int uclamp_stats_show(struct seq_file *m, void *v)
 {
@@ -2196,6 +2262,35 @@ static ssize_t util_post_init_scale_store(struct file *filp,
 }
 PROC_OPS_RW(util_post_init_scale);
 
+static int adpf_rampup_multiplier_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%u\n", vendor_sched_adpf_rampup_multiplier);
+	return 0;
+}
+static ssize_t adpf_rampup_multiplier_store(struct file *filp,
+					    const char __user *ubuf,
+					    size_t count, loff_t *pos)
+{
+	unsigned int val;
+	char buf[MAX_PROC_SIZE];
+
+	if (count >= sizeof(buf))
+		return -EINVAL;
+
+	if (copy_from_user(buf, ubuf, count))
+		return -EFAULT;
+
+	buf[count] = '\0';
+
+	if (kstrtouint(buf, 0, &val))
+		return -EINVAL;
+
+	vendor_sched_adpf_rampup_multiplier = val;
+
+	return count;
+}
+PROC_OPS_RW(adpf_rampup_multiplier);
+
 static int per_task_iowait_boost_max_value_show(struct seq_file *m, void *v)
 {
 	seq_printf(m, "%d\n", sched_per_task_iowait_boost_max_value);
@@ -2353,6 +2448,7 @@ static ssize_t max_load_balance_interval_store(struct file *filp,
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
 
+	vh_sched_max_load_balance_interval = val;
 	max_load_balance_interval = val;
 
 	return count;
@@ -2382,7 +2478,10 @@ static ssize_t min_granularity_ns_store(struct file *filp,
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
 
+	vh_sched_min_granularity_ns = val;
+	vh_sched_wakeup_granularity_ns = val;
 	sysctl_sched_min_granularity = val;
+	sysctl_sched_wakeup_granularity = val;
 
 	return count;
 }
@@ -2411,6 +2510,7 @@ static ssize_t latency_ns_store(struct file *filp,
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
 
+	vh_sched_latency_ns = val;
 	sysctl_sched_latency = val;
 
 	return count;
@@ -2421,7 +2521,6 @@ static int enable_hrtick_show(struct seq_file *m, void *v)
 {
 	bool enabled;
 
-	sysctl_sched_features |= 1UL << __SCHED_FEAT_HRTICK;
 	enabled = static_key_enabled(&sched_feat_keys[__SCHED_FEAT_HRTICK]);
 	seq_printf(m, "%d\n", enabled);
 	return 0;
@@ -2957,7 +3056,7 @@ PROC_OPS_RW(idle_inject_sync_trigger);
 
 static int cpu_skip_mask_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "0x%lx\n", cpu_skip_mask.bits[0]);
+	seq_printf(m, "0x%lx\n", cpu_skip_mask_rt.bits[0]);
 
 	return 0;
 }
@@ -2972,7 +3071,7 @@ static ssize_t cpu_skip_mask_store(struct file *filp,
 	if (ret)
 		return ret;
 
-	cpu_skip_mask.bits[0] = val;
+	cpu_skip_mask_rt.bits[0] = val;
 
 	return count;
 }
@@ -3056,6 +3155,7 @@ static struct pentry entries[] = {
 	PROC_ENTRY(dvfs_headroom),
 	PROC_ENTRY(tapered_dvfs_headroom_enable),
 	PROC_ENTRY(auto_dvfs_headroom_enable),
+	PROC_ENTRY(adpf_rampup_multiplier),
 	// teo
 	PROC_ENTRY(teo_util_threshold),
 	// iowait boost
@@ -3086,6 +3186,8 @@ static struct pentry entries[] = {
 	PROC_ENTRY(skip_inefficient_opps),
 	// skip mask for RT wake up
 	PROC_ENTRY(cpu_skip_mask),
+	// skip mask for prefer prev cpu
+	PROC_ENTRY(skip_prefer_prev_mask),
 };
 
 
@@ -3183,7 +3285,6 @@ int create_procfs_node(void)
 		goto out;
 	idle_inject_set_duration(iidev_b, 2000, 14000);
 	idle_inject_set_latency(iidev_b, 5000);
-
 
 	return 0;
 
