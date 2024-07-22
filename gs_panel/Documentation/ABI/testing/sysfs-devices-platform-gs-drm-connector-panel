@@ -129,6 +129,16 @@ Description:
   Userspace client can activate ACL mode to reduce panel voltage at higher brightness levels.
   This prevents potential damage to the PMIC.
 
+What: /sys/devices/platform/gs-drm-connector/panel/backlight/panel0-backlight/als_table
+Date: April 2024
+KernelVersion: 6.1
+Contact: "Taylor Nelms" <tknelms@google.com>
+Description:
+  Userspace client can adjust thresholds at which the ambient light sensor (als)
+  is notified of changes in panel brightness. This has the same range as the `brightness`
+  and `actual_brightness` nodes (0-4096), and is input as a space-delimited list
+  of whole positive integers.
+
 What: /sys/devices/platform/gs-drm-connector/panel/time_in_state
 Date: January 2024
 KernelVersion:	6.1
@@ -153,14 +163,6 @@ Description:
   Userspace client can activate SSC mode to control dynamic OSC clock SSC(Spread Spectrum Clocking).
   This sysfs node by control by RIL team and desense team to avoid signal interference.
 
-What: /sys/devices/platform/gs-drm-connector/panel/te_info
-Date: March 2024
-KernelVersion: 6.1
-Contact: "Chris Lu" <luchris@google.com>
-Description:
-  This file provides the TE frequency and option (fixed/changeable).
-  Valid panels are 'primary-panel' or 'secondary-panel'.
-
 What: /sys/devices/platform/gs-drm-connector/panel/te2_rate_hz
 Date: March 2024
 KernelVersion: 6.1
@@ -175,3 +177,48 @@ Contact: "Chris Lu" <luchris@google.com>
 Description:
   Userspace client uses this to write and read TE2 option. The value could be 0 (changeable)
   or 1 (fixed).
+
+What: /sys/devices/platform/gs-drm-connector/panel/power_state
+Date: April 2024
+KernelVersion: 6.1
+Contact: "Kevin Ying" <kevinying@google.com>
+Description:
+  Userspace client uses this to read panel power state. This information includes only if the panel
+  is on, off, in low-power mode, or in a HBM state.
+
+What: /sys/devices/platform/gs-drm-connector/panel/error_count_te
+Date: May, 2024
+KernelVersion: 6.1
+Contact: "Weizhung Ding" <weizhungding@google.com>
+Description:
+  Userspace client uses this to read the count of all TE errors detected during runtime.
+
+What: /sys/devices/platform/gs-drm-connector/panel/error_count_unknown
+Date: May, 2024
+KernelVersion: 6.1
+Contact: "Weizhung Ding" <weizhungding@google.com>
+Description:
+  Userspace client uses this to read the count of all unclassified errors detected during runtime.
+
+What: /sys/devices/platform/gs-drm-connector/panel/te_rate_hz
+Date: April 2024
+KernelVersion: 6.1
+Contact: "Burney Yu" <bosyuyu@google.com>
+Description:
+  This file provides the TE frequency.
+  Valid panels are 'primary-panel' or 'secondary-panel'.
+
+What: /sys/devices/platform/gs-drm-connector/panel/te_option
+Date: April 2024
+KernelVersion: 6.1
+Contact: "Burney Yu" <bosyuyu@google.com>
+Description:
+  This file provides the TE option (fixed/changeable).
+  Valid panels are 'primary-panel' or 'secondary-panel'.
+
+What: /sys/devices/platform/gs-drm-connector/panel/frame_rate
+Date: June 2024
+KernelVersion: 6.1
+Contact: "Jeremy DeHaan" <jdehaan@google.com>
+Description:
+  Userspace client uses this to write the current frame rate. The unit is frames per second.

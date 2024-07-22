@@ -17,7 +17,6 @@ int gs_panel_disable(struct drm_panel *panel)
 	struct gs_panel *ctx = drm_to_gs_panel(panel);
 
 	dev_dbg(ctx->dev, "%s+\n", __func__);
-	ctx->panel_state = GPANEL_STATE_OFF;
 	ctx->hbm_mode = GS_HBM_OFF;
 	ctx->dimming_on = false;
 	ctx->idle_data.self_refresh_active = false;
@@ -32,7 +31,7 @@ int gs_panel_disable(struct drm_panel *panel)
 	dev_dbg(ctx->dev, "%s\n", __func__);
 	return 0;
 }
-EXPORT_SYMBOL(gs_panel_disable);
+EXPORT_SYMBOL_GPL(gs_panel_disable);
 
 int gs_panel_unprepare(struct drm_panel *panel)
 {
@@ -43,7 +42,7 @@ int gs_panel_unprepare(struct drm_panel *panel)
 	dev_dbg(ctx->dev, "%s -\n", __func__);
 	return 0;
 }
-EXPORT_SYMBOL(gs_panel_unprepare);
+EXPORT_SYMBOL_GPL(gs_panel_unprepare);
 
 int gs_panel_prepare(struct drm_panel *panel)
 {
@@ -55,7 +54,7 @@ int gs_panel_prepare(struct drm_panel *panel)
 
 	return 0;
 }
-EXPORT_SYMBOL(gs_panel_prepare);
+EXPORT_SYMBOL_GPL(gs_panel_prepare);
 
 static void gs_panel_mode_set_name(struct drm_display_mode *mode)
 {
@@ -105,4 +104,4 @@ int gs_panel_get_modes(struct drm_panel *panel, struct drm_connector *connector)
 
 	return i;
 }
-EXPORT_SYMBOL(gs_panel_get_modes);
+EXPORT_SYMBOL_GPL(gs_panel_get_modes);

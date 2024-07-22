@@ -15,6 +15,7 @@
 #include <drm/drm_vblank.h>
 
 #include "gs_panel/gs_panel.h"
+#include "trace/panel_trace.h"
 
 /* Sysfs Node */
 
@@ -248,11 +249,13 @@ static ssize_t refresh_ctrl_store(struct device *dev, struct device_attribute *a
 
 	mutex_lock(&ctx->mode_lock);
 	ctx->refresh_ctrl = ctrl;
-	if (!gs_is_panel_initialized(ctx) || !gs_is_panel_enabled(ctx))
+	if (!gs_is_panel_initialized(ctx) || !gs_is_panel_enabled(ctx)) {
 		dev_info(dev, "%s: cache ctrl=0x%08lX\n", __func__,
 			 ctrl & GS_PANEL_REFRESH_CTRL_FEATURE_MASK);
-	else
+	} else {
+		PANEL_ATRACE_INT("refresh_ctrl_value", ctrl);
 		ctx->desc->gs_panel_func->refresh_ctrl(ctx);
+	}
 	ctx->refresh_ctrl &= GS_PANEL_REFRESH_CTRL_FEATURE_MASK;
 	mutex_unlock(&ctx->mode_lock);
 
@@ -512,7 +515,7 @@ static ssize_t available_disp_stats_show(struct device *dev,
 	return len;
 }
 
-static ssize_t te_info_show(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t te_rate_hz_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	const struct mipi_dsi_device *dsi = to_mipi_dsi_device(dev);
 	struct gs_panel *ctx = mipi_dsi_get_drvdata(dsi);
@@ -523,7 +526,7 @@ static ssize_t te_info_show(struct device *dev, struct device_attribute *attr, c
 		return -EPERM;
 
 	mutex_lock(&ctx->mode_lock);
-	changeable = (ctx->te_opt == TEX_OPT_CHANGEABLE);
+	changeable = (ctx->hw_status.te.option == TEX_OPT_CHANGEABLE);
 	if (changeable) {
 		const struct gs_panel_mode *current_mode = ctx->current_mode;
 
@@ -533,11 +536,27 @@ static ssize_t te_info_show(struct device *dev, struct device_attribute *attr, c
 		}
 		freq = drm_mode_vrefresh(&current_mode->mode);
 	} else {
-		freq = ctx->te_freq;
+		freq = ctx->hw_status.te.rate_hz;
 	}
 	mutex_unlock(&ctx->mode_lock);
 
-	return scnprintf(buf, PAGE_SIZE, "%s@%d\n", changeable ? "changeable" : "fixed", freq);
+	return sysfs_emit(buf, "%d\n", freq);
+}
+
+static ssize_t te_option_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	const struct mipi_dsi_device *dsi = to_mipi_dsi_device(dev);
+	struct gs_panel *ctx = mipi_dsi_get_drvdata(dsi);
+	bool changeable;
+
+	if (!gs_is_panel_active(ctx))
+		return -EPERM;
+
+	mutex_lock(&ctx->mode_lock);
+	changeable = (ctx->hw_status.te.option == TEX_OPT_CHANGEABLE);
+	mutex_unlock(&ctx->mode_lock);
+
+	return sysfs_emit(buf, "%s\n", changeable ? "changeable" : "fixed");
 }
 
 static ssize_t te2_rate_hz_store(struct device *dev, struct device_attribute *attr,
@@ -594,10 +613,12 @@ static ssize_t te2_rate_hz_show(struct device *dev, struct device_attribute *att
 	if (!gs_panel_has_func(ctx, get_te2_rate))
 		return -ENOTSUPP;
 
-	if (!gs_is_panel_active(ctx)) {
-		dev_warn(ctx->dev, "%s: panel is not enabled\n", __func__);
-		return -EPERM;
-	}
+	/**
+	 * Still allow the read if the panel is inactive at this moment since we may change
+	 * the rate during the transition to active.
+	 */
+	if (!gs_is_panel_active(ctx))
+		dev_warn(ctx->dev, "%s: panel is not enabled, may show previous rate\n", __func__);
 
 	mutex_lock(&ctx->mode_lock);
 	ret = sysfs_emit(buf, "%u\n", ctx->desc->gs_panel_func->get_te2_rate(ctx));
@@ -656,6 +677,111 @@ static ssize_t te2_option_show(struct device *dev, struct device_attribute *attr
 	return sysfs_emit(buf, "%s\n", (option == TEX_OPT_CHANGEABLE) ? "changeable" : "fixed");
 }
 
+static ssize_t power_state_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct backlight_device *bl = to_backlight_device(dev);
+	struct gs_panel *ctx = bl_get_data(bl);
+	enum display_stats_state state;
+
+	mutex_lock(&ctx->bl_state_lock);
+	state = gs_get_current_display_state_locked(ctx);
+	mutex_unlock(&ctx->bl_state_lock);
+
+	return sysfs_emit(buf, "%s\n", get_disp_state_str(state));
+}
+
+static ssize_t error_count_te_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct backlight_device *bl = to_backlight_device(dev);
+	struct gs_panel *ctx = bl_get_data(bl);
+	u32 count;
+
+	mutex_lock(&ctx->mode_lock);
+	count = sysfs_emit(buf, "%u\n", ctx->error_counter.te);
+	mutex_unlock(&ctx->mode_lock);
+
+	return count;
+}
+
+static ssize_t error_count_unknown_show(struct device *dev, struct device_attribute *attr,
+					char *buf)
+{
+	const struct mipi_dsi_device *dsi = to_mipi_dsi_device(dev);
+	struct gs_panel *ctx = mipi_dsi_get_drvdata(dsi);
+	u32 count;
+
+	mutex_lock(&ctx->mode_lock);
+	count = sysfs_emit(buf, "%u\n", ctx->error_counter.unknown);
+	mutex_unlock(&ctx->mode_lock);
+
+	return count;
+}
+
+static ssize_t force_power_on_store(struct device *dev, struct device_attribute *attr,
+					const char *buf, size_t count)
+{
+	const struct mipi_dsi_device *dsi = to_mipi_dsi_device(dev);
+	struct gs_panel *ctx = mipi_dsi_get_drvdata(dsi);
+	int ret;
+	bool force_on;
+
+	ret = kstrtobool(buf, &force_on);
+	if (ret) {
+		dev_err(dev, "invalid force_power_on value\n");
+		return ret;
+	}
+
+	mutex_lock(&ctx->mode_lock);
+	if (force_on && ctx->panel_state == GPANEL_STATE_OFF) {
+		drm_panel_prepare(&ctx->base);
+		ctx->panel_state = GPANEL_STATE_BLANK;
+	}
+
+	ctx->force_power_on = force_on;
+	mutex_unlock(&ctx->mode_lock);
+
+	return count;
+}
+
+static ssize_t force_power_on_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	const struct mipi_dsi_device *dsi = to_mipi_dsi_device(dev);
+	struct gs_panel *ctx = mipi_dsi_get_drvdata(dsi);
+	u32 count;
+
+	mutex_lock(&ctx->mode_lock);
+	count = sysfs_emit(buf, "%d\n", ctx->force_power_on);
+	mutex_unlock(&ctx->mode_lock);
+
+	return count;
+}
+
+static ssize_t frame_rate_store(struct device *dev, struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	const struct mipi_dsi_device *dsi = to_mipi_dsi_device(dev);
+	struct gs_panel *ctx = mipi_dsi_get_drvdata(dsi);
+	int ret;
+	u16 frame_rate;
+
+	ret = kstrtou16(buf, 0, &frame_rate);
+	if (ret || frame_rate < 1 || frame_rate > 120) {
+		dev_err(dev, "invalid frame rate value: %u\n", frame_rate);
+		return ret;
+	}
+
+	if (!gs_is_panel_active(ctx)) {
+		dev_warn(ctx->dev, "%s: panel is not enabled\n", __func__);
+		return -EPERM;
+	}
+
+	mutex_lock(&ctx->mode_lock);
+	ctx->desc->gs_panel_func->set_frame_rate(ctx, frame_rate);
+	mutex_unlock(&ctx->mode_lock);
+
+	return count;
+}
+
 static DEVICE_ATTR_RO(serial_number);
 static DEVICE_ATTR_RO(panel_extinfo);
 static DEVICE_ATTR_RO(panel_name);
@@ -671,13 +797,18 @@ static DEVICE_ATTR_RW(te2_timing);
 static DEVICE_ATTR_RW(te2_lp_timing);
 static DEVICE_ATTR_RO(time_in_state);
 static DEVICE_ATTR_RO(available_disp_stats);
-static DEVICE_ATTR_RO(te_info);
+static DEVICE_ATTR_RO(te_rate_hz);
+static DEVICE_ATTR_RO(te_option);
 static DEVICE_ATTR_RW(te2_rate_hz);
 static DEVICE_ATTR_RW(te2_option);
+static DEVICE_ATTR_RO(power_state);
+static DEVICE_ATTR_RO(error_count_te);
+static DEVICE_ATTR_RO(error_count_unknown);
+static DEVICE_ATTR_RW(force_power_on);
+static DEVICE_ATTR_WO(frame_rate);
 /* TODO(tknelms): re-implement below */
 #if 0
 static DEVICE_ATTR_WO(gamma);
-static DEVICE_ATTR_RW(force_power_on);
 static DEVICE_ATTR_RW(osc2_clk_khz);
 static DEVICE_ATTR_RO(available_osc2_clk_khz);
 #endif
@@ -695,13 +826,17 @@ static const struct attribute *panel_attrs[] = { &dev_attr_serial_number.attr,
 						 &dev_attr_min_vrefresh.attr,
 						 &dev_attr_te2_timing.attr,
 						 &dev_attr_te2_lp_timing.attr,
-						 &dev_attr_te_info.attr,
+						 &dev_attr_te_rate_hz.attr,
+						 &dev_attr_te_option.attr,
 						 &dev_attr_te2_rate_hz.attr,
 						 &dev_attr_te2_option.attr,
+						 &dev_attr_power_state.attr,
+						 &dev_attr_error_count_te.attr,
+						 &dev_attr_error_count_unknown.attr,
+						 &dev_attr_force_power_on.attr,
 /* TODO(tknelms): re-implement below */
 #if 0
 						 &dev_attr_gamma.attr,
-						 &dev_attr_force_power_on.attr,
 						 &dev_attr_osc2_clk_khz.attr,
 						 &dev_attr_available_osc2_clk_khz.attr,
 #endif
@@ -715,6 +850,11 @@ int gs_panel_sysfs_create_files(struct device *dev, struct gs_panel *ctx)
 
 		if (sysfs_create_file(&dev->kobj, &dev_attr_available_disp_stats.attr))
 			dev_err(ctx->dev, "unable to add available_disp_stats sysfs file\n");
+	}
+
+	if (gs_panel_has_func(ctx, set_frame_rate)) {
+		if (sysfs_create_file(&dev->kobj, &dev_attr_frame_rate.attr))
+			dev_err(ctx->dev, "unable to add set_frame_rate sysfs file\n");
 	}
 
 	return sysfs_create_files(&dev->kobj, panel_attrs);
@@ -915,6 +1055,10 @@ static ssize_t state_show(struct device *dev, struct device_attribute *attr, cha
 			if (ret_cnt > 0)
 				rc += ret_cnt;
 		}
+	} else if (rc > 0) {
+		ret_cnt = sysfs_emit_at(buf, ret_cnt, "\n");
+		if (ret_cnt > 0)
+			rc += ret_cnt;
 	}
 
 	dev_dbg(ctx->dev, "%s: %s\n", __func__, rc > 0 ? buf : "");
@@ -1020,6 +1164,69 @@ static ssize_t ssc_en_show(struct device *dev,
 	return sysfs_emit(buf, "%d\n", ctx->ssc_en);
 }
 
+static ssize_t als_table_store(struct device *dev, struct device_attribute *attr, const char *buf,
+			       size_t count)
+{
+	struct backlight_device *bl = to_backlight_device(dev);
+	struct gs_panel *ctx = bl_get_data(bl);
+	ssize_t bl_num_ranges;
+	char *buf_dup;
+	u32 ranges[MAX_BL_RANGES] = { 0 };
+	int ret = 0;
+	u32 i;
+
+	if (count == 0)
+		return -EINVAL;
+
+	buf_dup = kstrndup(buf, count, GFP_KERNEL);
+	if (!buf_dup)
+		return -ENOMEM;
+
+	if (strlen(buf_dup) != count) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	bl_num_ranges = parse_u32_buf(buf_dup, count + 1, ranges, MAX_BL_RANGES);
+	if (bl_num_ranges < 0) {
+		dev_warn(ctx->dev, "error parsing als_table input buf (%ld)\n", bl_num_ranges);
+		ret = bl_num_ranges;
+		goto out;
+	}
+
+	mutex_lock(&ctx->bl_state_lock); /* TODO(b/267170999): BL */
+
+	ctx->bl_notifier.num_ranges = bl_num_ranges;
+	for (i = 0; i < ctx->bl_notifier.num_ranges; i++)
+		ctx->bl_notifier.ranges[i] = ranges[i];
+
+	mutex_unlock(&ctx->bl_state_lock); /* TODO(b/267170999): BL */
+
+	ret = count;
+out:
+	kfree(buf_dup);
+	return ret;
+}
+
+static ssize_t als_table_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct backlight_device *bl = to_backlight_device(dev);
+	struct gs_panel *ctx = bl_get_data(bl);
+	size_t len = 0;
+	u32 i;
+
+	mutex_lock(&ctx->bl_state_lock); /* TODO(b/267170999): BL */
+
+	for (i = 0; i < ctx->bl_notifier.num_ranges; i++)
+		len += sysfs_emit_at(buf, len, "%u ", ctx->bl_notifier.ranges[i]);
+
+	mutex_unlock(&ctx->bl_state_lock); /* TODO(b/267170999): BL */
+
+	len += sysfs_emit_at(buf, len, "\n");
+
+	return len;
+}
+
 static DEVICE_ATTR_RW(hbm_mode);
 static DEVICE_ATTR_RW(dimming_on);
 static DEVICE_ATTR_RW(local_hbm_mode);
@@ -1027,6 +1234,7 @@ static DEVICE_ATTR_RW(local_hbm_max_timeout);
 static DEVICE_ATTR_RO(state);
 static DEVICE_ATTR_RW(acl_mode);
 static DEVICE_ATTR_RW(ssc_en);
+static DEVICE_ATTR_RW(als_table);
 
 static struct attribute *bl_device_attrs[] = { &dev_attr_hbm_mode.attr,
 					       &dev_attr_dimming_on.attr,
@@ -1035,6 +1243,7 @@ static struct attribute *bl_device_attrs[] = { &dev_attr_hbm_mode.attr,
 					       &dev_attr_acl_mode.attr,
 					       &dev_attr_state.attr,
 					       &dev_attr_ssc_en.attr,
+					       &dev_attr_als_table.attr,
 					       NULL };
 ATTRIBUTE_GROUPS(bl_device);
 

@@ -15,6 +15,7 @@
 #include "gs_panel/gs_panel_funcs_defaults.h"
 #include "gs_panel/gs_panel.h"
 #include "gs_panel_internal.h"
+#include "trace/panel_trace.h"
 
 #define PANEL_ID_REG_DEFAULT 0xA1
 #define PANEL_ID_LEN 7
@@ -72,7 +73,7 @@ void gs_panel_get_panel_rev(struct gs_panel *ctx, u8 rev)
 
 	dev_info(ctx->dev, "panel_rev: 0x%x\n", ctx->panel_rev);
 }
-EXPORT_SYMBOL(gs_panel_get_panel_rev);
+EXPORT_SYMBOL_GPL(gs_panel_get_panel_rev);
 
 int gs_panel_read_slsi_ddic_id(struct gs_panel *ctx)
 {
@@ -92,7 +93,7 @@ int gs_panel_read_slsi_ddic_id(struct gs_panel *ctx)
 	bin2hex(ctx->panel_id, buf, PANEL_SLSI_DDIC_ID_LEN);
 	return 0;
 }
-EXPORT_SYMBOL(gs_panel_read_slsi_ddic_id);
+EXPORT_SYMBOL_GPL(gs_panel_read_slsi_ddic_id);
 
 int gs_panel_read_id(struct gs_panel *ctx)
 {
@@ -111,7 +112,7 @@ int gs_panel_read_id(struct gs_panel *ctx)
 
 	return 0;
 }
-EXPORT_SYMBOL(gs_panel_read_id);
+EXPORT_SYMBOL_GPL(gs_panel_read_id);
 
 void gs_panel_model_init(struct gs_panel *ctx, const char *project, u8 extra_info)
 {
@@ -137,7 +138,7 @@ void gs_panel_model_init(struct gs_panel *ctx, const char *project, u8 extra_inf
 	scnprintf(ctx->panel_model, PANEL_MODEL_MAX, "%s-%01X%02X-%02X", project, vendor_info,
 		  panel_rev, extra_info);
 }
-EXPORT_SYMBOL(gs_panel_model_init);
+EXPORT_SYMBOL_GPL(gs_panel_model_init);
 
 bool gs_panel_is_mode_seamless_helper(const struct gs_panel *ctx, const struct gs_panel_mode *pmode)
 {
@@ -146,7 +147,7 @@ bool gs_panel_is_mode_seamless_helper(const struct gs_panel *ctx, const struct g
 
 	return drm_mode_equal_no_clocks(current_mode, new_mode);
 }
-EXPORT_SYMBOL(gs_panel_is_mode_seamless_helper);
+EXPORT_SYMBOL_GPL(gs_panel_is_mode_seamless_helper);
 
 ssize_t gs_panel_get_te2_edges_helper(struct gs_panel *ctx, char *buf, bool lp_mode)
 {
@@ -171,7 +172,7 @@ ssize_t gs_panel_get_te2_edges_helper(struct gs_panel *ctx, char *buf, bool lp_m
 
 	return len;
 }
-EXPORT_SYMBOL(gs_panel_get_te2_edges_helper);
+EXPORT_SYMBOL_GPL(gs_panel_get_te2_edges_helper);
 
 int gs_panel_set_te2_edges_helper(struct gs_panel *ctx, u32 *timings, bool lp_mode)
 {
@@ -192,7 +193,7 @@ int gs_panel_set_te2_edges_helper(struct gs_panel *ctx, u32 *timings, bool lp_mo
 
 	return 0;
 }
-EXPORT_SYMBOL(gs_panel_set_te2_edges_helper);
+EXPORT_SYMBOL_GPL(gs_panel_set_te2_edges_helper);
 
 static inline bool is_backlight_lp_state(const struct backlight_device *bl)
 {
@@ -227,6 +228,7 @@ void gs_panel_set_binned_lp_helper(struct gs_panel *ctx, const u16 brightness)
 		return;
 	}
 
+	PANEL_ATRACE_BEGIN(__func__);
 	gs_panel_send_cmdset(ctx, &binned_lp->cmdset);
 
 	ctx->current_binned_lp = binned_lp;
@@ -242,8 +244,9 @@ void gs_panel_set_binned_lp_helper(struct gs_panel *ctx, const u16 brightness)
 
 	if (panel_state == GPANEL_STATE_LP)
 		gs_panel_update_te2(ctx);
+	PANEL_ATRACE_END(__func__);
 }
-EXPORT_SYMBOL(gs_panel_set_binned_lp_helper);
+EXPORT_SYMBOL_GPL(gs_panel_set_binned_lp_helper);
 
 void gs_panel_set_lp_mode_helper(struct gs_panel *ctx, const struct gs_panel_mode *pmode)
 {
@@ -257,4 +260,4 @@ void gs_panel_set_lp_mode_helper(struct gs_panel *ctx, const struct gs_panel_mod
 		dev_err(ctx->dev, "No LP cmdset in panel description\n");
 	}
 }
-EXPORT_SYMBOL(gs_panel_set_lp_mode_helper);
+EXPORT_SYMBOL_GPL(gs_panel_set_lp_mode_helper);

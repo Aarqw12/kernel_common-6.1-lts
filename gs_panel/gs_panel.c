@@ -96,6 +96,8 @@ static int gs_panel_parse_gpios(struct gs_panel *ctx)
 		return PTR_ERR(gpio->reset_gpio);
 	}
 
+	gpio->keep_reset_high = of_property_read_bool(dev->of_node, "keep-reset-high");
+
 	gpio->enable_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_LOW);
 	if (gpio->enable_gpio == NULL) {
 		dev_dbg(dev, "no enable gpio found\n");
@@ -170,6 +172,8 @@ static int gs_panel_parse_regulators(struct gs_panel *ctx)
 			pr_warn("ignore vddd normal %u\n", gs_reg->vddd_normal_uV);
 			gs_reg->vddd_normal_uV = 0;
 		}
+	} else {
+		gs_reg->post_vddd_lp_enabled = of_property_read_bool(dev->of_node, "post-vddd-lp");
 	}
 
 	reg = devm_regulator_get_optional(dev, "vddr_en");
@@ -182,6 +186,36 @@ static int gs_panel_parse_regulators(struct gs_panel *ctx)
 	if (!PTR_ERR_OR_ZERO(reg)) {
 		dev_dbg(dev, "panel vddr found\n");
 		gs_reg->vddr = reg;
+	}
+
+	ret = of_property_read_u32(dev->of_node, "avdd-microvolt", &gs_reg->avdd_uV);
+	if (ret) {
+		gs_reg->avdd_uV = 0;
+		dev_dbg(dev, "no avdd-microvolt found for panel\n");
+	}
+
+	ret = of_property_read_u32(dev->of_node, "avee-microvolt", &gs_reg->avee_uV);
+	if (ret) {
+		gs_reg->avee_uV = 0;
+		dev_dbg(dev, "no avee-microvolt found for panel\n");
+	}
+
+	reg = devm_regulator_get_optional(dev, "disp_avdd");
+	if (!IS_ERR_OR_NULL(reg)) {
+		dev_dbg(dev, "panel disp_avdd found\n");
+		gs_reg->avdd = reg;
+	} else if (gs_reg->avdd_uV != 0) {
+		dev_err(dev, "found avdd-microvolt but failed to get disp_avdd (%pe)\n", reg);
+		return -EPROBE_DEFER;
+	}
+
+	reg = devm_regulator_get_optional(dev, "disp_avee");
+	if (!IS_ERR_OR_NULL(reg)) {
+		dev_dbg(dev, "panel disp_avee found\n");
+		gs_reg->avee = reg;
+	} else if (gs_reg->avee_uV != 0) {
+		dev_err(dev, "found avee-microvolt but failed to get disp_avee (%pe)\n", reg);
+		return -EPROBE_DEFER;
 	}
 
 	return 0;
@@ -218,7 +252,7 @@ err:
 	return ret;
 }
 
-#ifdef CONFIG_OF
+#if IS_ENABLED(CONFIG_OF)
 static void devm_backlight_release(void *data)
 {
 	struct backlight_device *bd = data;
@@ -230,7 +264,7 @@ static void devm_backlight_release(void *data)
 
 static int gs_panel_of_parse_backlight(struct gs_panel *ctx)
 {
-#ifdef CONFIG_OF
+#if IS_ENABLED(CONFIG_OF)
 	struct device *dev;
 	struct device_node *np;
 	struct backlight_device *bd;
@@ -338,24 +372,11 @@ const struct gs_panel_mode *gs_panel_get_mode(struct gs_panel *ctx,
 
 	return NULL;
 }
-EXPORT_SYMBOL(gs_panel_get_mode);
+EXPORT_SYMBOL_GPL(gs_panel_get_mode);
 
 /* TE2 */
 
-/**
- * parse_u32_buf() - Parses a user-provided list of ints into a buffer
- * @src: Source buffer
- * @src_len: Size of source buffer
- * @out: Output buffer for parsed u32s
- * @out_len: Size out output buffer
- *
- * This is a convenience function for parsing a user-provided list of unsigned
- * integers into a buffer. It is meant primarily for handling command-line
- * input, like for a sysfs node.
- *
- * Return: Number of integers parsed
- */
-static int parse_u32_buf(char *src, size_t src_len, u32 *out, size_t out_len)
+int parse_u32_buf(char *src, size_t src_len, u32 *out, size_t out_len)
 {
 	int rc = 0, cnt = 0;
 	char *str;
@@ -430,7 +451,7 @@ int gs_panel_get_current_mode_te2(struct gs_panel *ctx, struct gs_panel_te2_timi
 
 	return -EINVAL;
 }
-EXPORT_SYMBOL(gs_panel_get_current_mode_te2);
+EXPORT_SYMBOL_GPL(gs_panel_get_current_mode_te2);
 
 void gs_panel_update_te2(struct gs_panel *ctx)
 {
@@ -439,7 +460,7 @@ void gs_panel_update_te2(struct gs_panel *ctx)
 
 	ctx->desc->gs_panel_func->update_te2(ctx);
 }
-EXPORT_SYMBOL(gs_panel_update_te2);
+EXPORT_SYMBOL_GPL(gs_panel_update_te2);
 
 ssize_t gs_set_te2_timing(struct gs_panel *ctx, size_t count, const char *buf, bool is_lp_mode)
 {
@@ -521,7 +542,7 @@ unsigned int gs_panel_get_idle_time_delta(struct gs_panel *ctx)
 
 	return delta_ms;
 }
-EXPORT_SYMBOL(gs_panel_get_idle_time_delta);
+EXPORT_SYMBOL_GPL(gs_panel_get_idle_time_delta);
 
 static bool panel_idle_queue_delayed_work(struct gs_panel *ctx)
 {
@@ -909,9 +930,20 @@ static void notify_panel_mode_changed_worker(struct work_struct *work)
 {
 	struct gs_panel *ctx =
 		container_of(work, struct gs_panel, notify_panel_mode_changed_work);
+	enum display_stats_state power_state;
 
 	disp_stats_update_state(ctx);
 	sysfs_notify(&ctx->bl->dev.kobj, NULL, "state");
+
+	mutex_lock(&ctx->bl_state_lock);
+	power_state = gs_get_current_display_state_locked(ctx);
+	mutex_unlock(&ctx->bl_state_lock);
+
+	/* Avoid spurious notifications */
+	if (power_state != ctx->notified_power_mode) {
+		sysfs_notify(&ctx->dev->kobj, NULL, "power_state");
+		ctx->notified_power_mode = power_state;
+	}
 }
 
 static void notify_brightness_changed_worker(struct work_struct *work)
@@ -933,14 +965,48 @@ u16 gs_panel_get_brightness(struct gs_panel *panel)
 {
 	return gs_get_brightness(panel->bl);
 }
-EXPORT_SYMBOL(gs_panel_get_brightness);
+EXPORT_SYMBOL_GPL(gs_panel_get_brightness);
 
-static int gs_update_status(struct backlight_device *bl)
+/**
+ * gs_bl_find_range() - finds bl range given brightness is within
+ * @ctx: panel reference
+ * @brightness: brightness value to query
+ * @range: output parameter for index found
+ * Return: 0 on success, negative value otherwise
+ */
+static int gs_bl_find_range(struct gs_panel *ctx, int brightness, u32 *range)
+{
+	u32 i;
+
+	if (!brightness) {
+		*range = 0;
+		return 0;
+	}
+
+	mutex_lock(&ctx->bl_state_lock); /* TODO(b/267170999): BL */
+	if (!ctx->bl_notifier.num_ranges) {
+		mutex_unlock(&ctx->bl_state_lock);
+		return -EOPNOTSUPP;
+	}
+
+	for (i = 0; i < ctx->bl_notifier.num_ranges; ++i) {
+		if (brightness <= ctx->bl_notifier.ranges[i])
+			break;
+	}
+	mutex_unlock(&ctx->bl_state_lock); /* TODO(b/267170999): BL */
+
+	*range = i + 1;
+	return 0;
+}
+
+static int gs_update_backlight_status(struct backlight_device *bl)
 {
 	struct gs_panel *ctx = bl_get_data(bl);
 	struct device *dev = ctx->dev;
 	int brightness = bl->props.brightness;
+	u32 bl_range = 0;
 	int min_brightness = ctx->desc->brightness_desc->min_brightness;
+
 	if (min_brightness == 0)
 		min_brightness = 1;
 
@@ -949,6 +1015,7 @@ static int gs_update_status(struct backlight_device *bl)
 		return -EPERM;
 	}
 
+	PANEL_ATRACE_BEGIN(__func__);
 	/* check if backlight is forced off */
 	if (bl->props.power != FB_BLANK_UNBLANK)
 		brightness = 0;
@@ -969,13 +1036,21 @@ static int gs_update_status(struct backlight_device *bl)
 		gs_dcs_set_brightness(ctx, brightness);
 	}
 
+	if ((ctx->hbm_mode == GS_HBM_OFF) && !gs_bl_find_range(ctx, brightness, &bl_range) &&
+	    bl_range != ctx->bl_notifier.current_range) {
+		ctx->bl_notifier.current_range = bl_range;
+		notify_brightness_changed(ctx);
+		dev_dbg(dev, "bl range is changed to %d\n", bl_range);
+	}
+
 	mutex_unlock(&ctx->mode_lock); /*TODO(b/267170999): MODE*/
+	PANEL_ATRACE_END(__func__);
 	return 0;
 }
 
 static const struct backlight_ops gs_backlight_ops = {
 	.get_brightness = gs_get_brightness,
-	.update_status = gs_update_status,
+	.update_status = gs_update_backlight_status,
 };
 
 int gs_panel_update_brightness_desc(struct gs_panel_brightness_desc *desc,
@@ -1000,6 +1075,8 @@ int gs_panel_update_brightness_desc(struct gs_panel_brightness_desc *desc,
 	}
 
 	desc->max_brightness = matched_config->brt_capability.hbm.level.max;
+	if (desc->max_brightness == 0)
+		desc->max_brightness = matched_config->brt_capability.normal.level.max;
 	desc->min_brightness = matched_config->brt_capability.normal.level.min;
 	desc->default_brightness = matched_config->default_brightness,
 	desc->brt_capability = &(matched_config->brt_capability);
@@ -1007,13 +1084,14 @@ int gs_panel_update_brightness_desc(struct gs_panel_brightness_desc *desc,
 	return 0;
 
 }
-EXPORT_SYMBOL(gs_panel_update_brightness_desc);
+EXPORT_SYMBOL_GPL(gs_panel_update_brightness_desc);
 
 void gs_panel_set_dimming(struct gs_panel *ctx, bool dimming_on)
 {
 	if (!gs_panel_has_func(ctx, set_dimming))
 		return;
 
+	PANEL_ATRACE_INT("panel_dimming_on", dimming_on);
 	mutex_lock(&ctx->mode_lock); /* TODO(b/267170999): MODE */
 	if (dimming_on != ctx->dimming_on) {
 		ctx->desc->gs_panel_func->set_dimming(ctx, dimming_on);
@@ -1083,6 +1161,8 @@ static int _gs_panel_reg_ctrl(struct gs_panel *ctx, const struct panel_reg_ctrl 
 		[PANEL_REG_ID_VDDI] = ctx->regulator.vddi,
 		[PANEL_REG_ID_VDDR_EN] = ctx->regulator.vddr_en,
 		[PANEL_REG_ID_VDDR] = ctx->regulator.vddr,
+		[PANEL_REG_ID_AVDD] = ctx->regulator.avdd,
+		[PANEL_REG_ID_AVEE] = ctx->regulator.avee,
 	};
 	u32 i;
 
@@ -1105,6 +1185,16 @@ static int _gs_panel_reg_ctrl(struct gs_panel *ctx, const struct panel_reg_ctrl 
 			dev_err(ctx->dev, "failed to %s regulator id=%d\n",
 				enable ? "enable" : "disable", id);
 			return ret;
+		}
+
+		if (enable) {
+			u32 avdd_uV = ctx->regulator.avdd_uV;
+			u32 avee_uV = ctx->regulator.avee_uV;
+
+			if (id == PANEL_REG_ID_AVDD)
+				regulator_set_voltage(reg, avdd_uV, avdd_uV);
+			else if (id == PANEL_REG_ID_AVEE)
+				regulator_set_voltage(reg, avee_uV, avee_uV);
 		}
 
 		if (delay_ms)
@@ -1144,7 +1234,7 @@ static int _gs_panel_set_power(struct gs_panel *ctx, bool on)
 		reg_ctrl = get_enable_reg_ctrl_or_default(ctx);
 	} else {
 		gs_panel_pre_power_off(ctx);
-		if (!IS_ERR_OR_NULL(ctx->gpio.reset_gpio))
+		if (!IS_ERR_OR_NULL(ctx->gpio.reset_gpio) && !ctx->gpio.keep_reset_high)
 			gpiod_set_value(ctx->gpio.reset_gpio, 0);
 		if (!IS_ERR_OR_NULL(ctx->gpio.enable_gpio))
 			gpiod_set_value(ctx->gpio.enable_gpio, 0);
@@ -1169,7 +1259,7 @@ int gs_panel_set_power_helper(struct gs_panel *ctx, bool on)
 
 	return 0;
 }
-EXPORT_SYMBOL(gs_panel_set_power_helper);
+EXPORT_SYMBOL_GPL(gs_panel_set_power_helper);
 
 void gs_panel_set_vddd_voltage(struct gs_panel *ctx, bool is_lp)
 {
@@ -1205,9 +1295,33 @@ static void gs_panel_normal_mode_work(struct work_struct *work)
 			      msecs_to_jiffies(ctx->normal_mode_work_delay_ms));
 }
 
+void gs_panel_update_lhbm_hist_data_helper(struct gs_panel *ctx, struct drm_atomic_state *state,
+					   bool enabled, int d, int r)
+{
+	struct gs_drm_connector *gs_connector = ctx->gs_connector;
+	struct drm_connector_state *new_conn_state;
+	struct gs_drm_connector_state *new_gs_connector_state;
+	struct gs_drm_connector_lhbm_hist_data *hist_data;
+
+	if (!gs_connector) {
+		dev_warn(ctx->dev, "No connector found for panel; cannot update lhbm hist data\n");
+		return;
+	}
+
+	new_conn_state = drm_atomic_get_new_connector_state(state, &gs_connector->base);
+	new_gs_connector_state = to_gs_connector_state(new_conn_state);
+
+	hist_data = &new_gs_connector_state->lhbm_hist_data;
+
+	hist_data->enabled = enabled;
+	hist_data->d = d;
+	hist_data->r = r;
+}
+EXPORT_SYMBOL_GPL(gs_panel_update_lhbm_hist_data_helper);
+
 /* INITIALIZATION */
 
-int gs_panel_first_enable(struct gs_panel *ctx)
+int gs_panel_first_enable_helper(struct gs_panel *ctx)
 {
 	const struct gs_panel_funcs *funcs = ctx->desc->gs_panel_func;
 	struct device *dev = ctx->dev;
@@ -1254,6 +1368,7 @@ int gs_panel_first_enable(struct gs_panel *ctx)
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(gs_panel_first_enable_helper);
 
 static void gs_panel_post_power_on(struct gs_panel *ctx)
 {
@@ -1311,6 +1426,7 @@ static int gs_panel_init_backlight(struct gs_panel *ctx)
 {
 	struct device *dev = ctx->dev;
 	char name[32];
+	int i;
 
 	/* Backlight */
 	scnprintf(name, sizeof(name), "panel%d-backlight", ctx->gs_connector->panel_index);
@@ -1322,6 +1438,18 @@ static int gs_panel_init_backlight(struct gs_panel *ctx)
 
 	ctx->bl->props.max_brightness = ctx->desc->brightness_desc->max_brightness;
 	ctx->bl->props.brightness = ctx->desc->brightness_desc->default_brightness;
+
+	/* Backlight Notifier */
+	if (ctx->desc->bl_num_ranges) {
+		ctx->bl_notifier.num_ranges = ctx->desc->bl_num_ranges;
+		if (ctx->bl_notifier.num_ranges > MAX_BL_RANGES) {
+			dev_warn(dev, "Number of BL ranges %d exceeds maximum %d\n",
+				 ctx->bl_notifier.num_ranges, MAX_BL_RANGES);
+			ctx->bl_notifier.num_ranges = MAX_BL_RANGES;
+		}
+		for (i = 0; i < ctx->bl_notifier.num_ranges; ++i)
+			ctx->bl_notifier.ranges[i] = ctx->desc->bl_range[i];
+	}
 
 	return 0;
 }
@@ -1412,12 +1540,6 @@ int gs_dsi_panel_common_init(struct mipi_dsi_device *dsi, struct gs_panel *ctx)
 	ctx->gs_connector = get_gs_drm_connector_parent(ctx);
 	ctx->gs_connector->panel_dsi_device = dsi;
 
-	/* Register connector as bridge */
-#ifdef CONFIG_OF
-	ctx->bridge.of_node = ctx->gs_connector->kdev->of_node;
-#endif
-	drm_bridge_add(&ctx->bridge);
-
 	/* Parse device tree */
 	ret = gs_panel_parse_dt(ctx);
 	if (ret) {
@@ -1491,6 +1613,8 @@ int gs_dsi_panel_common_init(struct mipi_dsi_device *dsi, struct gs_panel *ctx)
 	INIT_WORK(&ctx->notify_panel_te2_option_changed_work,
 		  notify_panel_te2_option_changed_worker);
 
+	ctx->notified_power_mode = DISPLAY_STATE_MAX;
+
 	BLOCKING_INIT_NOTIFIER_HEAD(&ctx->op_hz_notifier_head);
 
 	/* DSI HS Clock */
@@ -1509,6 +1633,12 @@ int gs_dsi_panel_common_init(struct mipi_dsi_device *dsi, struct gs_panel *ctx)
 	/* Add the panel officially */
 	drm_panel_add(&ctx->base);
 
+	/* Register connector as bridge */
+#if IS_ENABLED(CONFIG_OF)
+	ctx->bridge.of_node = ctx->gs_connector->kdev->of_node;
+#endif
+	devm_drm_bridge_add(dev, &ctx->bridge);
+
 	/* Parse device tree - Backlight */
 	ret = gs_panel_of_parse_backlight(ctx);
 	if (ret) {
@@ -1518,8 +1648,8 @@ int gs_dsi_panel_common_init(struct mipi_dsi_device *dsi, struct gs_panel *ctx)
 
 	/* Attach bridge funcs */
 	ctx->bridge.funcs = get_panel_drm_bridge_funcs();
-	ctx->te_opt = TEX_OPT_CHANGEABLE;
-	ctx->te_freq = 60;
+	ctx->sw_status.te.option = TEX_OPT_CHANGEABLE;
+	ctx->sw_status.te.rate_hz = 60;
 
 	/* panel handoff */
 	gs_panel_handoff(ctx);
@@ -1554,13 +1684,12 @@ int gs_dsi_panel_common_init(struct mipi_dsi_device *dsi, struct gs_panel *ctx)
 	return 0;
 
 err_panel:
-	drm_bridge_remove(&ctx->bridge);
 	drm_panel_remove(&ctx->base);
 	dev_err(dev, "failed to probe gs common panel driver (%d)\n", ret);
 
 	return ret;
 }
-EXPORT_SYMBOL(gs_dsi_panel_common_init);
+EXPORT_SYMBOL_GPL(gs_dsi_panel_common_init);
 
 int gs_dsi_panel_common_probe(struct mipi_dsi_device *dsi)
 {
@@ -1572,7 +1701,7 @@ int gs_dsi_panel_common_probe(struct mipi_dsi_device *dsi)
 
 	return gs_dsi_panel_common_init(dsi, ctx);
 }
-EXPORT_SYMBOL(gs_dsi_panel_common_probe);
+EXPORT_SYMBOL_GPL(gs_dsi_panel_common_probe);
 
 static void _gs_dsi_panel_common_remove(struct mipi_dsi_device *dsi)
 {
@@ -1580,7 +1709,6 @@ static void _gs_dsi_panel_common_remove(struct mipi_dsi_device *dsi)
 
 	mipi_dsi_detach(dsi);
 	drm_panel_remove(&ctx->base);
-	drm_bridge_remove(&ctx->bridge);
 
 	devm_backlight_device_unregister(ctx->dev, ctx->bl);
 }
@@ -1597,7 +1725,7 @@ int gs_dsi_panel_common_remove(struct mipi_dsi_device *dsi)
 	return 0;
 }
 #endif
-EXPORT_SYMBOL(gs_dsi_panel_common_remove);
+EXPORT_SYMBOL_GPL(gs_dsi_panel_common_remove);
 
 /* DRM panel funcs */
 
@@ -1636,11 +1764,11 @@ void gs_panel_reset_helper(struct gs_panel *ctx)
 
 	dev_dbg(dev, "%s -\n", __func__);
 
-	gs_panel_first_enable(ctx);
+	gs_panel_first_enable_helper(ctx);
 
 	gs_panel_post_power_on(ctx);
 }
-EXPORT_SYMBOL(gs_panel_reset_helper);
+EXPORT_SYMBOL_GPL(gs_panel_reset_helper);
 
 /* Timing */
 
@@ -1671,7 +1799,7 @@ int gs_panel_wait_for_vblank(struct gs_panel *ctx)
 	WARN_ON(1);
 	return -ENODEV;
 }
-EXPORT_SYMBOL(gs_panel_wait_for_vblank);
+EXPORT_SYMBOL_GPL(gs_panel_wait_for_vblank);
 
 void gs_panel_wait_for_vsync_done(struct gs_panel *ctx, u32 te_us, u32 period_us)
 {
@@ -1686,7 +1814,24 @@ void gs_panel_wait_for_vsync_done(struct gs_panel *ctx, u32 te_us, u32 period_us
 	delay_us = gs_panel_vsync_start_time_us(te_us, period_us);
 	usleep_range(delay_us, delay_us + 10);
 }
-EXPORT_SYMBOL(gs_panel_wait_for_vsync_done);
+EXPORT_SYMBOL_GPL(gs_panel_wait_for_vsync_done);
+
+void gs_panel_wait_for_flip_done(struct gs_panel *ctx, u32 timeout_ms)
+{
+	struct drm_crtc *crtc = NULL;
+	struct drm_crtc_commit *commit = NULL;
+
+	if (ctx->gs_connector->base.state)
+		crtc = ctx->gs_connector->base.state->crtc;
+
+	if (crtc) {
+		commit = crtc->state->commit;
+		if (commit &&
+		    !wait_for_completion_timeout(&commit->flip_done, msecs_to_jiffies(timeout_ms)))
+			dev_warn(ctx->dev, "timeout when waiting for flip done\n");
+	}
+}
+EXPORT_SYMBOL_GPL(gs_panel_wait_for_flip_done);
 
 enum display_stats_state gs_get_current_display_state_locked(struct gs_panel *ctx)
 {
@@ -1708,7 +1853,7 @@ void gs_panel_msleep(u32 delay_ms)
 {
 	trace_msleep(delay_ms);
 }
-EXPORT_SYMBOL(gs_panel_msleep);
+EXPORT_SYMBOL_GPL(gs_panel_msleep);
 
 /* Helper Utilities */
 
@@ -1822,46 +1967,13 @@ u32 panel_calc_gamma_2_2_luminance(const u32 value, const u32 max_value, const u
 
 	return mult_frac(gamma_2_2_coef_x_1m[i], nit, 1000000);
 }
-EXPORT_SYMBOL(panel_calc_gamma_2_2_luminance);
+EXPORT_SYMBOL_GPL(panel_calc_gamma_2_2_luminance);
 
 u32 panel_calc_linear_luminance(const u32 value, const u32 coef_x_1k, const int offset)
 {
 	return mult_frac(value, coef_x_1k, 1000) + offset;
 }
-EXPORT_SYMBOL(panel_calc_linear_luminance);
-
-int gs_panel_register_op_hz_notifier(struct drm_connector *connector, struct notifier_block *nb)
-{
-	int retval;
-
-	if (is_gs_drm_connector(connector)) {
-		struct gs_drm_connector *gs_connector = to_gs_connector(connector);
-		struct gs_panel *ctx = gs_connector_to_panel(gs_connector);
-
-		retval = blocking_notifier_chain_register(&ctx->op_hz_notifier_head, nb);
-		if (retval != 0)
-			dev_warn(ctx->dev, "register notifier failed(%d)\n", retval);
-		else
-			blocking_notifier_call_chain(&ctx->op_hz_notifier_head,
-						     GS_PANEL_NOTIFIER_SET_OP_HZ, &ctx->op_hz);
-	} else {
-		dev_warn(connector->kdev,
-			 "register notifier failed(unexpected type of connector)\n");
-		retval = -EINVAL;
-	}
-
-	return retval;
-}
-EXPORT_SYMBOL_GPL(gs_panel_register_op_hz_notifier);
-
-int gs_panel_unregister_op_hz_notifier(struct drm_connector *connector, struct notifier_block *nb)
-{
-	struct gs_drm_connector *gs_connector = to_gs_connector(connector);
-	struct gs_panel *ctx = gs_connector_to_panel(gs_connector);
-
-	return blocking_notifier_chain_unregister(&ctx->op_hz_notifier_head, nb);
-}
-EXPORT_SYMBOL_GPL(gs_panel_unregister_op_hz_notifier);
+EXPORT_SYMBOL_GPL(panel_calc_linear_luminance);
 
 MODULE_AUTHOR("Taylor Nelms <tknelms@google.com>");
 MODULE_DESCRIPTION("MIPI-DSI panel driver abstraction for use across panel vendors");

@@ -78,7 +78,8 @@ void gs_panel_set_backlight_state(struct gs_panel *ctx, enum gs_panel_state pane
 
 	if (state_changed) {
 		notify_panel_mode_changed(ctx);
-		dev_dbg(ctx->dev, "%s: panel:%d, bl:0x%x\n", __func__, panel_state,
+		dev_info(ctx->dev, "panel: %s | bl: brightness@%u, state@%#x\n",
+			gs_get_panel_state_string(panel_state), bl->props.brightness,
 			bl->props.state);
 	}
 }
@@ -191,9 +192,9 @@ static void gs_panel_bridge_enable(struct drm_bridge *bridge,
 
 	mutex_lock(&ctx->mode_lock); /*TODO(b/267170999): MODE*/
 	if (ctx->panel_state == GPANEL_STATE_HANDOFF) {
-		is_active = !gs_panel_first_enable(ctx);
+		is_active = !gs_panel_first_enable_helper(ctx);
 	} else if (ctx->panel_state == GPANEL_STATE_HANDOFF_MODESET) {
-		if (!gs_panel_first_enable(ctx)) {
+		if (!gs_panel_first_enable_helper(ctx)) {
 			ctx->panel_state = GPANEL_STATE_MODESET;
 			mutex_unlock(&ctx->mode_lock); /*TODO(b/267170999): MODE*/
 			drm_panel_disable(&ctx->base);
@@ -542,7 +543,10 @@ static void bridge_mode_set_enter_lp_mode(struct gs_panel *ctx, const struct gs_
 			cancel_delayed_work(&ctx->normal_mode_work);
 		}
 	}
-	gs_panel_set_vddd_voltage(ctx, true);
+	if (!ctx->regulator.post_vddd_lp_enabled)
+		gs_panel_set_vddd_voltage(ctx, true);
+	else
+		ctx->regulator.need_post_vddd_lp = true;
 }
 
 static void bridge_mode_set_leave_lp_mode(struct gs_panel *ctx, const struct gs_panel_mode *pmode,
@@ -667,6 +671,7 @@ static void gs_panel_bridge_mode_set(struct drm_bridge *bridge, const struct drm
 			if (is_active)
 				need_update_backlight = true;
 		} else if (was_lp_mode && !is_lp_mode) {
+			ctx->regulator.need_post_vddd_lp = false;
 			bridge_mode_set_leave_lp_mode(ctx, pmode, is_active);
 			if (is_active) {
 				state_changed = true;
@@ -724,6 +729,11 @@ static void gs_panel_bridge_disable(struct drm_bridge *bridge,
 		panel_update_idle_mode_locked(ctx, false);
 		mutex_unlock(&ctx->mode_lock); /*TODO(b/267170999): MODE*/
 
+		if (ctx->regulator.post_vddd_lp_enabled && ctx->regulator.need_post_vddd_lp) {
+			gs_panel_set_vddd_voltage(ctx, true);
+			ctx->regulator.need_post_vddd_lp = false;
+		}
+
 		if (gs_panel_has_func(ctx, pre_update_ffc) &&
 		    (gs_conn_state->dsi_hs_clk_changed || gs_conn_state->pending_dsi_hs_clk_mbps))
 			ctx->desc->gs_panel_func->pre_update_ffc(ctx);
@@ -739,6 +749,7 @@ static void gs_panel_bridge_disable(struct drm_bridge *bridge,
 			ctx->panel_state = GPANEL_STATE_BLANK;
 		} else {
 			ctx->panel_state = GPANEL_STATE_OFF;
+			ctx->mode_in_progress = MODE_DONE;
 
 			if (gs_panel_has_func(ctx, run_normal_mode_work)) {
 				dev_dbg(dev, "%s: cancel normal_mode_work\n", __func__);

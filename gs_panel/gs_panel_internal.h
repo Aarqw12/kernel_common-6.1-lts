@@ -108,6 +108,20 @@ static int gs_panel_create_debugfs_entries(struct gs_panel *ctx, struct dentry *
 	return -EOPNOTSUPP;
 }
 #endif
+/**
+ * parse_u32_buf() - Parses a user-provided list of ints into a buffer
+ * @src: Source buffer
+ * @src_len: Size of source buffer
+ * @out: Output buffer for parsed u32s
+ * @out_len: Size out output buffer
+ *
+ * This is a convenience function for parsing a user-provided list of unsigned
+ * integers into a buffer. It is meant primarily for handling command-line
+ * input, like for a sysfs node.
+ *
+ * Return: Number of integers parsed
+ */
+int parse_u32_buf(char *src, size_t src_len, u32 *out, size_t out_len);
 
 /* gs_panel_lhbm.c */
 /**
@@ -152,7 +166,6 @@ ssize_t gs_dsi_dcs_transfer(struct mipi_dsi_device *dsi, u8 type, const void *da
 			    u16 flags);
 
 /* gs_panel.c */
-int gs_panel_first_enable(struct gs_panel *ctx);
 void panel_update_idle_mode_locked(struct gs_panel *ctx, bool allow_delay_update);
 
 /**
