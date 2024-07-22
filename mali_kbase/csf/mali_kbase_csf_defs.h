@@ -400,7 +400,10 @@ struct kbase_csf_notification {
  * @cs_error:         Records information about the CS fatal event or
  *                    about CS fault event if dump on fault is enabled.
  * @cs_error_fatal:   Flag to track if the CS fault or CS fatal event occurred.
- * @clear_faults:     Flag to track if the CS fault reporting is enabled for this queue
+ * @cs_error_acked:   Flag to indicate that acknowledging the fault has been done
+ *                    at top-half of fault handler.
+ * @clear_faults:     Flag to track if the CS fault reporting is enabled for this queue.
+ *                    It's protected by &kbase_context.csf.lock.
  * @extract_ofs: The current EXTRACT offset, this is only updated when handling
  *               the GLB IDLE IRQ if the idle timeout value is non-0 in order
  *               to help detect a queue's true idle status.
@@ -444,6 +447,7 @@ struct kbase_queue {
 	u64 cs_error_info;
 	u32 cs_error;
 	bool cs_error_fatal;
+	bool cs_error_acked;
 	bool clear_faults;
 	u64 extract_ofs;
 	u64 saved_cmd_ptr;
@@ -1242,15 +1246,25 @@ struct kbase_csf_scheduler {
 
 /* Total number of IPA_* counters registered with IPA, defined below */
 enum kbase_ipa_perf_counters {
-	ITER_ACTIVE_IDX = 0,
+	GPU_UTIL_IDX = 0,
 	MCU_ACTIVE_IDX,
 	// append new perf counters above
 	IPA_NUM_PERF_COUNTERS
 };
+
 /* Index of the MCU_ACTIVE counter within the CSHW counter block */
 #define IPA_MCU_ACTIVE_CNT_IDX (5)
-/* Index of the GPU_ITER_ACTIVE counter within the CSHW counter block */
-#define IPA_GPU_ITER_ACTIVE_CNT_IDX (6)
+
+#if IS_ENABLED(CONFIG_SOC_ZUMA)
+/*
+ * GPU_ACTIVE counter has HW errata on Turse(G715) GPU, use GPU_ITER_ACTIVE counter.
+ * Index of the GPU_ITER_ACTIVE counter within the CSHW counter block
+ */
+#define IPA_GPU_UTIL_CNT_IDX (6)
+#else
+/* Index of the GPU_ACTIVE counter within the CSHW counter block */
+#define IPA_GPU_UTIL_CNT_IDX (4)
+#endif
 
 /*
  * Maximum number of sessions that can be managed by the IPA Control component.
@@ -1705,6 +1719,7 @@ struct kbase_csf_user_reg {
  * @quirks_ext:             Pointer to an allocated buffer containing the firmware
  *                          workarounds configuration.
  * @pmode_sync_sem:         RW Semaphore to prevent MMU operations during P.Mode entrance.
+ * @gpu_idle_timer_enabled: Tracks whether the GPU idle timer is enabled or disabled.
  */
 struct kbase_csf_device {
 	struct kbase_mmu_table mcu_mmu;
@@ -1762,6 +1777,7 @@ struct kbase_csf_device {
 	spinlock_t pending_gpuq_kick_queues_lock;
 	u32 *quirks_ext;
 	struct rw_semaphore pmode_sync_sem;
+	bool gpu_idle_timer_enabled;
 };
 
 /**

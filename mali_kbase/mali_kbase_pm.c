@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
 /*
  *
- * (C) COPYRIGHT 2010-2023 ARM Limited. All rights reserved.
+ * (C) COPYRIGHT 2010-2024 ARM Limited. All rights reserved.
  *
  * This program is free software and is provided to you under the terms of the
  * GNU General Public License version 2 as published by the Free Software
@@ -58,8 +58,8 @@ void kbase_pm_context_active(struct kbase_device *kbdev)
 	(void)kbase_pm_context_active_handle_suspend(kbdev, KBASE_PM_SUSPEND_HANDLER_NOT_POSSIBLE);
 }
 
-int kbase_pm_context_active_handle_suspend(struct kbase_device *kbdev,
-					   enum kbase_pm_suspend_handler suspend_handler)
+int kbase_pm_context_active_handle_suspend_locked(struct kbase_device *kbdev,
+						  enum kbase_pm_suspend_handler suspend_handler)
 {
 	int c;
 
@@ -67,11 +67,10 @@ int kbase_pm_context_active_handle_suspend(struct kbase_device *kbdev,
 	KBASE_DEBUG_ASSERT(kbdev != NULL);
 	dev_dbg(kbdev->dev, "%s - reason = %d, pid = %d\n", __func__, suspend_handler,
 		current->pid);
-	kbase_pm_lock(kbdev);
+	lockdep_assert_held(&kbdev->pm.lock);
 
 #ifdef CONFIG_MALI_ARBITER_SUPPORT
 	if (kbase_arbiter_pm_ctx_active_handle_suspend(kbdev, suspend_handler)) {
-		kbase_pm_unlock(kbdev);
 		ATRACE_END();
 		return 1;
 	}
@@ -84,7 +83,6 @@ int kbase_pm_context_active_handle_suspend(struct kbase_device *kbdev,
 				break;
 			fallthrough;
 		case KBASE_PM_SUSPEND_HANDLER_DONT_INCREASE:
-			kbase_pm_unlock(kbdev);
 			ATRACE_END();
 			return 1;
 
@@ -109,23 +107,33 @@ int kbase_pm_context_active_handle_suspend(struct kbase_device *kbdev,
 		kbase_clk_rate_trace_manager_gpu_active(kbdev);
 	}
 
-	kbase_pm_unlock(kbdev);
 	dev_dbg(kbdev->dev, "%s %d\n", __func__, kbdev->pm.active_count);
 	ATRACE_END();
 
 	return 0;
 }
 
+int kbase_pm_context_active_handle_suspend(struct kbase_device *kbdev,
+					   enum kbase_pm_suspend_handler suspend_handler)
+{
+	int ret;
+
+	kbase_pm_lock(kbdev);
+	ret = kbase_pm_context_active_handle_suspend_locked(kbdev, suspend_handler);
+	kbase_pm_unlock(kbdev);
+
+	return ret;
+}
+
 KBASE_EXPORT_TEST_API(kbase_pm_context_active);
 
-void kbase_pm_context_idle(struct kbase_device *kbdev)
+void kbase_pm_context_idle_locked(struct kbase_device *kbdev)
 {
 	int c;
 
 	ATRACE_BEGIN(__func__);
 	KBASE_DEBUG_ASSERT(kbdev != NULL);
-
-	kbase_pm_lock(kbdev);
+	lockdep_assert_held(&kbdev->pm.lock);
 
 	c = --kbdev->pm.active_count;
 	KBASE_KTRACE_ADD(kbdev, PM_CONTEXT_IDLE, NULL, (u64)c);
@@ -144,9 +152,15 @@ void kbase_pm_context_idle(struct kbase_device *kbdev)
 		wake_up(&kbdev->pm.zero_active_count_wait);
 	}
 
-	kbase_pm_unlock(kbdev);
 	dev_dbg(kbdev->dev, "%s %d (pid = %d)\n", __func__, kbdev->pm.active_count, current->pid);
 	ATRACE_END();
+}
+
+void kbase_pm_context_idle(struct kbase_device *kbdev)
+{
+	kbase_pm_lock(kbdev);
+	kbase_pm_context_idle_locked(kbdev);
+	kbase_pm_unlock(kbdev);
 }
 
 KBASE_EXPORT_TEST_API(kbase_pm_context_idle);
@@ -167,7 +181,12 @@ static void reenable_hwcnt_on_resume(struct kbase_device *kbdev)
 #endif
 
 	/* Resume HW counters intermediaries. */
-	kbase_kinstr_prfcnt_resume(kbdev->kinstr_prfcnt_ctx);
+#if MALI_USE_CSF
+	if (kbdev->csf.firmware_inited)
+#endif
+	{
+		kbase_kinstr_prfcnt_resume(kbdev->kinstr_prfcnt_ctx);
+	}
 }
 
 static void resume_job_scheduling(struct kbase_device *kbdev)
@@ -195,7 +214,12 @@ int kbase_pm_driver_suspend(struct kbase_device *kbdev)
 	/* Suspend HW counter intermediaries. This blocks until workers and timers
 	 * are no longer running.
 	 */
-	kbase_kinstr_prfcnt_suspend(kbdev->kinstr_prfcnt_ctx);
+#if MALI_USE_CSF
+	if (kbdev->csf.firmware_inited)
+#endif
+	{
+		kbase_kinstr_prfcnt_suspend(kbdev->kinstr_prfcnt_ctx);
+	}
 
 	/* Disable GPU hardware counters.
 	 * This call will block until counters are disabled.
@@ -357,6 +381,7 @@ void kbase_pm_driver_resume(struct kbase_device *kbdev, bool arb_gpu_start)
 int kbase_pm_suspend(struct kbase_device *kbdev)
 {
 	int result = 0;
+
 #ifdef CONFIG_MALI_ARBITER_SUPPORT
 	if (kbdev->arb.arb_if)
 		kbase_arbiter_pm_vm_event(kbdev, KBASE_VM_OS_SUSPEND_EVENT);
