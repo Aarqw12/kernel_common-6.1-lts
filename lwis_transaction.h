@@ -29,7 +29,7 @@ struct lwis_fence;
  *    into a queue.
  */
 struct lwis_transaction {
-	struct lwis_transaction_info_v4 info;
+	struct lwis_transaction_info info;
 	struct lwis_transaction_response_header *resp;
 	struct list_head event_list_node;
 	struct list_head process_queue_node;
@@ -47,7 +47,7 @@ struct lwis_transaction {
 	bool is_weak_transaction;
 	int64_t id;
 	/* List of fences's fp that's referenced by the transaction */
-	int num_trigger_fences;
+	uint32_t num_trigger_fences;
 	struct file *trigger_fence_fps[LWIS_TRIGGER_NODES_MAX_NUM];
 	/* Parameters for completion fences */
 	struct list_head completion_fence_list;
@@ -74,7 +74,7 @@ struct lwis_transaction {
  * well as the time it executes and the time it took to execute.
  */
 struct lwis_transaction_history {
-	struct lwis_transaction_info_v4 info;
+	struct lwis_transaction_info info;
 	int64_t process_timestamp;
 	int64_t process_duration_ns;
 };
