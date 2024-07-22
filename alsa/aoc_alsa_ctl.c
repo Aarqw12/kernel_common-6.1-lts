@@ -96,6 +96,9 @@ static int snd_aoc_ctl_info(struct snd_kcontrol *kcontrol,
 		uinfo->type = SNDRV_CTL_ELEM_TYPE_BYTES;
 		/* PDM and All MIC power control*/
 		uinfo->count = (NUM_OF_BUILTIN_MIC + 1) * sizeof(uint32_t);
+	} else if (kcontrol->private_value == OFFLOAD_POSITION) {
+		uinfo->type = SNDRV_CTL_ELEM_TYPE_BYTES;
+		uinfo->count = sizeof(uint64_t);
 	}
 	return 0;
 }
@@ -868,7 +871,7 @@ static int audio_gapless_offload_ctl_get(struct snd_kcontrol *kcontrol,
 }
 
 static int audio_gapless_offload_ctl_set(struct snd_kcontrol *kcontrol,
-					       struct snd_ctl_elem_value *ucontrol)
+					 struct snd_ctl_elem_value *ucontrol)
 {
 	struct aoc_chip *chip = snd_kcontrol_chip(kcontrol);
 	int err = 0;
@@ -877,6 +880,43 @@ static int audio_gapless_offload_ctl_set(struct snd_kcontrol *kcontrol,
 		return -EINTR;
 
 	chip->gapless_offload_enable = ucontrol->value.integer.value[0];
+
+	mutex_unlock(&chip->audio_mutex);
+	return err;
+}
+
+static int audio_offload_position_ctl_get(struct snd_kcontrol *kcontrol,
+					  struct snd_ctl_elem_value *ucontrol)
+{
+	struct aoc_chip *chip = snd_kcontrol_chip(kcontrol);
+	uint64_t current_position = 0;
+	int err = 0;
+
+	if (mutex_lock_interruptible(&chip->audio_mutex))
+		return -EINTR;
+
+	if (chip->compr_offload_stream != NULL) {
+		err = aoc_compr_get_position(chip->compr_offload_stream, &current_position);
+		if (err == 0)
+			memcpy(ucontrol->value.bytes.data, &current_position, sizeof(uint64_t));
+	}
+
+	mutex_unlock(&chip->audio_mutex);
+
+	return err;
+}
+
+static int audio_offload_position_ctl_set(struct snd_kcontrol *kcontrol,
+					       struct snd_ctl_elem_value *ucontrol)
+{
+	struct aoc_chip *chip = snd_kcontrol_chip(kcontrol);
+	int err = 0;
+
+	if (mutex_lock_interruptible(&chip->audio_mutex))
+		return -EINTR;
+
+	if (chip->compr_offload_stream != NULL)
+		err = aoc_compr_offload_reset_io_sample_base(chip->compr_offload_stream);
 
 	mutex_unlock(&chip->audio_mutex);
 	return err;
@@ -1134,6 +1174,38 @@ static int voice_pcm_wait_time_set(struct snd_kcontrol *kcontrol,
 
 	mutex_unlock(&chip->audio_mutex);
 	return 0;
+}
+
+static int multichannel_processor_ctl_get(struct snd_kcontrol *kcontrol,
+					       struct snd_ctl_elem_value *ucontrol)
+{
+	struct aoc_chip *chip = snd_kcontrol_chip(kcontrol);
+
+	if (mutex_lock_interruptible(&chip->audio_mutex))
+		return -EINTR;
+
+	ucontrol->value.integer.value[0] = chip->multichannel_processor;
+
+	mutex_unlock(&chip->audio_mutex);
+
+	return 0;
+}
+
+static int multichannel_processor_ctl_set(struct snd_kcontrol *kcontrol,
+					       struct snd_ctl_elem_value *ucontrol)
+{
+	struct aoc_chip *chip = snd_kcontrol_chip(kcontrol);
+	int err = 0;
+
+	if (mutex_lock_interruptible(&chip->audio_mutex))
+		return -EINTR;
+
+	chip->multichannel_processor = ucontrol->value.integer.value[0];
+
+	err = aoc_multichannel_processor_switch_set(chip, chip->multichannel_processor);
+
+	mutex_unlock(&chip->audio_mutex);
+	return err;
 }
 
 #if IS_ENABLED(CONFIG_SOC_ZUMA)
@@ -2288,6 +2360,7 @@ static const char *incall_capture_stream_texts[] = { "Off", "UL", "DL", "UL_DL",
 static SOC_ENUM_SINGLE_DECL(incall_capture_stream0_enum, 1, 0, incall_capture_stream_texts);
 static SOC_ENUM_SINGLE_DECL(incall_capture_stream1_enum, 1, 1, incall_capture_stream_texts);
 static SOC_ENUM_SINGLE_DECL(incall_capture_stream2_enum, 1, 2, incall_capture_stream_texts);
+static SOC_ENUM_SINGLE_DECL(incall_capture_stream3_enum, 1, 3, incall_capture_stream_texts);
 
 /* audio capture mic source */
 static const char *audio_capture_mic_source_texts[] = { "Default", "Builtin_MIC", "USB_MIC",
@@ -2522,6 +2595,8 @@ static struct snd_kcontrol_new snd_aoc_ctl[] = {
 		     incall_capture_enable_ctl_get, incall_capture_enable_ctl_set),
 	SOC_ENUM_EXT("Incall Capture Stream2", incall_capture_stream2_enum,
 		     incall_capture_enable_ctl_get, incall_capture_enable_ctl_set),
+	SOC_ENUM_EXT("Incall Capture Stream3", incall_capture_stream3_enum,
+		     incall_capture_enable_ctl_get, incall_capture_enable_ctl_set),
 
 	SOC_SINGLE_EXT("Incall Playback Stream0", SND_SOC_NOPM, 0, 1, 0,
 		       incall_playback_enable_ctl_get, incall_playback_enable_ctl_set),
@@ -2656,12 +2731,27 @@ static struct snd_kcontrol_new snd_aoc_ctl[] = {
 	SOC_SINGLE_EXT("Gapless Offload Enable", SND_SOC_NOPM, 0, 1, 0,
 		       audio_gapless_offload_ctl_get, audio_gapless_offload_ctl_set),
 
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Offload Position",
+		.index = 0,
+		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+		.private_value = OFFLOAD_POSITION,
+		.info = snd_aoc_ctl_info,
+		.get = audio_offload_position_ctl_get,
+		.put = audio_offload_position_ctl_set,
+		.count = 1,
+	},
+
 	SOC_SINGLE_EXT("Voice PCM Stream Wait Time in MSec", SND_SOC_NOPM, 0, 10000, 0,
 		voice_pcm_wait_time_get, voice_pcm_wait_time_set),
 
 	SOC_SINGLE_EXT("Displayport Audio Start Threshold", SND_SOC_NOPM, 0,
 			MAX_DP_START_THRESHOLD, 0,
 			dp_start_threshold_get, dp_start_threshold_set),
+
+	SOC_SINGLE_EXT("MultiChannel Processor Switch", SND_SOC_NOPM, 0, INT_MAX, 0,
+			multichannel_processor_ctl_get, multichannel_processor_ctl_set),
 
 #if IS_ENABLED(CONFIG_SOC_ZUMA)
 	SOC_SINGLE_EXT("Mel Processor Enable", SND_SOC_NOPM, 0, 1, 0,

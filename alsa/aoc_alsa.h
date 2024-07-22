@@ -81,7 +81,7 @@ enum uc_device_id {
 #define MAX_NUM_OF_SINKS_PER_STREAM 2
 #define NUM_OF_MIC_BROKEN_RECORD 5
 
-#define MAX_NUM_OF_INCALL_CAPTURE_STREAM 3
+#define MAX_NUM_OF_INCALL_CAPTURE_STREAM 4
 
 #define N_MIC_IN_SPATIAL_MODULE 3
 
@@ -197,6 +197,7 @@ enum {
 	BUILDIN_US_MIC_CAPTURE_LIST,
 	BUILDIN_MIC_BROKEN_STATE,
 	A2DP_ENCODER_PARAMETERS,
+	OFFLOAD_POSITION,
 };
 
 enum aoc_playback_entry_point {
@@ -245,6 +246,7 @@ struct aoc_chip {
 
 	uint64_t avail_substreams;
 	struct aoc_alsa_stream *alsa_stream[MAX_NUM_OF_SUBSTREAMS];
+	struct aoc_alsa_stream *compr_offload_stream;
 
 	struct aoc_service_dev *dev_alsa_stream[MAX_NUM_OF_SUBSTREAMS];
 	struct aoc_service_dev *dp_dev;
@@ -313,6 +315,7 @@ struct aoc_chip {
 #if IS_ENABLED(CONFIG_SOC_ZUMA)
 	int mel_enable;
 #endif
+	int multichannel_processor;
 
 	bool hotword_supported;
 	bool chre_supported;
@@ -500,6 +503,8 @@ int aoc_set_usb_offload_state(struct aoc_chip *chip, bool offload_enable);
 
 int aoc_set_usb_mem_config(struct aoc_chip *achip);
 
+int aoc_multichannel_processor_switch_set(struct aoc_chip *achip, int value);
+
 int aoc_audio_write(struct aoc_alsa_stream *alsa_stream, void *src,
 		    uint32_t count);
 int aoc_audio_read(struct aoc_alsa_stream *alsa_stream, void *dest,
@@ -538,6 +543,8 @@ int aoc_compr_pause(struct aoc_alsa_stream *alsa_stream);
 int aoc_compr_resume(struct aoc_alsa_stream *alsa_stream);
 int aoc_compr_offload_linear_gain_get(struct aoc_chip *chip, long *val);
 int aoc_compr_offload_linear_gain_set(struct aoc_chip *chip, long *val);
+int aoc_compr_offload_reset_io_sample_base(struct aoc_alsa_stream *alsa_stream);
+int aoc_compr_get_position(struct aoc_alsa_stream *alsa_stream, uint64_t *position);
 
 int aoc_mic_loopback(struct aoc_chip *chip, int enable);
 

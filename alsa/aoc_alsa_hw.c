@@ -172,7 +172,7 @@ static int aoc_audio_stream_type[] = {
 	[15] = NORMAL, [16] = NORMAL,  [17] = NORMAL,	   [18] = INCALL, [19] = INCALL,
 	[20] = INCALL, [21] = INCALL,  [22] = INCALL,	   [23] = MMAPED, [24] = NORMAL,
 	[25] = HIFI,   [26] = HIFI,    [27] = ANDROID_AEC, [28] = MMAPED, [29] = INCALL,
-	[30] = NORMAL, [31] = CAP_INJ, [32] = HOTWORD_TAP,
+	[30] = NORMAL, [31] = CAP_INJ, [32] = HOTWORD_TAP, [54] = INCALL,
 };
 
 int aoc_pcm_device_to_stream_type(int device)
@@ -785,6 +785,13 @@ int aoc_incall_capture_enable_get(struct aoc_chip *chip, int stream, long *val)
 	int err;
 	struct CMD_AUDIO_OUTPUT_TELE_CAPT cmd;
 
+#if IS_ENABLED(CONFIG_SOC_GS101) || IS_ENABLED(CONFIG_SOC_GS201)
+	if (stream == 3) {
+		*val = chip->incall_capture_state[stream];
+		return 0;
+	}
+#endif
+
 	AocCmdHdrSet(&(cmd.parent), CMD_AUDIO_OUTPUT_GET_TELE_CAPT_ID, sizeof(cmd));
 
 	cmd.ring = stream;
@@ -808,6 +815,14 @@ int aoc_incall_capture_enable_set(struct aoc_chip *chip, int stream, long val)
 {
 	int err;
 	struct CMD_AUDIO_OUTPUT_TELE_CAPT cmd;
+
+#if IS_ENABLED(CONFIG_SOC_GS101) || IS_ENABLED(CONFIG_SOC_GS201)
+	if (stream == 3) {
+		chip->incall_capture_state[stream] = val;
+		pr_info("%s: Not support stream 3\n", __func__);
+		return 0;
+	}
+#endif
 
 	AocCmdHdrSet(&(cmd.parent), CMD_AUDIO_OUTPUT_SET_TELE_CAPT_ID, sizeof(cmd));
 	cmd.ring = stream;
@@ -2747,6 +2762,7 @@ int aoc_audio_incall_start(struct aoc_alsa_stream *alsa_stream)
 {
 	int stream, err = 0;
 	struct aoc_chip *chip = alsa_stream->chip;
+	struct snd_soc_pcm_runtime *rtd = alsa_stream->substream->private_data;
 
 	if (alsa_stream->stream_type == CAP_INJ)
 		return aoc_audio_capture_inject_start(alsa_stream);
@@ -2760,15 +2776,50 @@ int aoc_audio_incall_start(struct aoc_alsa_stream *alsa_stream)
 	if (alsa_stream->stream_type == HOTWORD_TAP)
 		return 0;
 
-	/* TODO: stream number inferred by pcm device idx, pb_0:18, cap_0:20, better way needed */
+	if (!rtd) {
+		pr_err("ERR: invalid pcm runtime structure\n");
+		return 0;
+	}
+
 	if (alsa_stream->substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		stream = alsa_stream->entry_point_idx - 18;
-		stream = min(stream, 2); /* stream 2 for pb_2 has device id 29 */
+		/* Mapping the incall playback to specific stream ring.*/
+		switch (rtd->dai_link->id) {
+			case IDX_INCALL_PB0_RX:
+				stream = 0;
+				break;
+			case IDX_INCALL_PB1_RX:
+				stream = 1;
+				break;
+			case IDX_INCALL_PB2_RX:
+				stream = 2;
+				break;
+			default:
+			/* TODO: Keep original logic, but should be removed if it is useless.*/
+				stream = 2;
+				break;
+		}
 		err = aoc_incall_playback_enable_set(chip, stream, 1);
 		if (err < 0)
 			pr_err("ERR:%d in incall playback start on\n", err);
 	} else {
-		stream = alsa_stream->entry_point_idx - 20;
+		/* Mapping the incall playback to specific stream ring.*/
+		switch (rtd->dai_link->id) {
+			case IDX_INCALL_CAP0_TX:
+				stream = 0;
+				break;
+			case IDX_INCALL_CAP1_TX:
+				stream = 1;
+				break;
+			case IDX_INCALL_CAP2_TX:
+				stream = 2;
+				break;
+			case IDX_INCALL_CAP3_TX:
+				stream = 3;
+				break;
+			default:
+				pr_err("ERR: dai_link id %d for incall_cap", rtd->dai_link->id);
+				return err;
+		}
 		err = aoc_incall_capture_enable_set(chip, stream,
 						    chip->incall_capture_state[stream]);
 		if (err < 0)
@@ -2782,6 +2833,7 @@ int aoc_audio_incall_stop(struct aoc_alsa_stream *alsa_stream)
 {
 	int stream, err = 0;
 	struct aoc_chip *chip = alsa_stream->chip;
+	struct snd_soc_pcm_runtime *rtd = alsa_stream->substream->private_data;
 
 	if (alsa_stream->stream_type == CAP_INJ)
 		return aoc_audio_capture_inject_stop(alsa_stream);
@@ -2795,14 +2847,50 @@ int aoc_audio_incall_stop(struct aoc_alsa_stream *alsa_stream)
 	if (alsa_stream->stream_type == HOTWORD_TAP)
 		return 0;
 
-	/* TODO: stream number inferred by pcm device idx, pb_0:18, cap_0:20, better way needed */
+	if (!rtd) {
+		pr_err("ERR: invalid pcm runtime structure\n");
+		return 0;
+	}
+
 	if (alsa_stream->substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		stream = alsa_stream->entry_point_idx - 18;
+		/* Mapping the incall playback to specific stream ring.*/
+		switch (rtd->dai_link->id) {
+			case IDX_INCALL_PB0_RX:
+				stream = 0;
+				break;
+			case IDX_INCALL_PB1_RX:
+				stream = 1;
+				break;
+			case IDX_INCALL_PB2_RX:
+				stream = 2;
+				break;
+			default:
+			/* TODO: Keep original logic, but should be removed if it is useless.*/
+				stream = 2;
+				break;
+		}
 		err = aoc_incall_playback_enable_set(chip, stream, 0);
 		if (err < 0)
 			pr_err("ERR:%d in incall playback start on\n", err);
 	} else {
-		stream = alsa_stream->entry_point_idx - 20;
+		/* Mapping the incall playback to specific stream ring.*/
+		switch (rtd->dai_link->id) {
+			case IDX_INCALL_CAP0_TX:
+				stream = 0;
+				break;
+			case IDX_INCALL_CAP1_TX:
+				stream = 1;
+				break;
+			case IDX_INCALL_CAP2_TX:
+				stream = 2;
+				break;
+			case IDX_INCALL_CAP3_TX:
+				stream = 3;
+				break;
+			default:
+				pr_err("ERR: dai_link id %d for incall_cap", rtd->dai_link->id);
+				return err;
+		}
 		err = aoc_incall_capture_enable_set(chip, stream, 0);
 		if (err < 0)
 			pr_err("ERR:%d in incall capture start on\n", err);
@@ -3720,13 +3808,18 @@ int aoc_compr_offload_setup(struct aoc_alsa_stream *alsa_stream, int type)
 	pr_info("%s type=%d format=%d sr=%d chan=%d\n", __func__, type, cmd.cfg.format,
 		cmd.cfg.samplerate, cmd.cfg.channels);
 
-	err = aoc_audio_control(CMD_OUTPUT_CHANNEL, (uint8_t *)&cmd, sizeof(cmd), NULL,
+	err = aoc_audio_control(CMD_OUTPUT_CHANNEL, (uint8_t *)&cmd, sizeof(cmd), (uint8_t *)&cmd,
 				alsa_stream->chip);
 	if (err < 0) {
 		pr_err("ERR:%d in set compress offload codec\n", err);
 		return err;
 	}
 
+	err = cmd.parent.reply;
+	if (err < 0) {
+		pr_err("ERR:%d in set compress offload codec cmd reply\n", err);
+		return err;
+	}
 	return 0;
 }
 
@@ -4095,4 +4188,14 @@ int aoc_audio_mic_mask_set(struct aoc_chip *chip, bool is_voice)
 		mask[i] = chip->buildin_mic_id_list[i];
 
 	return aoc_audio_set_parameters(cmd_id, block, component, key, value, chip);
+}
+
+int aoc_multichannel_processor_switch_set(struct aoc_chip *chip, int value)
+{
+	const int cmd_id = CMD_AUDIO_OUTPUT_SET_PARAMETER_ID;
+	const int block = 22; /* ABLOCK_MCPROC */
+	const int component = 43; /* ASP_ID_MC_PP */
+	const int paramid = 0; /* parameter ID for the active module */
+
+	return aoc_audio_set_parameters(cmd_id, block, component, paramid, value, chip);
 }
