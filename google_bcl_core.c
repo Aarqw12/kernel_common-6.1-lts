@@ -10,6 +10,8 @@
 
 #include <linux/atomic.h>
 #include <linux/completion.h>
+#include <linux/cpu.h>
+#include <linux/cpu_pm.h>
 #include <linux/module.h>
 #include <linux/workqueue.h>
 #include <linux/gpio.h>
@@ -54,6 +56,7 @@
 #include <max77779_fg.h>
 #include <max777x9_bcl.h>
 
+
 static const struct platform_device_id google_id_table[] = {
 	{.name = "google_mitigation",},
 	{},
@@ -76,6 +79,7 @@ void pwrwarn_update_start_time(struct bcl_device *bcl_dev,
 void pwrwarn_update_end_time(struct bcl_device *bcl_dev, int id,
 				struct irq_duration_stats *bins,
 				enum CONCURRENT_PWRWARN_IRQ bin_ind);
+void trace_bcl_zone_stats(struct bcl_zone *zone, int value);
 
 static int zone_read_temp(struct thermal_zone_device *tz, int *val)
 {
@@ -193,36 +197,11 @@ static int evt_cnt_rd_and_clr(struct bcl_device *bcl_dev, int idx, bool update_e
 	return 0;
 }
 
-static irqreturn_t deassert_irq_handler(int irq, void *data)
-{
-	struct bcl_zone *zone = data;
-	struct bcl_device *bcl_dev;
-	u8 idx;
-	u8 irq_val = 0;
-
-	if (!zone || !zone->parent)
-		return IRQ_HANDLED;
-
-	idx = zone->idx;
-	bcl_dev = zone->parent;
-	if (!smp_load_acquire(&bcl_dev->enabled))
-		return IRQ_HANDLED;
-
-	if (bcl_dev->ifpmic == MAX77759 && idx >= UVLO2 && idx <= BATOILO2) {
-		bcl_cb_get_irq(bcl_dev, &irq_val);
-		if (irq_val == 0)
-			goto exit;
-		idx = irq_val;
-		zone = bcl_dev->zone[idx];
-	}
-	complete(&zone->deassert);
-	mod_delayed_work(system_unbound_wq, &zone->irq_untriggered_work, 0);
-exit:
-	return IRQ_HANDLED;
-}
-
 static int google_bcl_wait_for_response_locked(struct bcl_zone *zone, int timeout_ms)
 {
+	struct bcl_device *bcl_dev = zone->parent;
+	if (bcl_dev->ifpmic == MAX77759)
+		return 0;
 	reinit_completion(&zone->deassert);
 	return wait_for_completion_timeout(&zone->deassert, msecs_to_jiffies(timeout_ms));
 }
@@ -232,31 +211,18 @@ static irqreturn_t latched_irq_handler(int irq, void *data)
 	struct bcl_zone *zone = data;
 	struct bcl_device *bcl_dev;
 	u8 idx;
-	u8 irq_val = 0;
 
 	if (!zone || !zone->parent)
 		return IRQ_HANDLED;
 
 	idx = zone->idx;
 	bcl_dev = zone->parent;
-	if (!smp_load_acquire(&bcl_dev->enabled))
+	if (!smp_load_acquire(&bcl_dev->enabled)) {
+		if (zone->irq_type == IF_PMIC)
+			bcl_cb_clr_irq(bcl_dev, idx);
 		return IRQ_HANDLED;
-
-	if (idx >= UVLO1 && idx <= BATOILO2) {
-		atomic_inc(&zone->last_triggered.triggered_cnt[START]);
-		zone->last_triggered.triggered_time[START] = ktime_to_ms(ktime_get());
 	}
-	if (bcl_dev->ifpmic == MAX77759 && idx >= UVLO2 && idx <= BATOILO2) {
-		bcl_cb_get_irq(bcl_dev, &irq_val);
-		if (irq_val == 0)
-			goto exit;
-		idx = irq_val;
-		zone = bcl_dev->zone[idx];
-	}
-	if (zone->irq_type == IF_PMIC)
-		bcl_cb_clr_irq(bcl_dev, idx);
-	queue_work(bcl_dev->triggered_wq, &zone->irq_triggered_work);
-exit:
+	queue_work(system_unbound_wq, &zone->irq_triggered_work);
 	return IRQ_HANDLED;
 }
 
@@ -264,7 +230,6 @@ static bool google_warn_check(struct bcl_zone *zone)
 {
 	struct bcl_device *bcl_dev;
 	int gpio_level, assert = 0, ret;
-	int idx = zone->idx;
 	u8 regval;
 
 	bcl_dev = zone->parent;
@@ -273,26 +238,15 @@ static bool google_warn_check(struct bcl_zone *zone)
 		return (gpio_level == zone->polarity);
 	}
 	if (bcl_dev->ifpmic == MAX77779) {
-		ret = max77779_external_pmic_reg_read(bcl_dev->irq_pmic_dev,
-						      MAX77779_PMIC_VDROOP_INT, &regval);
+		ret = max77779_external_chg_reg_read(bcl_dev->intf_pmic_dev,
+						     MAX77779_CHG_DETAILS_01, &regval);
 		if (ret < 0) {
 			dev_err(bcl_dev->device, "IRQ read: %d, fail\n", regval);
 			return false;
 		}
-		if (idx == BATOILO2)
-			assert = _max77779_pmic_vdroop_int_bat_oilo2_int_get(regval);
-		else if (idx == UVLO2)
-			assert = _max77779_pmic_vdroop_int_sys_uvlo2_int_get(regval);
-		if (assert) {
-			ret = max77779_external_pmic_reg_write(bcl_dev->irq_pmic_dev,
-							       MAX77779_PMIC_VDROOP_INT,
-							       regval);
-			if (ret < 0) {
-				dev_err(bcl_dev->device, "IRQ clear: %d, fail\n", regval);
-				return false;
-			}
+		assert = _max77779_chg_details_01_bat_dtls_get(regval);
+		if (assert == BAT_DTLS_OILO_ASSERTED)
 			return true;
-		}
 	}
 	return false;
 }
@@ -306,7 +260,11 @@ static void google_bcl_release_throttling(struct bcl_zone *zone)
 #if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
 	if (zone->bcl_qos)
 		google_bcl_qos_update(zone, false);
+	else if (zone->idx == BATOILO2 && bcl_dev->zone[BATOILO])
+		google_bcl_qos_update(bcl_dev->zone[BATOILO], false);
 #endif
+	complete(&zone->deassert);
+	trace_bcl_zone_stats(zone, 0);
 	if (zone->irq_type == IF_PMIC) {
 		update_irq_end_times(bcl_dev, zone->idx);
 		if (zone->idx >= UVLO1 && zone->idx <= BATOILO2 && bcl_dev->ifpmic == MAX77779)
@@ -319,22 +277,20 @@ static void google_bcl_release_throttling(struct bcl_zone *zone)
 
 static void google_warn_work(struct work_struct *work)
 {
-	struct bcl_zone *zone = container_of(work, struct bcl_zone, warn_work);
+	struct bcl_zone *zone = container_of(work, struct bcl_zone, warn_work.work);
 	struct bcl_device *bcl_dev;
 
 	bcl_dev = zone->parent;
-	if (!bcl_dev)
-		return;
 	if (!google_warn_check(zone)) {
 #if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
 		google_bcl_upstream_state(zone, DISABLED);
 #endif
-		complete(&zone->deassert);
 		google_bcl_release_throttling(zone);
 	} else {
 		zone->bcl_cur_lvl = zone->bcl_lvl + THERMAL_HYST_LEVEL;
 		/* ODPM Read to kick off LIGHT module throttling */
-		queue_work(bcl_dev->warn_wq, &zone->warn_work);
+		mod_delayed_work(bcl_dev->qos_update_wq, &zone->warn_work,
+				 msecs_to_jiffies(TIMEOUT_10MS));
 	}
 	if (zone->tz)
 		thermal_zone_device_update(zone->tz, THERMAL_EVENT_UNSPECIFIED);
@@ -342,15 +298,15 @@ static void google_warn_work(struct work_struct *work)
 
 static int google_bcl_set_soc(struct bcl_device *bcl_dev, int low, int high)
 {
+	if (IS_ERR_OR_NULL(bcl_dev) || IS_ERR_OR_NULL(bcl_dev->device))
+		return 0;
 	if (high == bcl_dev->trip_high_temp)
 		return 0;
 
-	mutex_lock(&bcl_dev->state_trans_lock);
 	bcl_dev->trip_low_temp = low;
 	bcl_dev->trip_high_temp = high;
 	schedule_delayed_work(&bcl_dev->soc_work, 0);
 
-	mutex_unlock(&bcl_dev->state_trans_lock);
 	return 0;
 }
 
@@ -365,8 +321,12 @@ static int google_bcl_read_soc(struct bcl_device *bcl_dev, int *val)
 		0,
 	};
 	int err = 0;
-
 	*val = 100;
+
+	if (IS_ERR_OR_NULL(bcl_dev) || IS_ERR_OR_NULL(bcl_dev->device))
+		return 0;
+	if (!smp_load_acquire(&bcl_dev->enabled))
+		return 0;
 	if (!bcl_dev->batt_psy)
 		bcl_dev->batt_psy = google_get_power_supply(bcl_dev);
 	if (bcl_dev->batt_psy) {
@@ -398,13 +358,11 @@ static void google_bcl_evaluate_soc(struct work_struct *work)
 	if (google_bcl_read_soc(bcl_dev, &battery_percentage_reverse))
 		return;
 
-	mutex_lock(&bcl_dev->state_trans_lock);
 	if ((battery_percentage_reverse < bcl_dev->trip_high_temp) &&
 		(battery_percentage_reverse > bcl_dev->trip_low_temp))
-		goto eval_exit;
+		return;
 
 	bcl_dev->trip_val = battery_percentage_reverse;
-	mutex_unlock(&bcl_dev->state_trans_lock);
 	if (!bcl_dev->soc_tz) {
 		bcl_dev->soc_tz = devm_thermal_of_zone_register(bcl_dev->device,
 								PMIC_SOC, bcl_dev,
@@ -418,8 +376,6 @@ static void google_bcl_evaluate_soc(struct work_struct *work)
 	if (!IS_ERR(bcl_dev->soc_tz))
 		thermal_zone_device_update(bcl_dev->soc_tz, THERMAL_EVENT_UNSPECIFIED);
 	return;
-eval_exit:
-	mutex_unlock(&bcl_dev->state_trans_lock);
 }
 
 static int battery_supply_callback(struct notifier_block *nb,
@@ -429,7 +385,7 @@ static int battery_supply_callback(struct notifier_block *nb,
 	struct bcl_device *bcl_dev = container_of(nb, struct bcl_device, psy_nb);
 	struct power_supply *bcl_psy;
 
-	if (!bcl_dev)
+	if (IS_ERR_OR_NULL(bcl_dev))
 		return NOTIFY_OK;
 
 	bcl_psy = bcl_dev->batt_psy;
@@ -451,29 +407,45 @@ static int google_bcl_remove_thermal(struct bcl_device *bcl_dev)
 	int i = 0;
 	struct bcl_zone *zone;
 
-	power_supply_unreg_notifier(&bcl_dev->psy_nb);
+	if (IS_ERR_OR_NULL(bcl_dev))
+		return 0;
+        if (bcl_dev->batt_psy_initialized)
+		power_supply_unreg_notifier(&bcl_dev->psy_nb);
 	for (i = 0; i < TRIGGERED_SOURCE_MAX; i++) {
 		if (!bcl_dev->zone[i])
 			continue;
 		zone = bcl_dev->zone[i];
 		if (zone->irq_reg) {
-			if ((bcl_dev->ifpmic == MAX77779) && ((i == BATOILO2) || (i == UVLO2)))
+			if ((bcl_dev->ifpmic == MAX77779) && (i == BATOILO))
 				devm_free_irq(bcl_dev->device, bcl_dev->pmic_irq, bcl_dev);
 			else
 				devm_free_irq(bcl_dev->device, zone->bcl_irq, zone);
 		}
+		zone->irq_reg = false;
 		if (zone->tz)
 			devm_thermal_of_zone_unregister(bcl_dev->device, zone->tz);
-		cancel_delayed_work(&zone->irq_untriggered_work);
+		if (zone->irq_triggered_work.func != NULL)
+			cancel_work_sync(&zone->irq_triggered_work);
+		if (zone->warn_work.work.func != NULL)
+			cancel_delayed_work_sync(&zone->warn_work);
 		devm_kfree(bcl_dev->device, zone);
 	}
-	destroy_workqueue(bcl_dev->triggered_wq);
-	destroy_workqueue(bcl_dev->warn_wq);
-	mutex_destroy(&bcl_dev->state_trans_lock);
+#if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
+	if (bcl_dev->main_pwr_irq_work.work.func != NULL)
+		cancel_delayed_work_sync(&bcl_dev->main_pwr_irq_work);
+	if (bcl_dev->sub_pwr_irq_work.work.func != NULL)
+		cancel_delayed_work_sync(&bcl_dev->sub_pwr_irq_work);
+	google_bcl_remove_qos(bcl_dev);
+	google_bcl_remove_data_logging(bcl_dev);
+#endif
+	destroy_workqueue(bcl_dev->qos_update_wq);
+	if (bcl_dev->soc_work.work.func != NULL)
+		cancel_delayed_work_sync(&bcl_dev->soc_work);
+	if (bcl_dev->non_monitored_module_ids != NULL)
+		kfree(bcl_dev->non_monitored_module_ids);
+	cpu_pm_unregister_notifier(&bcl_dev->cpu_nb);
+	google_bcl_remove_votable(bcl_dev);
 	mutex_destroy(&bcl_dev->cpu_ratio_lock);
-	mutex_destroy(&bcl_dev->gpu_ratio_lock);
-	mutex_destroy(&bcl_dev->tpu_ratio_lock);
-	mutex_destroy(&bcl_dev->aur_ratio_lock);
 	mutex_destroy(&bcl_dev->sysreg_lock);
 
 	return 0;
@@ -482,7 +454,7 @@ static int google_bcl_remove_thermal(struct bcl_device *bcl_dev)
 static int google_bcl_init_clk_div(struct bcl_device *bcl_dev, int idx,
 				   unsigned int value)
 {
-	if (!bcl_dev)
+	if (IS_ERR_OR_NULL(bcl_dev))
 		return -EIO;
 	switch (idx) {
 	case SUBSYSTEM_TPU:
@@ -510,20 +482,19 @@ struct bcl_device *google_retrieve_bcl_handle(void)
 	if (!pdev)
 		return NULL;
 	bcl_dev = platform_get_drvdata(pdev);
-	if (!bcl_dev)
+	if (IS_ERR_OR_NULL(bcl_dev))
 		return NULL;
 
 	return bcl_dev;
 }
 EXPORT_SYMBOL_GPL(google_retrieve_bcl_handle);
 
-static int google_init_ratio(struct bcl_device *data, enum SUBSYSTEM_SOURCE idx,
-			     struct mutex *lock)
+static int google_init_ratio(struct bcl_device *data, enum SUBSYSTEM_SOURCE idx)
 {
 	void __iomem *addr;
 
-	if (!data)
-		return -ENOMEM;
+	if (IS_ERR_OR_NULL(data->device))
+		return -EIO;
 
 	if (!smp_load_acquire(&data->enabled))
 		return -EINVAL;
@@ -534,7 +505,6 @@ static int google_init_ratio(struct bcl_device *data, enum SUBSYSTEM_SOURCE idx,
 	if (idx < SUBSYSTEM_TPU)
 		return -EIO;
 
-	mutex_lock(lock);
 	if (idx != SUBSYSTEM_AUR) {
 		addr = data->core_conf[idx].base_mem + CLKDIVSTEP_CON_HEAVY;
 		__raw_writel(data->core_conf[idx].con_heavy, addr);
@@ -549,26 +519,31 @@ static int google_init_ratio(struct bcl_device *data, enum SUBSYSTEM_SOURCE idx,
 	__raw_writel(data->core_conf[idx].clk_out, addr);
 	data->core_conf[idx].clk_stats = __raw_readl(data->core_conf[idx].base_mem +
 						     clk_stats_offset[idx]);
-	mutex_unlock(lock);
 
 	return 0;
 }
 
 int google_init_tpu_ratio(struct bcl_device *data)
 {
-	return google_init_ratio(data, SUBSYSTEM_TPU, &data->tpu_ratio_lock);
+	if (!IS_ERR_OR_NULL(data))
+		return google_init_ratio(data, SUBSYSTEM_TPU);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(google_init_tpu_ratio);
 
 int google_init_gpu_ratio(struct bcl_device *data)
 {
-	return google_init_ratio(data, SUBSYSTEM_GPU, &data->gpu_ratio_lock);
+	if (!IS_ERR_OR_NULL(data))
+		return google_init_ratio(data, SUBSYSTEM_GPU);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(google_init_gpu_ratio);
 
 int google_init_aur_ratio(struct bcl_device *data)
 {
-	return google_init_ratio(data, SUBSYSTEM_AUR, &data->aur_ratio_lock);
+	if (!IS_ERR_OR_NULL(data))
+		return google_init_ratio(data, SUBSYSTEM_AUR);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(google_init_aur_ratio);
 
@@ -578,7 +553,7 @@ unsigned int google_get_db(struct bcl_device *data, enum MPMM_SOURCE index)
 	void __iomem *addr;
 	unsigned int reg;
 
-	if (!data)
+	if (IS_ERR_OR_NULL(data))
 		return -ENOMEM;
 	if (!smp_load_acquire(&data->enabled))
 		return -EINVAL;
@@ -609,7 +584,7 @@ int google_set_db(struct bcl_device *data, unsigned int value, enum MPMM_SOURCE 
 #if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
 	void __iomem *addr;
 
-	if (!data)
+	if (IS_ERR_OR_NULL(data))
 		return -ENOMEM;
 	if (!smp_load_acquire(&data->enabled))
 		return -EINVAL;
@@ -639,18 +614,47 @@ static void google_irq_triggered_work(struct work_struct *work)
 {
 	struct bcl_zone *zone = container_of(work, struct bcl_zone, irq_triggered_work);
 	struct bcl_device *bcl_dev;
+	u8 irq_val = 0;
 	int idx;
 
+	idx = zone->idx;
+	bcl_dev = zone->parent;
+	if (zone->bcl_pin != NOT_USED) {
+		if (bcl_dev->ifpmic == MAX77759 && idx >= UVLO2 && idx <= BATOILO2) {
+			bcl_cb_get_irq(bcl_dev, &irq_val);
+			if (irq_val == 0)
+				return;
+			idx = irq_val;
+			zone = bcl_dev->zone[idx];
+		}
+		if (gpio_get_value(zone->bcl_pin) == zone->polarity) {
+			if (idx >= UVLO1 && idx <= BATOILO2) {
+				atomic_inc(&zone->last_triggered.triggered_cnt[START]);
+				zone->last_triggered.triggered_time[START] =
+						ktime_to_ms(ktime_get());
+			}
+			if (zone->irq_type == IF_PMIC)
+				bcl_cb_clr_irq(bcl_dev, idx);
+		} else {
+#if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
+			google_bcl_upstream_state(zone, START);
+#endif
+			google_bcl_release_throttling(zone);
+			return;
+		}
+	}
 #if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
 	if (zone->bcl_qos)
 		google_bcl_qos_update(zone, true);
 #endif
+	mod_delayed_work(bcl_dev->qos_update_wq, &zone->warn_work, msecs_to_jiffies(TIMEOUT_10MS));
 
 	idx = zone->idx;
 	bcl_dev = zone->parent;
-
+	trace_bcl_zone_stats(zone, 1);
+#if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
 	google_bcl_start_data_logging(bcl_dev, idx);
-
+#endif
 	/* LIGHT phase */
 	if (google_bcl_wait_for_response_locked(zone, TIMEOUT_5MS) > 0)
 		return;
@@ -661,7 +665,6 @@ static void google_irq_triggered_work(struct work_struct *work)
 		ocpsmpl_read_stats(bcl_dev, &zone->bcl_stats, bcl_dev->batt_psy);
 		update_tz(zone, idx, true);
 	}
-	queue_work(bcl_dev->warn_wq, &zone->warn_work);
 
 	if (zone->irq_type == IF_PMIC)
 		update_irq_start_times(bcl_dev, idx);
@@ -682,54 +685,25 @@ static void google_irq_triggered_work(struct work_struct *work)
 	/* IRQ deasserted */
 }
 
-static void google_irq_untriggered_work(struct work_struct *work)
-{
-	struct bcl_zone *zone = container_of(work, struct bcl_zone, irq_untriggered_work.work);
-	struct bcl_device *bcl_dev;
-
-	if (!zone || !zone->parent)
-		return;
-
-	bcl_dev = zone->parent;
-
-#if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
-	google_bcl_upstream_state(zone, START);
-#endif
-	google_bcl_release_throttling(zone);
-}
-
 static irqreturn_t vdroop_irq_thread_fn(int irq, void *data)
 {
 	struct bcl_device *bcl_dev = data;
 	struct bcl_zone *zone = NULL;
-	int ret;
-	u8 regval;
 
+	if (IS_ERR_OR_NULL(bcl_dev))
+		return IRQ_HANDLED;
+	bcl_cb_clr_irq(bcl_dev, BATOILO);
 	if (!smp_load_acquire(&bcl_dev->enabled))
 		return IRQ_HANDLED;
-	/* This can one of BATOILO2 or SYS_UVLO2 or EVENT_CNT IRQ */
-	ret = max77779_external_pmic_reg_read(bcl_dev->irq_pmic_dev,
-					      MAX77779_PMIC_VDROOP_INT, &regval);
-	if (ret < 0) {
-		dev_err(bcl_dev->device, "irq_thread: read: %d, fail\n", irq);
-		return IRQ_HANDLED;
-	}
-	if (_max77779_pmic_vdroop_int_bat_oilo2_int_get(regval))
-		zone = bcl_dev->zone[BATOILO2];
-	else if	(_max77779_pmic_vdroop_int_sys_uvlo2_int_get(regval))
-		zone = bcl_dev->zone[UVLO2];
+
+	/* This is only BATOILO */
+	zone = bcl_dev->zone[BATOILO];
 	if (zone) {
 		atomic_inc(&zone->last_triggered.triggered_cnt[START]);
 		zone->last_triggered.triggered_time[START] = ktime_to_ms(ktime_get());
-		queue_work(bcl_dev->triggered_wq, &zone->irq_triggered_work);
+		queue_work(system_unbound_wq, &zone->irq_triggered_work);
 	}
 
-	ret = max77779_external_pmic_reg_write(bcl_dev->irq_pmic_dev,
-					       MAX77779_PMIC_VDROOP_INT, regval);
-	if (ret < 0) {
-		dev_err(bcl_dev->device, "irq_thread: clear: %d, fail\n", regval);
-		return IRQ_HANDLED;
-	}
 	return IRQ_HANDLED;
 }
 
@@ -739,18 +713,14 @@ static int google_bcl_register_zone(struct bcl_device *bcl_dev, int idx, const c
 	int ret = 0;
 	struct bcl_zone *zone;
 	bool to_conf = true;
-	struct irq_data *irqdata;
-	u32 default_intr_flag, latched_intr_flag, deassert_intr_flag;
-
-	if (!bcl_dev)
-		return -ENOMEM;
+	u32 default_intr_flag, latched_intr_flag;
 
 	zone = devm_kzalloc(bcl_dev->device, sizeof(struct bcl_zone), GFP_KERNEL);
 
 	if (!zone)
 		return -ENOMEM;
 
-	default_intr_flag = IRQF_ONESHOT | IRQF_SHARED;
+	default_intr_flag = IRQF_ONESHOT | IRQF_NO_AUTOEN;
 	init_completion(&zone->deassert);
 	zone->idx = idx;
 	zone->bcl_pin = pin;
@@ -761,25 +731,24 @@ static int google_bcl_register_zone(struct bcl_device *bcl_dev, int idx, const c
 	zone->parent = bcl_dev;
 	zone->irq_type = type;
 	zone->devname = devname;
+	zone->disabled = true;
 	zone->device = bcl_dev->device;
 	atomic_set(&zone->bcl_cnt, 0);
 	atomic_set(&zone->last_triggered.triggered_cnt[START], 0);
 	atomic_set(&zone->last_triggered.triggered_cnt[LIGHT], 0);
 	atomic_set(&zone->last_triggered.triggered_cnt[MEDIUM], 0);
 	atomic_set(&zone->last_triggered.triggered_cnt[HEAVY], 0);
+	INIT_WORK(&zone->irq_triggered_work, google_irq_triggered_work);
+	INIT_DELAYED_WORK(&zone->warn_work, google_warn_work);
 	if (idx == SMPL_WARN) {
-		latched_intr_flag = IRQF_TRIGGER_FALLING;
-		deassert_intr_flag = IRQF_TRIGGER_RISING;
-		irq_set_status_flags(zone->bcl_irq, IRQ_DISABLE_UNLAZY);
+		latched_intr_flag = IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING;
 		zone->polarity = 0;
 	} else {
-		latched_intr_flag = IRQF_TRIGGER_RISING;
-		deassert_intr_flag = IRQF_TRIGGER_FALLING;
+		latched_intr_flag = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
 		zone->polarity = 1;
 	}
 	latched_intr_flag = latched_intr_flag | default_intr_flag;
-	deassert_intr_flag = deassert_intr_flag | default_intr_flag;
-	if ((bcl_dev->ifpmic == MAX77779) && (idx == BATOILO2 || idx == UVLO2)) {
+	if ((bcl_dev->ifpmic == MAX77779) && (idx == BATOILO)) {
 		zone->bcl_pin = NOT_USED;
 		if (!zone->irq_reg) {
 			ret = devm_request_threaded_irq(bcl_dev->device, bcl_dev->pmic_irq, NULL,
@@ -790,41 +759,29 @@ static int google_bcl_register_zone(struct bcl_device *bcl_dev, int idx, const c
 			if (ret < 0) {
 				dev_err(zone->device, "Failed to request l-IRQ: %d: %d\n",
 					irq, ret);
+				devm_kfree(bcl_dev->device, zone);
 				return ret;
 			}
+			zone->bcl_irq = bcl_dev->pmic_irq;
 			zone->irq_reg = true;
+			zone->disabled = false;
+			to_conf = false;
 		}
-		to_conf = false;
 	}
 	if ((bcl_dev->ifpmic == MAX77759) && (idx == BATOILO))
 		to_conf = false;
 	if (to_conf) {
-		irqdata = irq_get_irq_data((unsigned int)irq);
-		irqd_set_trigger_type(irqdata, latched_intr_flag);
 		ret = devm_request_threaded_irq(bcl_dev->device, zone->bcl_irq, NULL,
 						latched_irq_handler,
 						latched_intr_flag, devname, zone);
 
 		if (ret < 0) {
-			dev_err(zone->device, "Failed to request l-IRQ: %d: %d\n", irq, ret);
-			return ret;
-		}
-		irqd_set_trigger_type(irqdata, deassert_intr_flag);
-		ret = devm_request_threaded_irq(bcl_dev->device, zone->bcl_irq, NULL,
-						deassert_irq_handler,
-						deassert_intr_flag, devname, zone);
-
-		if (ret < 0) {
-			dev_err(zone->device, "Failed to request d-IRQ: %d: %d\n", irq, ret);
+			dev_err(zone->device, "Failed to request IRQ: %d: %d\n", irq, ret);
+			devm_kfree(bcl_dev->device, zone);
 			return ret;
 		}
 		zone->irq_reg = true;
-		zone->disabled = true;
-		disable_irq(zone->bcl_irq);
 	}
-	INIT_WORK(&zone->irq_triggered_work, google_irq_triggered_work);
-	INIT_WORK(&zone->warn_work, google_warn_work);
-	INIT_DELAYED_WORK(&zone->irq_untriggered_work, google_irq_untriggered_work);
 	if (!register_thermal)
 		goto register_done;
 	zone->tz_ops.get_temp = zone_read_temp;
@@ -922,7 +879,6 @@ static irqreturn_t sub_pwr_warn_irq_handler(int irq, void *data)
 
 	if (!smp_load_acquire(&bcl_dev->enabled))
 		return IRQ_HANDLED;
-	mutex_lock(&bcl_dev->sub_odpm->lock);
 
 	for (i = 0; i < METER_CHANNEL_MAX; i++) {
 		if (bcl_dev->sub_pwr_warn_irq[i] == irq) {
@@ -941,7 +897,6 @@ static irqreturn_t sub_pwr_warn_irq_handler(int irq, void *data)
 		}
 	}
 
-	mutex_unlock(&bcl_dev->sub_odpm->lock);
 	return IRQ_HANDLED;
 }
 #endif
@@ -954,7 +909,6 @@ static irqreturn_t main_pwr_warn_irq_handler(int irq, void *data)
 
 	if (!smp_load_acquire(&bcl_dev->enabled))
 		return IRQ_HANDLED;
-	mutex_lock(&bcl_dev->main_odpm->lock);
 
 	for (i = 0; i < METER_CHANNEL_MAX; i++) {
 		if (bcl_dev->main_pwr_warn_irq[i] == irq) {
@@ -973,7 +927,6 @@ static irqreturn_t main_pwr_warn_irq_handler(int irq, void *data)
 		}
 	}
 
-	mutex_unlock(&bcl_dev->main_odpm->lock);
 	return IRQ_HANDLED;
 }
 #endif
@@ -1077,12 +1030,16 @@ static int google_set_sub_pmic(struct bcl_device *bcl_dev)
 		dev_err(bcl_dev->device, "SUB PMIC meter device not found\n");
 		return -ENODEV;
 	}
-	if (!bcl_dev->sub_odpm->ready) {
+	if (!smp_load_acquire(&bcl_dev->sub_odpm->ready)) {
 		dev_err(bcl_dev->device, "SUB PMIC meter not initialized\n");
 		return -ENODEV;
 	}
 	for (i = 0; i < METER_CHANNEL_MAX; i++) {
 		rail_i = bcl_dev->sub_odpm->channels[i].rail_i;
+		if (bcl_dev->sub_odpm->chip.rails == NULL) {
+			dev_err(bcl_dev->device, "SUB PMIC Rail:%d not initialized\n", rail_i);
+			return -ENODEV;
+		}
 		bcl_dev->sub_rail_names[i] = bcl_dev->sub_odpm->chip.rails[rail_i].schematic_name;
 	}
 	bcl_dev->sub_meter_i2c = sub_dev->meter;
@@ -1168,7 +1125,6 @@ static void google_bcl_parse_qos(struct bcl_device *bcl_dev)
 		bcl_dev->zone[idx]->bcl_qos = devm_kzalloc(bcl_dev->device,
 		                                           sizeof(struct qos_throttle_limit),
 		                                           GFP_KERNEL);
-		bcl_dev->zone[idx]->bcl_qos->throttle = false;
 		if (of_property_read_u32(child, "cpucl0",
 					 &bcl_dev->zone[idx]->bcl_qos->cpu0_limit) != 0)
 			bcl_dev->zone[idx]->bcl_qos->cpu0_limit = INT_MAX;
@@ -1185,6 +1141,7 @@ static void google_bcl_parse_qos(struct bcl_device *bcl_dev)
 					 &bcl_dev->zone[idx]->bcl_qos->tpu_limit) != 0)
 			bcl_dev->zone[idx]->bcl_qos->tpu_limit = INT_MAX;
 	}
+	bcl_dev->throttle = false;
 #endif
 }
 
@@ -1202,28 +1159,44 @@ static int intf_pmic_init(struct bcl_device *bcl_dev)
 	uvlo_reg_read(bcl_dev->intf_pmic_dev, bcl_dev->ifpmic, UVLO1, &uvlo1_lvl);
 	uvlo_reg_read(bcl_dev->intf_pmic_dev, bcl_dev->ifpmic, UVLO2, &uvlo2_lvl);
 
-	ret = google_bcl_register_zone(bcl_dev, UVLO1, "vdroop1", bcl_dev->vdroop1_pin,
-				       VD_BATTERY_VOLTAGE - uvlo1_lvl - THERMAL_HYST_LEVEL,
-				       gpio_to_irq(bcl_dev->vdroop1_pin), IF_PMIC, true);
-	if (ret < 0) {
-		dev_err(bcl_dev->device, "bcl_register fail: UVLO1\n");
-		return -ENODEV;
-	}
-	ret = google_bcl_register_zone(bcl_dev, UVLO2, "vdroop2", bcl_dev->vdroop2_pin,
-				       VD_BATTERY_VOLTAGE - uvlo2_lvl - THERMAL_HYST_LEVEL,
-				       gpio_to_irq(bcl_dev->vdroop2_pin), IF_PMIC, true);
-	if (ret < 0) {
-		dev_err(bcl_dev->device, "bcl_register fail: UVLO2\n");
-		return -ENODEV;
-	}
-	ret = google_bcl_register_zone(bcl_dev, BATOILO1, "batoilo", bcl_dev->vdroop2_pin,
-				       batoilo_lvl - THERMAL_HYST_LEVEL,
-				       gpio_to_irq(bcl_dev->vdroop2_pin), IF_PMIC, true);
-	if (ret < 0) {
-		dev_err(bcl_dev->device, "bcl_register fail: BATOILO\n");
-		return -ENODEV;
+	if (bcl_dev->ifpmic == MAX77759) {
+		ret = google_bcl_register_zone(bcl_dev, UVLO1, "vdroop1", bcl_dev->vdroop1_pin,
+				       	       VD_BATTERY_VOLTAGE - uvlo1_lvl - THERMAL_HYST_LEVEL,
+				       	       gpio_to_irq(bcl_dev->vdroop1_pin), IF_PMIC, true);
+		if (ret < 0) {
+			dev_err(bcl_dev->device, "bcl_register fail: UVLO1\n");
+			return -ENODEV;
+		}
+		ret = google_bcl_register_zone(bcl_dev, BATOILO1, "batoilo", bcl_dev->vdroop2_pin,
+				       	       batoilo_lvl - THERMAL_HYST_LEVEL,
+				       	       gpio_to_irq(bcl_dev->vdroop2_pin), IF_PMIC, true);
+		if (ret < 0) {
+			dev_err(bcl_dev->device, "bcl_register fail: BATOILO\n");
+			return -ENODEV;
+		}
+		ret = google_bcl_register_zone(bcl_dev, UVLO2, "vdroop2", bcl_dev->vdroop2_pin,
+				       	       VD_BATTERY_VOLTAGE - uvlo2_lvl - THERMAL_HYST_LEVEL,
+				       	       gpio_to_irq(bcl_dev->vdroop2_pin), IF_PMIC, true);
+		if (ret < 0) {
+			dev_err(bcl_dev->device, "bcl_register fail: UVLO2\n");
+			return -ENODEV;
+		}
 	}
 	if (bcl_dev->ifpmic == MAX77779) {
+		ret = google_bcl_register_zone(bcl_dev, UVLO1, "vdroop1", bcl_dev->vdroop1_pin,
+				       	       VD_BATTERY_VOLTAGE - uvlo1_lvl - THERMAL_HYST_LEVEL,
+				       	       gpio_to_irq(bcl_dev->vdroop1_pin), IF_PMIC, true);
+		if (ret < 0) {
+			dev_err(bcl_dev->device, "bcl_register fail: UVLO1\n");
+			return -ENODEV;
+		}
+		ret = google_bcl_register_zone(bcl_dev, BATOILO1, "batoilo", bcl_dev->vdroop2_pin,
+				       	       batoilo_lvl - THERMAL_HYST_LEVEL,
+				       	       gpio_to_irq(bcl_dev->vdroop2_pin), IF_PMIC, true);
+		if (ret < 0) {
+			dev_err(bcl_dev->device, "bcl_register fail: BATOILO\n");
+			return -ENODEV;
+		}
 		ret = google_bcl_register_zone(bcl_dev, BATOILO2, "batoilo2", bcl_dev->vdroop2_pin,
 					       batoilo2_lvl - THERMAL_HYST_LEVEL,
 					       gpio_to_irq(bcl_dev->vdroop2_pin), IF_PMIC, true);
@@ -1233,10 +1206,11 @@ static int intf_pmic_init(struct bcl_device *bcl_dev)
 		}
 		/* Setup mitigation IRQ */
 		ret = max77779_external_pmic_reg_write(bcl_dev->irq_pmic_dev,
-		                                       MAX77779_PMIC_VDROOP_INT_MASK, 0xA0);
+		                                       MAX77779_PMIC_VDROOP_INT_MASK,
+		                                       bcl_dev->vdroop_int_mask);
 		ret = max77779_external_pmic_reg_read(bcl_dev->irq_pmic_dev,
 		                                      MAX77779_PMIC_INTB_MASK, &retval);
-		val = 0;
+		val = bcl_dev->intb_int_mask;
 		retval = _max77779_pmic_intb_mask_vdroop_int_m_set(retval, val);
 		ret = max77779_external_pmic_reg_write(bcl_dev->irq_pmic_dev,
 		                                       MAX77779_PMIC_INTB_MASK, retval);
@@ -1244,39 +1218,46 @@ static int intf_pmic_init(struct bcl_device *bcl_dev)
 		/* UVLO2 no VDROOP2 */
 		ret = max77779_external_chg_reg_read(bcl_dev->intf_pmic_dev,
 						     MAX77779_SYS_UVLO2_CNFG_1, &val);
-		val = _max77779_sys_uvlo2_cnfg_1_sys_uvlo2_vdrp2_en_set(val, 0);
+		val = _max77779_sys_uvlo2_cnfg_1_sys_uvlo2_vdrp2_en_set(val,
+									bcl_dev->uvlo2_vdrp2_en);
 		ret = max77779_external_chg_reg_write(bcl_dev->intf_pmic_dev,
 						      MAX77779_SYS_UVLO2_CNFG_1, val);
-		val = _max77779_sys_uvlo2_cnfg_0_sys_uvlo2_set(val, 0xc);
+		val = _max77779_sys_uvlo2_cnfg_0_sys_uvlo2_set(val, bcl_dev->uvlo2_lvl);
 		ret = max77779_external_chg_reg_write(bcl_dev->intf_pmic_dev,
 		                                      MAX77779_SYS_UVLO2_CNFG_0, val);
 		/* UVLO1 = VDROOP1, 3.1V */
 		ret = max77779_external_chg_reg_read(bcl_dev->intf_pmic_dev,
 						     MAX77779_SYS_UVLO1_CNFG_1, &val);
-		val = _max77779_sys_uvlo1_cnfg_1_sys_uvlo1_vdrp1_en_set(val, 1);
+		val = _max77779_sys_uvlo1_cnfg_1_sys_uvlo1_vdrp1_en_set(val,
+									bcl_dev->uvlo1_vdrp1_en);
 		ret = max77779_external_chg_reg_write(bcl_dev->intf_pmic_dev,
 		                                      MAX77779_SYS_UVLO1_CNFG_1, val);
 		ret = max77779_external_chg_reg_read(bcl_dev->intf_pmic_dev,
 						     MAX77779_SYS_UVLO1_CNFG_0, &val);
-		val = _max77779_sys_uvlo1_cnfg_0_sys_uvlo1_set(val, 0xa);
+		val = _max77779_sys_uvlo1_cnfg_0_sys_uvlo1_set(val,
+							       bcl_dev->uvlo1_lvl);
 		ret = max77779_external_chg_reg_write(bcl_dev->intf_pmic_dev,
 		                                      MAX77779_SYS_UVLO1_CNFG_0, val);
 
 		/* BATOILO1 = VDROOP2, 36ms BATOILO1 BAT_OPEN */
 		ret = max77779_external_chg_reg_read(bcl_dev->intf_pmic_dev,
 						     MAX77779_BAT_OILO1_CNFG_3, &val);
-		val = _max77779_bat_oilo1_cnfg_3_bat_oilo1_vdrp1_en_set(val, 0);
-		val = _max77779_bat_oilo1_cnfg_3_bat_oilo1_vdrp2_en_set(val, 1);
+		val = _max77779_bat_oilo1_cnfg_3_bat_oilo1_vdrp1_en_set(val,
+									bcl_dev->oilo1_vdrp1_en);
+		val = _max77779_bat_oilo1_cnfg_3_bat_oilo1_vdrp2_en_set(val,
+									bcl_dev->oilo1_vdrp2_en);
 		val = _max77779_bat_oilo1_cnfg_3_bat_open_to_1_set(
 						 val, bcl_dev->batt_irq_conf1.batoilo_bat_open_to);
 		ret = max77779_external_chg_reg_write(bcl_dev->intf_pmic_dev,
 		                                      MAX77779_BAT_OILO1_CNFG_3, val);
 
-		/* BATOILO2 no VDROOP1/2, 12ms BATOILO2 BAT_OPEN */
+		/* BATOILO2 = VDROOP1/2, 12ms BATOILO2 BAT_OPEN */
 		ret = max77779_external_chg_reg_read(bcl_dev->intf_pmic_dev,
 						     MAX77779_BAT_OILO2_CNFG_3, &val);
-		val = _max77779_bat_oilo2_cnfg_3_bat_oilo2_vdrp1_en_set(val, 0);
-		val = _max77779_bat_oilo2_cnfg_3_bat_oilo2_vdrp2_en_set(val, 0);
+		val = _max77779_bat_oilo2_cnfg_3_bat_oilo2_vdrp1_en_set(val,
+									bcl_dev->oilo2_vdrp1_en);
+		val = _max77779_bat_oilo2_cnfg_3_bat_oilo2_vdrp2_en_set(val,
+									bcl_dev->oilo2_vdrp2_en);
 		val = _max77779_bat_oilo2_cnfg_3_bat_open_to_2_set(
 						 val, bcl_dev->batt_irq_conf2.batoilo_bat_open_to);
 		ret = max77779_external_chg_reg_write(bcl_dev->intf_pmic_dev,
@@ -1311,9 +1292,9 @@ static int intf_pmic_init(struct bcl_device *bcl_dev)
 		ret = max77779_external_chg_reg_read(bcl_dev->intf_pmic_dev,
 						     MAX77779_BAT_OILO1_CNFG_2, &val);
 		val = _max77779_bat_oilo1_cnfg_2_bat_oilo1_int_rel_set(
-						 val, bcl_dev->batt_irq_conf1.batoilo_rel);
+						 val, bcl_dev->batt_irq_conf1.batoilo_int_rel);
 		val = _max77779_bat_oilo1_cnfg_2_bat_oilo1_int_det_set(
-						 val, bcl_dev->batt_irq_conf1.batoilo_det);
+						 val, bcl_dev->batt_irq_conf1.batoilo_int_det);
 		ret = max77779_external_chg_reg_write(bcl_dev->intf_pmic_dev,
 		                                      MAX77779_BAT_OILO1_CNFG_2, val);
 
@@ -1330,9 +1311,9 @@ static int intf_pmic_init(struct bcl_device *bcl_dev)
 		ret = max77779_external_chg_reg_read(bcl_dev->intf_pmic_dev,
 						     MAX77779_BAT_OILO2_CNFG_2, &val);
 		val = _max77779_bat_oilo2_cnfg_2_bat_oilo2_int_rel_set(
-						 val, bcl_dev->batt_irq_conf2.batoilo_rel);
+						 val, bcl_dev->batt_irq_conf2.batoilo_int_rel);
 		val = _max77779_bat_oilo2_cnfg_2_bat_oilo2_int_det_set(
-						 val, bcl_dev->batt_irq_conf2.batoilo_det);
+						 val, bcl_dev->batt_irq_conf2.batoilo_int_det);
 		ret = max77779_external_chg_reg_write(bcl_dev->intf_pmic_dev,
 		                                      MAX77779_BAT_OILO2_CNFG_2, val);
 
@@ -1381,7 +1362,7 @@ static int intf_pmic_init(struct bcl_device *bcl_dev)
 
 static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_device *pdev)
 {
-	int i, ret = 0;
+	int ret = 0;
 	u32 retval;
 	u16 readout;
 	struct device_node *np = bcl_dev->device->of_node;
@@ -1396,7 +1377,6 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 	}
 
 	if (bcl_dev->ifpmic == MAX77779) {
-		google_bcl_setup_votable(bcl_dev);
 		ret = platform_get_irq(pdev, 0);
 		if (ret < 0) {
 			dev_err(bcl_dev->device, "Failed to get irq: %d\n", ret);
@@ -1404,6 +1384,7 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 		}
 		bcl_dev->pmic_irq = ret;
 	}
+
 
 	if (np) {
 		ret = of_property_read_u32(np, "batoilo_lower", &retval);
@@ -1422,6 +1403,14 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 		retval = ret ? BO_LIMIT : retval;
 		bcl_dev->batt_irq_conf2.batoilo_trig_lvl =
 				(retval - bcl_dev->batt_irq_conf2.batoilo_lower_limit) / BO_STEP;
+		ret = of_property_read_u32(np, "batoilo_usb_trig_lvl", &retval);
+		bcl_dev->batt_irq_conf1.batoilo_usb_trig_lvl = ret ?
+				bcl_dev->batt_irq_conf1.batoilo_trig_lvl :
+				(retval - bcl_dev->batt_irq_conf1.batoilo_lower_limit) / BO_STEP;
+		ret = of_property_read_u32(np, "batoilo2_usb_trig_lvl", &retval);
+		bcl_dev->batt_irq_conf2.batoilo_usb_trig_lvl = ret ?
+				bcl_dev->batt_irq_conf2.batoilo_trig_lvl :
+				(retval - bcl_dev->batt_irq_conf2.batoilo_lower_limit) / BO_STEP;
 		ret = of_property_read_u32(np, "batoilo_wlc_trig_lvl", &retval);
 		bcl_dev->batt_irq_conf1.batoilo_wlc_trig_lvl = ret ?
 				bcl_dev->batt_irq_conf1.batoilo_trig_lvl :
@@ -1438,10 +1427,18 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 		bcl_dev->batt_irq_conf1.batoilo_rel = ret ? BO_INT_REL_DEFAULT : retval;
 		ret = of_property_read_u32(np, "batoilo2_rel", &retval);
 		bcl_dev->batt_irq_conf2.batoilo_rel = ret ? BO_INT_REL_DEFAULT : retval;
+		ret = of_property_read_u32(np, "batoilo_int_rel", &retval);
+		bcl_dev->batt_irq_conf1.batoilo_int_rel = ret ? BO_INT_REL_DEFAULT : retval;
+		ret = of_property_read_u32(np, "batoilo2_int_rel", &retval);
+		bcl_dev->batt_irq_conf2.batoilo_int_rel = ret ? BO_INT_REL_DEFAULT : retval;
 		ret = of_property_read_u32(np, "batoilo_det", &retval);
 		bcl_dev->batt_irq_conf1.batoilo_det = ret ? BO_INT_DET_DEFAULT : retval;
 		ret = of_property_read_u32(np, "batoilo2_det", &retval);
 		bcl_dev->batt_irq_conf2.batoilo_det = ret ? BO_INT_DET_DEFAULT : retval;
+		ret = of_property_read_u32(np, "batoilo_int_det", &retval);
+		bcl_dev->batt_irq_conf1.batoilo_int_det = ret ? BO_INT_DET_DEFAULT : retval;
+		ret = of_property_read_u32(np, "batoilo2_int_det", &retval);
+		bcl_dev->batt_irq_conf2.batoilo_int_det = ret ? BO_INT_DET_DEFAULT : retval;
 		ret = of_property_read_u32(np, "uvlo1_det", &retval);
 		bcl_dev->batt_irq_conf1.uvlo_det = ret ? UV_INT_REL_DEFAULT : retval;
 		ret = of_property_read_u32(np, "uvlo2_det", &retval);
@@ -1454,6 +1451,22 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 		bcl_dev->evt_cnt.enable = ret ? EVT_CNT_ENABLE_DEFAULT : retval;
 		ret = of_property_read_u32(np, "evt_cnt_rate", &retval);
 		bcl_dev->evt_cnt.rate = ret ? EVT_CNT_RATE_DEFAULT : retval;
+		bcl_dev->uvlo1_vdrp1_en = of_property_read_bool(np, "uvlo1_vdrp1_en");
+		bcl_dev->uvlo1_vdrp2_en = of_property_read_bool(np, "uvlo1_vdrp2_en");
+		bcl_dev->uvlo2_vdrp1_en = of_property_read_bool(np, "uvlo2_vdrp1_en");
+		bcl_dev->uvlo2_vdrp2_en = of_property_read_bool(np, "uvlo2_vdrp2_en");
+		bcl_dev->oilo1_vdrp1_en = of_property_read_bool(np, "oilo1_vdrp1_en");
+		bcl_dev->oilo1_vdrp2_en = of_property_read_bool(np, "oilo1_vdrp2_en");
+		bcl_dev->oilo2_vdrp1_en = of_property_read_bool(np, "oilo2_vdrp1_en");
+		bcl_dev->oilo2_vdrp2_en = of_property_read_bool(np, "oilo2_vdrp2_en");
+		ret = of_property_read_u32(np, "uvlo1_lvl", &retval);
+		bcl_dev->uvlo1_lvl = ret ? DEFAULT_SYS_UVLO1_LVL : retval;
+		ret = of_property_read_u32(np, "uvlo2_lvl", &retval);
+		bcl_dev->uvlo2_lvl = ret ? DEFAULT_SYS_UVLO2_LVL : retval;
+		ret = of_property_read_u32(np, "vdroop_int_mask", &retval);
+		bcl_dev->vdroop_int_mask = ret ? DEFAULT_VDROOP_INT_MASK : retval;
+		ret = of_property_read_u32(np, "intb_int_mask", &retval);
+		bcl_dev->intb_int_mask = ret ? DEFAULT_INTB_MASK : retval;
 	}
 
 	if (bcl_dev->ifpmic == MAX77779) {
@@ -1488,27 +1501,6 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 		}
 	}
 
-	INIT_DELAYED_WORK(&bcl_dev->soc_work, google_bcl_evaluate_soc);
-	bcl_dev->batt_psy = google_get_power_supply(bcl_dev);
-	bcl_dev->soc_tz_ops.get_temp = tz_bcl_read_soc;
-	bcl_dev->soc_tz_ops.set_trips = tz_bcl_set_soc;
-	bcl_dev->soc_tz = devm_thermal_of_zone_register(bcl_dev->device, PMIC_SOC, bcl_dev,
-							&bcl_dev->soc_tz_ops);
-	if (IS_ERR(bcl_dev->soc_tz)) {
-		dev_err(bcl_dev->device, "soc TZ register failed. err:%ld\n",
-			PTR_ERR(bcl_dev->soc_tz));
-		ret = PTR_ERR(bcl_dev->soc_tz);
-		bcl_dev->soc_tz = NULL;
-	} else {
-		bcl_dev->psy_nb.notifier_call = battery_supply_callback;
-		ret = power_supply_reg_notifier(&bcl_dev->psy_nb);
-		if (ret < 0)
-			dev_err(bcl_dev->device,
-				"soc notifier registration error. defer. err:%d\n", ret);
-		thermal_zone_device_update(bcl_dev->soc_tz, THERMAL_DEVICE_UP);
-	}
-	bcl_dev->batt_psy_initialized = false;
-
 	ret = intf_pmic_init(bcl_dev);
 	if (ret < 0) {
 		dev_err(bcl_dev->device, "Interface PMIC initialization err:%d\n", ret);
@@ -1521,20 +1513,6 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 		dev_err(bcl_dev->device, "Cannot Initiate QOS\n");
 		return -ENODEV;
 #endif
-	}
-
-	for (i = 0; i < TRIGGERED_SOURCE_MAX; i++) {
-		if (bcl_dev->ifpmic == MAX77779) {
-			if (bcl_dev->zone[i] && (i != BATOILO2) && (i != UVLO2)) {
-				bcl_dev->zone[i]->disabled = false;
-				enable_irq(bcl_dev->zone[i]->bcl_irq);
-			}
-		} else {
-			if (bcl_dev->zone[i] && (i != BATOILO)) {
-				bcl_dev->zone[i]->disabled = false;
-				enable_irq(bcl_dev->zone[i]->bcl_irq);
-			}
-		}
 	}
 
 	return 0;
@@ -1611,33 +1589,6 @@ static int google_bcl_register_zones_main_common(struct bcl_device *bcl_dev, voi
 				       register_thermal);
 	if (ret < 0) {
 		dev_err(bcl_dev->device, "bcl_register fail: TPU\n");
-		return -ENODEV;
-	}
-
-	ret = google_bcl_register_zone(bcl_dev, PMIC_120C, "PMIC_120C", 0,
-				       PMIC_120C_UPPER_LIMIT - THERMAL_HYST_LEVEL,
-				       pdata->irq_base + INT3_120C, CORE_MAIN_PMIC,
-				       true);
-	if (ret < 0) {
-		dev_err(bcl_dev->device, "bcl_register fail: PMIC_120C\n");
-		return -ENODEV;
-	}
-
-	ret = google_bcl_register_zone(bcl_dev, PMIC_140C, "PMIC_140C", 0,
-				       PMIC_140C_UPPER_LIMIT - THERMAL_HYST_LEVEL,
-				       pdata->irq_base + INT3_140C, CORE_MAIN_PMIC,
-				       true);
-	if (ret < 0) {
-		dev_err(bcl_dev->device, "bcl_register fail: PMIC_140C\n");
-		return -ENODEV;
-	}
-
-	ret = google_bcl_register_zone(bcl_dev, PMIC_OVERHEAT, "PMIC_OVERHEAT", 0,
-				       PMIC_OVERHEAT_UPPER_LIMIT - THERMAL_HYST_LEVEL,
-				       pdata->irq_base + INT3_TSD, CORE_MAIN_PMIC,
-				       true);
-	if (ret < 0) {
-		dev_err(bcl_dev->device, "bcl_register fail: PMIC_OVERHEAT\n");
 		return -ENODEV;
 	}
 
@@ -1760,6 +1711,10 @@ static int google_set_main_pmic(struct bcl_device *bcl_dev)
 	bcl_dev->main_odpm = pdata_main->meter;
 	for (i = 0; i < METER_CHANNEL_MAX; i++) {
 		rail_i = bcl_dev->main_odpm->channels[i].rail_i;
+		if (bcl_dev->main_odpm->chip.rails == NULL) {
+			dev_err(bcl_dev->device, "MAIN PMIC Rail:%d not initialized\n", rail_i);
+			return -ENODEV;
+		}
 		bcl_dev->main_rail_names[i] = bcl_dev->main_odpm->chip.rails[rail_i].schematic_name;
 	}
 	bcl_dev->main_irq_base = pdata_main->irq_base;
@@ -1787,7 +1742,7 @@ static int google_set_main_pmic(struct bcl_device *bcl_dev)
 	pmic_write(CORE_PMIC_MAIN, bcl_dev, MAIN_PWRONSRC, 0);
 #if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
 	/* SMPL_WARN = 3.0V */
-	pmic_write(CORE_PMIC_MAIN, bcl_dev, S2MPG14_PM_SMPL_WARN_CTRL, 0x8b);
+	pmic_write(CORE_PMIC_MAIN, bcl_dev, S2MPG14_PM_SMPL_WARN_CTRL, bcl_dev->smpl_ctrl);
 #endif
 
 	ret = google_bcl_register_zones_main_common(bcl_dev, pdata_main);
@@ -1820,21 +1775,6 @@ static int google_set_main_pmic(struct bcl_device *bcl_dev)
 extern const struct attribute_group *mitigation_mw_groups[];
 extern const struct attribute_group *mitigation_sq_groups[];
 
-static int google_init_workqueue(struct bcl_device *bcl_dev)
-{
-	bcl_dev->triggered_wq = alloc_workqueue("wq-trip-bcl", WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
-	if (!bcl_dev->triggered_wq) {
-		dev_err(bcl_dev->device, "wq-trip-bcl: ERR! fail to create triggered_wq\n");
-		return -ENOMEM;
-	}
-	bcl_dev->warn_wq = alloc_workqueue("wq-monitor-bcl", WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
-	if (!bcl_dev->warn_wq) {
-		dev_err(bcl_dev->device, "wq-monitor-bcl: ERR! fail to create warn_wq\n");
-		destroy_workqueue(bcl_dev->triggered_wq);
-		return -ENOMEM;
-	}
-	return 0;
-}
 static int google_init_fs(struct bcl_device *bcl_dev)
 {
 	if (bcl_dev->ifpmic == MAX77759)
@@ -1870,7 +1810,7 @@ static void google_bcl_enable_vdroop_irq(struct bcl_device *bcl_dev)
 
 static int google_bcl_init_instruction(struct bcl_device *bcl_dev)
 {
-	if (!bcl_dev)
+	if (IS_ERR_OR_NULL(bcl_dev))
 		return -EIO;
 
 	bcl_dev->core_conf[SUBSYSTEM_CPU0].base_mem = devm_ioremap(bcl_dev->device,
@@ -1915,11 +1855,8 @@ static int google_bcl_init_instruction(struct bcl_device *bcl_dev)
 		return -EIO;
 	}
 
-	mutex_init(&bcl_dev->state_trans_lock);
+	mutex_init(&bcl_dev->sysreg_lock);
 	mutex_init(&bcl_dev->cpu_ratio_lock);
-	mutex_init(&bcl_dev->tpu_ratio_lock);
-	mutex_init(&bcl_dev->gpu_ratio_lock);
-	mutex_init(&bcl_dev->aur_ratio_lock);
 	google_bcl_enable_vdroop_irq(bcl_dev);
 
 	bcl_dev->base_add_mem[SUBSYSTEM_CPU0] = devm_ioremap(bcl_dev->device, ADD_CPUCL0, SZ_128);
@@ -1969,7 +1906,7 @@ u64 settings_to_current(struct bcl_device *bcl_dev, int pmic, int idx, u32 setti
 	u64 raw_unit;
 	u32 resolution;
 
-	if (!bcl_dev)
+	if (IS_ERR_OR_NULL(bcl_dev))
 		return 0;
 	if (pmic == CORE_PMIC_MAIN)
 		info = bcl_dev->main_odpm;
@@ -1998,24 +1935,22 @@ u64 settings_to_current(struct bcl_device *bcl_dev, int pmic, int idx, u32 setti
         return 0;
 }
 
-#if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
 static void irq_config(struct bcl_zone *zone, bool enabled)
 {
 	if (!zone)
 		return;
 	if (!enabled && !zone->disabled) {
 		zone->disabled = true;
-		disable_irq(zone->bcl_irq);
-	} else if (enabled && zone->disabled) {
+		disable_irq_nosync(zone->bcl_irq);
+	} else if (enabled && zone->disabled && zone->irq_reg) {
 		zone->disabled = false;
-		enable_irq(zone->bcl_irq);
+		if (zone->bcl_pin != NOT_USED)
+			enable_irq(zone->bcl_irq);
 	}
 }
-#endif
 
 static void google_bcl_parse_irq_config(struct bcl_device *bcl_dev)
 {
-#if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
 	struct device_node *np = bcl_dev->device->of_node;
 	struct device_node *child;
         /* irq config */
@@ -2023,10 +1958,12 @@ static void google_bcl_parse_irq_config(struct bcl_device *bcl_dev)
 	if (!child)
 		return;
 	irq_config(bcl_dev->zone[UVLO1], of_property_read_bool(child, "irq,uvlo1"));
-	irq_config(bcl_dev->zone[UVLO2], of_property_read_bool(child, "irq,uvlo2"));
-	irq_config(bcl_dev->zone[BATOILO], of_property_read_bool(child, "irq,batoilo"));
-	irq_config(bcl_dev->zone[BATOILO2], of_property_read_bool(child, "irq,batoilo2"));
+	/* This enables BATOILO2 as well */
 	irq_config(bcl_dev->zone[SMPL_WARN], of_property_read_bool(child, "irq,smpl_warn"));
+	irq_config(bcl_dev->zone[BATOILO2], of_property_read_bool(child, "irq,batoilo2"));
+	if (bcl_dev->ifpmic == MAX77779)
+		return;
+	irq_config(bcl_dev->zone[BATOILO], of_property_read_bool(child, "irq,batoilo"));
 	irq_config(bcl_dev->zone[OCP_WARN_CPUCL1], of_property_read_bool(child, "irq,ocp_cpu1"));
 	irq_config(bcl_dev->zone[OCP_WARN_CPUCL2], of_property_read_bool(child, "irq,ocp_cpu2"));
 	irq_config(bcl_dev->zone[OCP_WARN_TPU], of_property_read_bool(child, "irq,ocp_tpu"));
@@ -2040,22 +1977,28 @@ static void google_bcl_parse_irq_config(struct bcl_device *bcl_dev)
 	irq_config(bcl_dev->zone[SOFT_OCP_WARN_GPU],
 		   of_property_read_bool(child, "irq,soft_ocp_gpu"));
 
-#endif
 }
 
-static void google_bcl_parse_dtree(struct bcl_device *bcl_dev)
+static void google_bcl_clk_div(struct bcl_device *bcl_dev)
+{
+	if (google_bcl_init_clk_div(bcl_dev, SUBSYSTEM_CPU2,
+				    bcl_dev->core_conf[SUBSYSTEM_CPU2].clkdivstep) != 0)
+		dev_err(bcl_dev->device, "CPU2 Address is NULL\n");
+	if (google_bcl_init_clk_div(bcl_dev, SUBSYSTEM_CPU1,
+				    bcl_dev->core_conf[SUBSYSTEM_CPU1].clkdivstep) != 0)
+		dev_err(bcl_dev->device, "CPU1 Address is NULL\n");
+	if (google_bcl_init_clk_div(bcl_dev, SUBSYSTEM_CPU0,
+	                            bcl_dev->core_conf[SUBSYSTEM_CPU0].clkdivstep) != 0)
+		dev_err(bcl_dev->device, "CPU0 Address is NULL\n");
+}
+
+static void google_bcl_parse_clk_div_dtree(struct bcl_device *bcl_dev)
 {
 	int ret;
-#if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
-	int len, i;
-	struct device_node *child;
-	struct device_node *p_np;
-	int read;
-#endif
 	struct device_node *np = bcl_dev->device->of_node;
 	u32 val;
 
-	if (!bcl_dev) {
+	if (IS_ERR_OR_NULL(bcl_dev)) {
 		dev_err(bcl_dev->device, "Cannot parse device tree\n");
 		return;
 	}
@@ -2091,8 +2034,25 @@ static void google_bcl_parse_dtree(struct bcl_device *bcl_dev)
 	bcl_dev->cpu1_cluster = ret ? CPU1_CLUSTER_MIN : val;
 	ret = of_property_read_u32(np, "cpu2_cluster", &val);
 	bcl_dev->cpu2_cluster = ret ? CPU2_CLUSTER_MIN : val;
+	ret = of_property_read_u32(np, "smpl_ctrl", &val);
+	bcl_dev->smpl_ctrl = ret ? DEFAULT_SMPL : val;
 
+	bcl_dev->qos_update_wq = create_singlethread_workqueue("bcl_qos_update");
+}
+
+static void google_bcl_parse_dtree(struct bcl_device *bcl_dev)
+{
 #if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
+	int ret, len, i;
+	struct device_node *child;
+	struct device_node *p_np;
+	int read;
+	struct device_node *np = bcl_dev->device->of_node;
+
+	if (IS_ERR_OR_NULL(bcl_dev)) {
+		dev_err(bcl_dev->device, "Cannot parse device tree\n");
+		return;
+	}
 	/* parse ODPM main limit */
 	p_np = of_get_child_by_name(np, "main_limit");
 	if (p_np) {
@@ -2182,16 +2142,6 @@ static void google_bcl_parse_dtree(struct bcl_device *bcl_dev)
 		}
 	}
 #endif
-
-	if (google_bcl_init_clk_div(bcl_dev, SUBSYSTEM_CPU2,
-				    bcl_dev->core_conf[SUBSYSTEM_CPU2].clkdivstep) != 0)
-		dev_err(bcl_dev->device, "CPU2 Address is NULL\n");
-	if (google_bcl_init_clk_div(bcl_dev, SUBSYSTEM_CPU1,
-				    bcl_dev->core_conf[SUBSYSTEM_CPU1].clkdivstep) != 0)
-		dev_err(bcl_dev->device, "CPU1 Address is NULL\n");
-	if (google_bcl_init_clk_div(bcl_dev, SUBSYSTEM_CPU0,
-	                            bcl_dev->core_conf[SUBSYSTEM_CPU0].clkdivstep) != 0)
-		dev_err(bcl_dev->device, "CPU0 Address is NULL\n");
 }
 
 #if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
@@ -2231,37 +2181,56 @@ static int google_bcl_configure_modem(struct bcl_device *bcl_dev)
 }
 #endif
 
+static int google_bcl_init_power_supply(struct bcl_device *bcl_dev)
+{
+	int ret;
+	INIT_DELAYED_WORK(&bcl_dev->soc_work, google_bcl_evaluate_soc);
+	bcl_dev->batt_psy = google_get_power_supply(bcl_dev);
+	bcl_dev->soc_tz_ops.get_temp = tz_bcl_read_soc;
+	bcl_dev->soc_tz_ops.set_trips = tz_bcl_set_soc;
+	bcl_dev->soc_tz = devm_thermal_of_zone_register(bcl_dev->device, PMIC_SOC, bcl_dev,
+							&bcl_dev->soc_tz_ops);
+	bcl_dev->batt_psy_initialized = false;
+	if (IS_ERR(bcl_dev->soc_tz)) {
+		dev_err(bcl_dev->device, "soc TZ register failed. err:%ld\n",
+			PTR_ERR(bcl_dev->soc_tz));
+		ret = PTR_ERR(bcl_dev->soc_tz);
+		bcl_dev->soc_tz = NULL;
+	} else {
+		bcl_dev->psy_nb.notifier_call = battery_supply_callback;
+		ret = power_supply_reg_notifier(&bcl_dev->psy_nb);
+		if (ret < 0)
+			dev_err(bcl_dev->device,
+				"soc notifier registration error. defer. err:%d\n", ret);
+		else
+			bcl_dev->batt_psy_initialized = true;
+		thermal_zone_device_update(bcl_dev->soc_tz, THERMAL_DEVICE_UP);
+	}
+	return 0;
+}
+
 static int google_bcl_probe(struct platform_device *pdev)
 {
 	int ret = 0;
 	struct bcl_device *bcl_dev;
 
 	bcl_dev = devm_kzalloc(&pdev->dev, sizeof(*bcl_dev), GFP_KERNEL);
-	if (!bcl_dev)
+	if (IS_ERR_OR_NULL(bcl_dev))
 		return -ENOMEM;
-	bcl_dev->device = &pdev->dev;
 
 	mutex_init(&bcl_dev->sysreg_lock);
+	bcl_dev->device = &pdev->dev;
+	platform_set_drvdata(pdev, bcl_dev);
+	google_bcl_init_power_supply(bcl_dev);
 
-	ret = google_bcl_init_data_logging(bcl_dev);
-	if (ret < 0)
-		goto bcl_soc_probe_exit;
-	/* br_stats no need to run without mitigation app */
-	bcl_dev->enabled_br_stats = false;
-
+	google_bcl_parse_clk_div_dtree(bcl_dev);
 	ret = google_bcl_init_instruction(bcl_dev);
 	if (ret < 0)
 		goto bcl_soc_probe_exit;
-	ret = google_init_workqueue(bcl_dev);
-	if (ret < 0)
-		goto bcl_soc_probe_exit;
 
-	if (google_set_sub_pmic(bcl_dev) < 0)
-		goto bcl_soc_probe_exit;
 	if (google_set_main_pmic(bcl_dev) < 0)
 		goto bcl_soc_probe_exit;
-	ret = google_bcl_init_notifier(bcl_dev);
-	if (ret < 0)
+	if (google_set_sub_pmic(bcl_dev) < 0)
 		goto bcl_soc_probe_exit;
 	google_bcl_parse_dtree(bcl_dev);
 #if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
@@ -2271,23 +2240,39 @@ static int google_bcl_probe(struct platform_device *pdev)
 	if (google_set_intf_pmic(bcl_dev, pdev) < 0)
 		goto bcl_soc_probe_exit;
 	google_init_debugfs(bcl_dev);
-	google_bcl_parse_irq_config(bcl_dev);
+#if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
+	ret = google_bcl_init_data_logging(bcl_dev);
+	if (ret < 0)
+		goto bcl_soc_probe_exit;
+	/* br_stats no need to run without mitigation app */
+	bcl_dev->enabled_br_stats = false;
+#endif
 
 	bcl_dev->triggered_idx = TRIGGERED_SOURCE_MAX;
 
 	ret = google_init_fs(bcl_dev);
 	if (ret < 0)
-		goto bcl_soc_probe_exit;
+		goto debug_fs_removal;
+	ret = google_bcl_init_notifier(bcl_dev);
+	if (ret < 0)
+		goto debug_init_fs;
+	google_bcl_setup_votable(bcl_dev);
+	google_bcl_clk_div(bcl_dev);
+	google_bcl_parse_irq_config(bcl_dev);
 
-	platform_set_drvdata(pdev, bcl_dev);
 	smp_store_release(&bcl_dev->enabled, true);
+	dev_info(bcl_dev->device, "BCL done\n");
 
 	return 0;
 
+debug_init_fs:
+	pmic_device_destroy(bcl_dev->mitigation_dev->devt);
+debug_fs_removal:
+	debugfs_remove_recursive(bcl_dev->debug_entry);
 bcl_soc_probe_exit:
-	dev_err(bcl_dev->device, "Retrying BCL probe\n");
 	google_bcl_remove_thermal(bcl_dev);
-	return -EPROBE_DEFER;
+	dev_err(bcl_dev->device, "BCL SW disabled.  Revert to HW mitigation\n");
+	return 0;
 }
 
 static int google_bcl_remove(struct platform_device *pdev)
@@ -2296,16 +2281,18 @@ static int google_bcl_remove(struct platform_device *pdev)
 
 	pmic_device_destroy(bcl_dev->mitigation_dev->devt);
 	debugfs_remove_recursive(bcl_dev->debug_entry);
+	cpu_pm_unregister_notifier(&bcl_dev->cpu_nb);
 	google_bcl_remove_thermal(bcl_dev);
-#if IS_ENABLED(CONFIG_REGULATOR_S2MPG14)
-	if (smp_load_acquire(&bcl_dev->enabled))
-		google_bcl_remove_qos(bcl_dev);
-	google_bcl_remove_votable(bcl_dev);
-	google_bcl_remove_data_logging(bcl_dev);
-#endif
-	kfree(bcl_dev->non_monitored_module_ids);
 
 	return 0;
+}
+
+static void google_bcl_shutdown(struct platform_device *pdev)
+{
+	struct bcl_device *bcl_dev = platform_get_drvdata(pdev);
+
+	if (bcl_dev)
+		power_supply_unreg_notifier(&bcl_dev->psy_nb);
 }
 
 static const struct of_device_id match_table[] = {
@@ -2316,6 +2303,7 @@ static const struct of_device_id match_table[] = {
 static struct platform_driver google_bcl_driver = {
 	.probe  = google_bcl_probe,
 	.remove = google_bcl_remove,
+	.shutdown = google_bcl_shutdown,
 	.id_table = google_id_table,
 	.driver = {
 		.name           = "google_mitigation",

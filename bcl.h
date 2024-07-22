@@ -18,6 +18,7 @@
 #elif IS_ENABLED(CONFIG_SOC_GS201)
 #include <dt-bindings/soc/google/gs201-bcl.h>
 #endif
+#include <trace/events/power.h>
 #include "uapi/brownout_stats.h"
 
 #if IS_ENABLED(CONFIG_SOC_GS101)
@@ -43,7 +44,7 @@
 #define VSHUNT_MULTIPLIER		10000
 #define MILLI_TO_MICRO			1000
 #define IRQ_ENABLE_DELAY_MS		50
-#define NOT_USED 			-1
+#define NOT_USED 			9999
 #define TIMEOUT_10MS			10
 #define TIMEOUT_5MS			5
 #define TIMEOUT_1MS			1
@@ -54,11 +55,18 @@
 #define MITIGATION_PRINT_BUF_SIZE  	256
 #define MITIGATION_TMP_BUF_SIZE	16
 #define MAXMIN_RESET_VAL		0x807F
-#define PWRWARN_LPF_RFFE_MMWAVE_DATA_0		0xCF
-#define PWRWARN_LPF_RFFE_MMWAVE_DATA_1		0xD0
-#define PWRWARN_THRESH_RFFE_MMWAVE		0x3C
-#define PWRWARN_LPF_RFFE_MMWAVE_MSB_MASK	0x0F
-#define PWRWARN_LPF_RFFE_MMWAVE_RSHIFT		4
+#define BAT_DTLS_OILO_ASSERTED		0x6
+#define PWRWARN_LPF_RFFE_MMWAVE_DATA_0         0xCF
+#define PWRWARN_LPF_RFFE_MMWAVE_DATA_1         0xD0
+#define PWRWARN_THRESH_RFFE_MMWAVE             0x3C
+#define PWRWARN_LPF_RFFE_MMWAVE_MSB_MASK       0x0F
+#define PWRWARN_LPF_RFFE_MMWAVE_RSHIFT         4
+#define DEFAULT_SYS_UVLO1_LVL 0xC /* 3.2V */
+#define DEFAULT_SYS_UVLO2_LVL 0x2 /* 2.7V */
+#define DEFAULT_VDROOP_INT_MASK 0xDF /* Only BATOILO is passed */
+#define DEFAULT_INTB_MASK 0x0 /* All IRQs are passed */
+#define DEFAULT_SMPL 0xCB /* 3.2V, 200mV HYS, 38us debounce */
+
 
 #if IS_ENABLED(CONFIG_SOC_GS101)
 #define MAIN_OFFSRC1 S2MPG10_PM_OFFSRC
@@ -185,7 +193,6 @@ struct qos_throttle_limit {
 	int cpu2_limit;
 	int gpu_limit;
 	int tpu_limit;
-	bool throttle;
 };
 
 struct zone_triggered_stats {
@@ -197,8 +204,7 @@ struct bcl_zone {
 	struct device *device;
 	struct completion deassert;
 	struct work_struct irq_triggered_work;
-	struct delayed_work irq_untriggered_work;
-	struct work_struct warn_work;
+	struct delayed_work warn_work;
 	struct delayed_work enable_irq_work;
 	struct thermal_zone_device *tz;
 	struct thermal_zone_device_ops tz_ops;
@@ -209,7 +215,7 @@ struct bcl_zone {
 	int bcl_prev_lvl;
 	int bcl_cur_lvl;
 	int bcl_lvl;
-	int bcl_pin;
+	u16 bcl_pin;
 	int bcl_irq;
 	int irq_type;
 	int polarity;
@@ -258,9 +264,12 @@ struct bcl_batt_irq_conf {
 	int batoilo_upper_limit;
 	u8 batoilo_trig_lvl;
 	u8 batoilo_wlc_trig_lvl;
+	u8 batoilo_usb_trig_lvl;
 	u8 batoilo_bat_open_to;
 	u8 batoilo_rel;
 	u8 batoilo_det;
+	u8 batoilo_int_rel;
+	u8 batoilo_int_det;
 	u8 uvlo_rel;
 	u8 uvlo_det;
 };
@@ -293,19 +302,18 @@ struct bcl_device {
 	struct odpm_info *sub_odpm;
 	void __iomem *sysreg_cpucl0;
 	struct power_supply *batt_psy;
-	struct workqueue_struct *triggered_wq;
-	struct workqueue_struct *warn_wq;
 
 	struct notifier_block psy_nb;
 	struct bcl_zone *zone[TRIGGERED_SOURCE_MAX];
 	struct delayed_work soc_work;
+	struct workqueue_struct *qos_update_wq;
 	struct thermal_zone_device *soc_tz;
 	struct thermal_zone_device_ops soc_tz_ops;
+	bool throttle;
 
 	int trip_high_temp;
 	int trip_low_temp;
 	int trip_val;
-	struct mutex state_trans_lock;
 	struct mutex sysreg_lock;
 
 	struct i2c_client *main_pmic_i2c;
@@ -318,9 +326,7 @@ struct bcl_device {
 	struct device *vimon_dev;
 
 	struct mutex cpu_ratio_lock;
-	struct mutex tpu_ratio_lock;
-	struct mutex gpu_ratio_lock;
-	struct mutex aur_ratio_lock;
+	struct mutex qos_update_lock;
 	struct bcl_core_conf core_conf[SUBSYSTEM_SOURCE_MAX];
 	struct bcl_cpu_buff_conf cpu_buff_conf[CPU_CLUSTER_MAX];
 	struct notifier_block cpu_nb;
@@ -384,6 +390,7 @@ struct bcl_device {
 	enum IFPMIC ifpmic;
 
 	struct gvotable_election *toggle_wlc;
+	struct gvotable_election *toggle_usb;
 
 	struct bcl_evt_count evt_cnt;
 	struct bcl_evt_count evt_cnt_latest;
@@ -404,6 +411,20 @@ struct bcl_device {
 	bool rffe_mitigation_enable;
 
 	struct bcl_vimon_intf vimon_intf;
+
+	u8 vdroop_int_mask;
+	u8 intb_int_mask;
+	u8 uvlo2_lvl;
+	u8 uvlo1_lvl;
+	u8 smpl_ctrl;
+	bool uvlo2_vdrp2_en;
+	bool uvlo2_vdrp1_en;
+	bool uvlo1_vdrp1_en;
+	bool uvlo1_vdrp2_en;
+	bool oilo1_vdrp1_en;
+	bool oilo1_vdrp2_en;
+	bool oilo2_vdrp1_en;
+	bool oilo2_vdrp2_en;
 };
 
 extern void google_bcl_irq_update_lvl(struct bcl_device *bcl_dev, int index, unsigned int lvl);
@@ -437,7 +458,8 @@ int max77759_clr_irq(struct bcl_device *bcl_dev, int idx);
 int max77759_vimon_read(struct bcl_device *bcl_dev);
 int max77779_get_irq(struct bcl_device *bcl_dev, u8 *irq_val);
 int max77779_clr_irq(struct bcl_device *bcl_dev, int idx);
-int max77779_adjust_batoilo_lvl(struct bcl_device *bcl_dev, u8 wlc_tx_enable);
+int max77779_adjust_batoilo_lvl(struct bcl_device *bcl_dev, u8 lower_enable, u8 set_batoilo1_lvl,
+                                u8 set_batoilo2_lvl);
 int max77779_vimon_read(struct bcl_device *bcl_dev);
 int google_bcl_setup_votable(struct bcl_device *bcl_dev);
 void google_bcl_remove_votable(struct bcl_device *bcl_dev);
