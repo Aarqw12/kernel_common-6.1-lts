@@ -71,6 +71,14 @@ static const struct maxfg_reg max77779_fg[] = {
 	[MAXFG_TAG_vfocv] = { ATOM_INIT_REG16(MAX77779_FG_VFOCV)},
 	[MAXFG_TAG_avgt] = { ATOM_INIT_REG16(MAX77779_FG_AvgTA)},
 	[MAXFG_TAG_avgv] = { ATOM_INIT_REG16(MAX77779_FG_AvgVCell)},
+	[MAXFG_TAG_mixcap] = { ATOM_INIT_REG16(MAX77779_FG_MixCap)},
+	[MAXFG_TAG_vfremcap] = { ATOM_INIT_REG16(MAX77779_FG_VFRemCap)},
+	[MAXFG_TAG_vfsoc0] = { ATOM_INIT_REG16(MAX77779_FG_VFSOC0)},
+	[MAXFG_TAG_qrtable00] = { ATOM_INIT_REG16(MAX77779_FG_QRTable00)},
+	[MAXFG_TAG_qrtable10] = { ATOM_INIT_REG16(MAX77779_FG_QRTable10)},
+	[MAXFG_TAG_qrtable20] = { ATOM_INIT_REG16(MAX77779_FG_QRTable20)},
+	[MAXFG_TAG_qrtable30] = { ATOM_INIT_REG16(MAX77779_FG_QRTable30)},
+	[MAXFG_TAG_status] = { ATOM_INIT_REG16(MAX77779_FG_Status)},
 };
 
 static const struct maxfg_reg max77779_debug_fg[] = {
@@ -158,8 +166,9 @@ struct max77779_fg_chip {
 	bool fw_update_mode;
 
 	/* in-field logging */
-	int fg_logging_events;
-	u16 pre_fullcapnom;
+	unsigned int abnormal_event_bits;
+	u16 last_fullcapnom;
+	struct mutex check_event_lock;
 
 	/* firmware revision */
 	int fw_rev;
@@ -172,6 +181,10 @@ struct max77779_fg_chip {
 
 	/* buffer for recording learning history */
 	struct maxfg_capture_buf cb_lh;
+
+	/* get suspend/resume notification */
+	struct mutex save_data_lock;
+	struct wakeup_source *fg_wake_lock;
 };
 
 /** ------------------------------------------------------------------------ */
@@ -209,12 +222,16 @@ struct max77779_custom_parameters {
 
 /* this is what is saved and restored to/from GMSR */
 struct model_state_save {
+	u16 qrtable00;
+	u16 qrtable10;
+	u16 qrtable20;
+	u16 qrtable30;
+	u16 fullcapnom;
+	u16 fullcaprep;
 	u16 rcomp0;
 	u16 tempco;
-	u16 fullcaprep;
 	u16 cycles;
-	u16 fullcapnom;
-	u8 padding[12]; /* keep the same size as 59 for consistency GBMS_GMSR_LEN */
+	u8 padding[4]; /* keep the same size as 59 for consistency GBMS_GMSR_LEN */
 	u8 crc;
 } __attribute__((packed));
 
@@ -227,6 +244,7 @@ struct max77779_model_data {
 	struct max77779_custom_parameters parameters;
 	u16 cycles;
 	u16 cv_mixcap;
+	u16 hibcfg;
 
 	int custom_model_size;
 	u16 *custom_model;
@@ -319,8 +337,11 @@ int max77779_model_check_state(struct max77779_model_data *model_data);
 int max77779_load_gauge_model(struct max77779_model_data *model_data, int fw_rev, int fw_sub_rev);
 
 ssize_t max77779_model_state_cstr(char *buf, int max, struct max77779_model_data *model_data);
+int max77779_fg_param_cstr(char *buf, int max, const struct max77779_model_data *model_data);
+int max77779_fg_param_sscan(struct max77779_model_data *model_data, const char *buf, int max);
 int max77779_fg_model_cstr(char *buf, int max, const struct max77779_model_data *model_data);
 int max77779_fg_model_sscan(struct max77779_model_data *model_data, const char *buf, int max);
+bool max77779_fg_check_state(struct max77779_model_data *model_data);
 
 /* read saved value */
 ssize_t max77779_gmsr_state_cstr(char *buf, int max);

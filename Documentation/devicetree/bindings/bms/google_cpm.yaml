@@ -46,8 +46,9 @@ properties:
     type: boolean
 
   google,dc-en-value:
-    description: DC enable gpio default value. If set, default HIGH.
-    enum: [0, 1]
+    description: DC enable gpio output active HIGH. Absence of gpio indicates
+    output active LOW.
+    type: boolean
 
   google,dc_limit-demand:
     description: Charge current floor to enable DC charging

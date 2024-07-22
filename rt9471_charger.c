@@ -109,7 +109,6 @@ struct rt9471_desc {
 	bool en_safe_tmr;
 	bool en_te;
 	bool en_jeita;
-	bool ceb_invert;
 	bool dis_i2c_tout;
 	bool en_qon_rst;
 	bool auto_aicr;
@@ -130,7 +129,6 @@ static struct rt9471_desc rt9471_default_desc = {
 	.en_safe_tmr = true,
 	.en_te = true,
 	.en_jeita = true,
-	.ceb_invert = false,
 	.dis_i2c_tout = false,
 	.en_qon_rst = true,
 	.auto_aicr = true,
@@ -1496,7 +1494,6 @@ static int rt9471_parse_dt(struct rt9471_chip *chip)
 	desc->en_safe_tmr = of_property_read_bool(np, "en-safe-tmr");
 	desc->en_te = of_property_read_bool(np, "en-te");
 	desc->en_jeita = of_property_read_bool(np, "en-jeita");
-	desc->ceb_invert = of_property_read_bool(np, "ceb-invert");
 	desc->dis_i2c_tout = of_property_read_bool(np, "dis-i2c-tout");
 	desc->en_qon_rst = of_property_read_bool(np, "en-qon-rst");
 	desc->auto_aicr = of_property_read_bool(np, "auto-aicr");
@@ -1799,6 +1796,37 @@ static void rt9471_gpio_init(struct rt9471_chip *chip)
 
 /* ------------------------------------------------------------------------ */
 
+static ssize_t registers_dump_show(struct device *dev, struct device_attribute *attr,
+				   char *buf)
+{
+	struct rt9471_chip *chip = dev_get_drvdata(dev);
+	u8 tmp[RT9471_REG_BUCK_HDEN5 - RT9471_REG_OTGCFG + 1];
+	int ret = 0, i;
+	int len = 0;
+
+	mutex_lock(&chip->io_lock);
+	ret = regmap_bulk_read(chip->rm_dev, RT9471_REG_OTGCFG, &tmp, sizeof(tmp));
+	mutex_unlock(&chip->io_lock);
+	if (ret < 0)
+		return ret;
+
+	for (i = 0; i < sizeof(tmp); i++)
+		len += scnprintf(&buf[len], PAGE_SIZE - len, "%02x: %02x\n", i, tmp[i]);
+
+	return len;
+}
+
+static DEVICE_ATTR_RO(registers_dump);
+
+static int rt9471_create_fs_entries(struct rt9471_chip *chip)
+{
+	device_create_file(chip->dev, &dev_attr_registers_dump);
+
+	return 0;
+}
+
+/* ------------------------------------------------------------------------ */
+
 static enum power_supply_property rt9471_psy_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
 	POWER_SUPPLY_PROP_CHARGE_TYPE,
@@ -2079,6 +2107,8 @@ static int rt9471_probe(struct i2c_client *client,
 			 chip->gpio.ngpio, ret);
 	}
 #endif
+
+	(void)rt9471_create_fs_entries(chip);
 
 	schedule_work(&chip->init_work);
 	dev_info(chip->dev, "%s successfully\n", __func__);

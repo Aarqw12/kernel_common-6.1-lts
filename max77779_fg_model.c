@@ -36,49 +36,55 @@
 #define MAX7779_FG_CRC8_POLYNOMIAL		0x07	/* (x^8) + x^2 + x + 1 */
 DECLARE_CRC8_TABLE(max77779_fg_crc8_table);
 
-#define MODEL_VERSION_SHIFT	8
-#define MODEL_VERSION_MASK	0xff
+/*
+ * b/329101930: using MAX77779 sp to save model version
+ * SP reset value is undefined and only reset when entering shipmode and UVLO.
+ * If current SP value is the same as model version, then model won't reload.
+ * Otherwise, model will reload and SP data will be model version.
+ * If enter shipmode or UVLO, POR will lead to reload model regardless of SP data.
+ * So undefined reset value won't be a side effect for that.
+ */
 int max77779_model_read_version(const struct max77779_model_data *model_data)
 {
-	u16 temp;
+	u8 temp;
 	int ret;
 
-	ret = REGMAP_READ(model_data->regmap, MAX77779_FG_MODEL_VERSION_REG, &temp);
-	if (ret == 0)
-		return (temp >> MAX77779_FG_TAlrtTh_TMAX_SHIFT) & MODEL_VERSION_MASK;
+	ret = gbms_storage_read(GBMS_TAG_MDLV, &temp, sizeof(temp));
 
-	return ret;
+	return ret < 0 ? ret : temp;
 }
 
 int max77779_model_write_version(const struct max77779_model_data *model_data, int version)
 {
-	struct maxfg_regmap *regmap = model_data->regmap;
-	u16 temp;
+	u8 temp;
 	int ret;
 
 	if (version == MAX77779_FG_INVALID_VERSION)
 		return 0;
 
-	ret = REGMAP_READ(regmap, MAX77779_FG_MODEL_VERSION_REG, &temp);
-	if (ret == 0) {
-		temp &= ~(MODEL_VERSION_MASK << MODEL_VERSION_SHIFT);
-		temp |= (version & MODEL_VERSION_MASK) << MODEL_VERSION_SHIFT;
+	temp = (u8)version;
+	ret = gbms_storage_write(GBMS_TAG_MDLV, &temp, sizeof(temp));
 
-		ret = MAX77779_FG_REGMAP_WRITE(regmap, MAX77779_FG_MODEL_VERSION_REG, temp);
-	}
-
-	return ret;
+	return ret < 0 ? ret : 0;
 }
 
 int max77779_reset_state_data(struct max77779_model_data *model_data)
 {
 	struct model_state_save data;
+	struct max77779_fg_chip *chip = dev_get_drvdata(model_data->dev);
 	int ret = 0;
+
+	__pm_stay_awake(chip->fg_wake_lock);
+	mutex_lock(&chip->save_data_lock);
 
 	memset(&data, 0xff, sizeof(data));
 
 	ret = gbms_storage_write(GBMS_TAG_GMSR, &data, sizeof(data));
-	if (ret < 0)
+
+	mutex_unlock(&chip->save_data_lock);
+	__pm_relax(chip->fg_wake_lock);
+
+	if (ret != GBMS_GMSR_LEN)
 		dev_warn(model_data->dev, "Erase GMSR fail (%d)\n", ret);
 
 	return ret == sizeof(data) ? 0 : ret;
@@ -153,6 +159,7 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
 	struct max77779_custom_parameters *cp = &model_data->parameters;
 	struct maxfg_regmap *debug_regmap = model_data->debug_regmap;
 	struct maxfg_regmap *regmap = model_data->regmap;
+	const u16 hibcfg = model_data->hibcfg > 0 ? model_data->hibcfg : 0x0909;
 	int ret, attempt;
 	u16 data;
 
@@ -188,6 +195,8 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
 	if (ret == 0)
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nTempCo, cp->tempco);
 	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nCycles, model_data->cycles);
+	if (ret == 0)
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nQRTable00, cp->qresidual00);
 	if (ret == 0)
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nQRTable10, cp->qresidual10);
@@ -195,6 +204,8 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nQRTable20, cp->qresidual20);
 	if (ret == 0)
 		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nQRTable30, cp->qresidual30);
+	if (ret == 0)
+		ret = REGMAP_WRITE(debug_regmap, MAX77779_FG_NVM_nHibCfg, hibcfg);
 	/* b/308287790 - Clear nMOdelCfg.Refresh if firmware revision < 2.6 */
 	if (revision < 2 || (revision == 2 && sub_rev < 6)) {
 		if (ret == 0)
@@ -225,14 +236,14 @@ static int max77779_update_custom_parameters(struct max77779_model_data *model_d
 }
 
 /*
- * Model loading procedure version: 0.1.4
+ * Model loading procedure version: 0.2.1
  * 0 is ok
  */
-#define MODEL_LOADING_VERSION "0.1.4-1"
+#define MODEL_LOADING_VERSION "0.2.1"
 int max77779_load_gauge_model(struct max77779_model_data *model_data, int rev, int sub_rev)
 {
 	struct maxfg_regmap *regmap = model_data->regmap;
-	u16 data, hibcfg, config2, status, temp;
+	u16 data, config2, status, temp;
 	int rc, ret, retries;
 
 	if (!model_data || !model_data->custom_model || !model_data->custom_model_size)
@@ -288,7 +299,7 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data, int rev, i
 		return ret;
 	}
 
-	ret = REGMAP_READ(regmap, MAX77779_FG_HibCfg, &hibcfg);
+	ret = REGMAP_READ(regmap, MAX77779_FG_HibCfg, &model_data->hibcfg);
 	if (ret == 0)
 		ret = REGMAP_WRITE(regmap, MAX77779_FG_HibCfg, 0);
 	if (ret < 0) {
@@ -303,22 +314,29 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data, int rev, i
 		goto error_done;
 	}
 
-	/* Step 3.4.2: Write Custom Parameters */
+	/* step 3.5 Identify Battery: already done in max77779_load_state_data */
+
+	/* Step 3.6: Write Custom Parameters */
 	ret = max77779_update_custom_parameters(model_data, rev, sub_rev);
 	if (ret < 0) {
 		dev_err(model_data->dev, "cannot update custom parameters (%d)\n", ret);
 		goto error_done;
 	}
 
-	/* Step 3.4.3: Initiate Model Loading */
-	ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2,
-			   model_data->parameters.config2 | MAX77779_FG_Config2_LDMdl_MASK);
+	/* Step 3.6.1: Initiate Model Loading */
+	ret = REGMAP_READ(regmap, MAX77779_FG_Config2, &config2);
+	if (ret < 0) {
+		dev_err(model_data->dev, "Failed read config2 (%d)\n", ret);
+		goto error_done;
+	}
+
+	ret = REGMAP_WRITE(regmap, MAX77779_FG_Config2, config2 | MAX77779_FG_Config2_LDMdl_MASK);
 	if (ret < 0) {
 		dev_err(model_data->dev, "Failed initiate model loading (%d)\n", ret);
 		goto error_done;
 	}
 
-	/* Step 3.4.4: Poll Config2.LdMdl */
+	/* Step 3.6.2: Poll Config2.LdMdl */
 	for (retries = 20; retries > 0; retries--) {
 		ret = REGMAP_READ(regmap, MAX77779_FG_Config2, &config2);
 		if (ret == 0 && !(config2 & MAX77779_FG_Config2_LDMdl_MASK))
@@ -338,26 +356,9 @@ int max77779_load_gauge_model(struct max77779_model_data *model_data, int rev, i
 	if (ret < 0)
 		dev_err(model_data->dev, "cannot restore Config2 (%d)\n", ret);
 
-	/* b/328398641 need delay to internal register re-synchronized */
-	msleep(200);
-
-	/* Step 3.4.5: Update QRTable20 and QRTable30 */
-	ret = REGMAP_WRITE_VERIFY(regmap, MAX77779_FG_QRTable20,
-				  model_data->parameters.qresidual20);
-	if (ret == 0)
-		ret = REGMAP_WRITE_VERIFY(regmap, MAX77779_FG_QRTable30,
-					  model_data->parameters.qresidual30);
-	if (ret < 0) {
-		dev_err(model_data->dev, "cannot update QR20/QR30 (%d)\n", ret);
-		goto error_done;
-	}
-
-	/* Step 3.4.6: Restore Hibcfg */
-	ret = REGMAP_WRITE(regmap, MAX77779_FG_HibCfg, hibcfg);
-	if (ret < 0) {
-		dev_err(model_data->dev, "cannot restore HibCFG (%d)\n", ret);
-		goto error_done;
-	}
+	/* b/328398641 need delay to internal register re-synchronized when FW ver. < 3.8 */
+	if (rev < 3 || (rev == 3 && sub_rev < 8))
+		msleep(200);
 
 	/* Step 4.1: Clear POR bit */
 	for (retries = 10; retries > 0; retries--) {
@@ -416,21 +417,29 @@ error_done:
 }
 
 #define MAX77779_FG_CAP_MAX_RATIO	110
+#define MAX77779_FG_CAP_MIN_RATIO	50
 static int max77779_fg_check_state_data(struct model_state_save *state,
 					struct max77779_custom_parameters *ini)
 {
 	int max_cap = ini->designcap * MAX77779_FG_CAP_MAX_RATIO / 100;
+	int min_cap = ini->designcap * MAX77779_FG_CAP_MIN_RATIO / 100;
 
-	if (state->rcomp0 == 0xFFFF)
+	if (state->rcomp0 == 0xFFFF || state->rcomp0 == 0)
 		return -ERANGE;
 
-	if (state->tempco == 0xFFFF)
+	if (state->tempco == 0xFFFF || state->tempco == 0)
 		return -ERANGE;
 
 	if (state->fullcaprep > max_cap)
 		return -ERANGE;
 
 	if (state->fullcapnom > max_cap)
+		return -ERANGE;
+
+	if (state->fullcaprep < min_cap)
+		return -ERANGE;
+
+	if (state->fullcapnom < min_cap)
 		return -ERANGE;
 
 	if (state->cycles == 0xFFFF)
@@ -452,9 +461,9 @@ static u8 max77779_fg_data_crc(char *reason, struct model_state_save *state)
 	crc = max77779_fg_crc((u8 *)state, sizeof(struct model_state_save) - 1,
 			  CRC8_INIT_VALUE);
 
-	pr_info("%s gmsr: %X %X %X %X %X %X (%X)\n",
-		reason, state->rcomp0, state->tempco,
-		state->fullcaprep, state->fullcapnom,
+	pr_info("%s gmsr: %X %X %X %X %X %X %X %X %X %X (%X)\n",
+		reason, state->qrtable00, state->qrtable10, state->qrtable20, state->qrtable30,
+		state->fullcaprep, state->fullcapnom, state->rcomp0, state->tempco,
 		state->cycles, state->crc, crc);
 
 	return crc;
@@ -467,6 +476,7 @@ static u8 max77779_fg_data_crc(char *reason, struct model_state_save *state)
 int max77779_load_state_data(struct max77779_model_data *model_data)
 {
 	struct max77779_custom_parameters *cp = &model_data->parameters;
+	struct max77779_fg_chip *chip = dev_get_drvdata(model_data->dev);
 	u8 crc;
 	int ret;
 
@@ -474,9 +484,12 @@ int max77779_load_state_data(struct max77779_model_data *model_data)
 		return -EINVAL;
 
 	/* might return -EAGAIN during init */
+	mutex_lock(&chip->save_data_lock);
 	ret = gbms_storage_read(GBMS_TAG_GMSR, &model_data->model_save,
 				sizeof(model_data->model_save));
-	if (ret < 0) {
+	mutex_unlock(&chip->save_data_lock);
+
+	if (ret != GBMS_GMSR_LEN) {
 		dev_info(model_data->dev, "Saved Model Data empty\n");
 		return ret;
 	}
@@ -489,10 +502,14 @@ int max77779_load_state_data(struct max77779_model_data *model_data)
 	if (crc != model_data->model_save.crc)
 		return -EINVAL;
 
-	cp->rcomp0 = model_data->model_save.rcomp0;
-	cp->tempco = model_data->model_save.tempco;
+	cp->qresidual00 = model_data->model_save.qrtable00;
+	cp->qresidual10 = model_data->model_save.qrtable10;
+	cp->qresidual20 = model_data->model_save.qrtable20;
+	cp->qresidual30 = model_data->model_save.qrtable30;
 	cp->fullcaprep = model_data->model_save.fullcaprep;
 	cp->fullcapnom = model_data->model_save.fullcapnom;
+	cp->rcomp0 = model_data->model_save.rcomp0;
+	cp->tempco = model_data->model_save.tempco;
 	model_data->cycles = model_data->model_save.cycles;
 
 	return 0;
@@ -502,31 +519,42 @@ int max77779_load_state_data(struct max77779_model_data *model_data)
 int max77779_save_state_data(struct max77779_model_data *model_data)
 {
 	struct max77779_custom_parameters *cp = &model_data->parameters;
+	struct max77779_fg_chip *chip = dev_get_drvdata(model_data->dev);
+
 	struct model_state_save rb;
 	int ret = 0;
 
-	model_data->model_save.rcomp0 = cp->rcomp0;
-	model_data->model_save.tempco = cp->tempco;
+	__pm_stay_awake(chip->fg_wake_lock);
+	mutex_lock(&chip->save_data_lock);
+
+	model_data->model_save.qrtable00 = cp->qresidual00;
+	model_data->model_save.qrtable10 = cp->qresidual10;
+	model_data->model_save.qrtable20 = cp->qresidual20;
+	model_data->model_save.qrtable30 = cp->qresidual30;
 	model_data->model_save.fullcaprep = cp->fullcaprep;
 	model_data->model_save.fullcapnom = cp->fullcapnom;
-
+	model_data->model_save.rcomp0 = cp->rcomp0;
+	model_data->model_save.tempco = cp->tempco;
 	model_data->model_save.cycles = model_data->cycles;
 
 	model_data->model_save.crc = max77779_fg_data_crc("save", &model_data->model_save);
 
+
 	ret = gbms_storage_write(GBMS_TAG_GMSR, (const void *)&model_data->model_save,
 				 sizeof(model_data->model_save));
-	if (ret < 0)
-		return ret;
+	if (ret != GBMS_GMSR_LEN)
+		goto max77779_save_state_data_exit;
 
-	if (ret != sizeof(model_data->model_save))
-		return -ERANGE;
+	if (ret != sizeof(model_data->model_save)) {
+		ret = -ERANGE;
+		goto max77779_save_state_data_exit;
+	}
 
 	/* Read back to make sure data all good */
 	ret = gbms_storage_read(GBMS_TAG_GMSR, &rb, sizeof(rb));
-	if (ret < 0) {
+	if (ret != GBMS_GMSR_LEN) {
 		dev_info(model_data->dev, "Read Back Data Failed ret=%d\n", ret);
-		return ret;
+		goto max77779_save_state_data_exit;
 	}
 
 	if (rb.rcomp0 != model_data->model_save.rcomp0 ||
@@ -535,9 +563,43 @@ int max77779_save_state_data(struct max77779_model_data *model_data)
 	    rb.fullcapnom != model_data->model_save.fullcapnom ||
 	    rb.cycles != model_data->model_save.cycles ||
 	    rb.crc != model_data->model_save.crc)
-		return -EINVAL;
+		ret = -EINVAL;
+	else
+		ret = 0;
 
-	return 0;
+max77779_save_state_data_exit:
+	mutex_unlock(&chip->save_data_lock);
+	__pm_relax(chip->fg_wake_lock);
+
+	return ret;
+}
+
+bool max77779_fg_check_state(struct max77779_model_data *model_data)
+{
+	int rc;
+	struct maxfg_regmap *regmap = model_data->regmap;
+	struct maxfg_regmap *debug_regmap = model_data->debug_regmap;
+	struct max77779_custom_parameters *cp = &model_data->parameters;
+	const int min_cap = cp->designcap * MAX77779_FG_CAP_MIN_RATIO / 100;
+	u16 fullcapnom, fullcaprep, rcomp0, tempco;
+
+	rc = REGMAP_READ(regmap, MAX77779_FG_FullCapRep, &fullcaprep);
+	if (rc == 0 && fullcaprep < min_cap)
+		return false;
+
+	rc = REGMAP_READ(regmap, MAX77779_FG_FullCapNom, &fullcapnom);
+	if (rc == 0 && fullcapnom < min_cap)
+		return false;
+
+	rc = REGMAP_READ(debug_regmap, MAX77779_FG_NVM_nRComp0, &rcomp0);
+	if (rc == 0 && rcomp0 == 0)
+		return false;
+
+	rc = REGMAP_READ(debug_regmap, MAX77779_FG_NVM_nTempCo, &tempco);
+	if (rc == 0 && tempco == 0)
+		return false;
+
+	return true;
 }
 
 /* 0 ok, < 0 error. Call after reading from the FG */
@@ -562,19 +624,25 @@ int max77779_model_read_state(struct max77779_model_data *model_data)
 	int rc;
 	struct maxfg_regmap *regmap = model_data->regmap;
 	struct maxfg_regmap *debug_regmap = model_data->debug_regmap;
+	struct max77779_custom_parameters *cp = &model_data->parameters;
 
-	rc= REGMAP_READ(debug_regmap, MAX77779_FG_NVM_nRComp0, &model_data->parameters.rcomp0);
+	rc = REGMAP_READ(regmap, MAX77779_FG_QRTable00, &cp->qresidual00);
 	if (rc == 0)
-		rc = REGMAP_READ(debug_regmap, MAX77779_FG_NVM_nTempCo,
-				 &model_data->parameters.tempco);
+		rc = REGMAP_READ(regmap, MAX77779_FG_QRTable10, &cp->qresidual10);
 	if (rc == 0)
-		rc = REGMAP_READ(regmap, MAX77779_FG_FullCapRep,
-				 &model_data->parameters.fullcaprep);
+		rc = REGMAP_READ(regmap, MAX77779_FG_QRTable20, &cp->qresidual20);
+	if (rc == 0)
+		rc = REGMAP_READ(regmap, MAX77779_FG_QRTable30, &cp->qresidual30);
+	if (rc == 0)
+		rc = REGMAP_READ(regmap, MAX77779_FG_FullCapNom, &cp->fullcapnom);
+	if (rc == 0)
+		rc = REGMAP_READ(regmap, MAX77779_FG_FullCapRep, &cp->fullcaprep);
+	if (rc == 0)
+		rc = REGMAP_READ(debug_regmap, MAX77779_FG_NVM_nRComp0, &cp->rcomp0);
+	if (rc == 0)
+		rc = REGMAP_READ(debug_regmap, MAX77779_FG_NVM_nTempCo, &cp->tempco);
 	if (rc == 0)
 		rc = REGMAP_READ(regmap, MAX77779_FG_Cycles, &model_data->cycles);
-	if (rc == 0)
-		rc = REGMAP_READ(regmap, MAX77779_FG_FullCapNom,
-				 &model_data->parameters.fullcapnom);
 
 	return rc;
 }
@@ -593,18 +661,165 @@ ssize_t max77779_model_state_cstr(char *buf, int max, struct max77779_model_data
 {
 	int len = 0;
 
-	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX77779_FG_NVM_nRComp0,
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nRComp0,
 			 model_data->parameters.rcomp0);
-	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX77779_FG_NVM_nTempCo,
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nTempCo,
 			 model_data->parameters.tempco);
-	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX77779_FG_FullCapRep,
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_FullCapRep,
 			 model_data->parameters.fullcaprep);
-	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX77779_FG_Cycles,
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_Cycles,
 			 model_data->cycles);
-	len += scnprintf(&buf[len], max - len,"%02x:%02x\n", MAX77779_FG_FullCapNom,
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_FullCapNom,
 			 model_data->parameters.fullcapnom);
 
 	return len;
+}
+
+int max77779_fg_param_cstr(char *buf, int max, const struct max77779_model_data *model_data)
+{
+	int len = 0;
+
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nNVCfg0,
+			 model_data->parameters.nvcfg0);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_RelaxCFG,
+			 model_data->parameters.relaxcfg);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nLearnCfg,
+			 model_data->parameters.learncfg);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_Config,
+			 model_data->parameters.config);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_Config2,
+			 model_data->parameters.config2);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nFullSOCThr,
+			 model_data->parameters.fullsocthr);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nFullCapRep,
+			 model_data->parameters.fullcaprep);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nDesignCap,
+			 model_data->parameters.designcap);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_dPAcc,
+			 model_data->parameters.dpacc);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nFullCapNom,
+			 model_data->parameters.fullcapnom);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nVEmpty,
+			 model_data->parameters.v_empty);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nQRTable00,
+			 model_data->parameters.qresidual00);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nQRTable10,
+			 model_data->parameters.qresidual10);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nQRTable20,
+			 model_data->parameters.qresidual20);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nQRTable30,
+			 model_data->parameters.qresidual30);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nRComp0,
+			 model_data->parameters.rcomp0);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nTempCo,
+			 model_data->parameters.tempco);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nIChgTerm,
+			 model_data->parameters.ichgterm);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nMiscCfg,
+			 model_data->parameters.misccfg);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nModelCfg,
+			 model_data->parameters.modelcfg);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nThermCfg,
+			 model_data->parameters.thermcfg);
+	len += scnprintf(&buf[len], max - len, "%02x: %04x\n", MAX77779_FG_NVM_nFilterCfg,
+			 model_data->parameters.filtercfg);
+
+	return len;
+}
+
+/* can be use to restore parameters and model state after POR */
+int max77779_fg_param_sscan(struct max77779_model_data *model_data, const char *buf, int max)
+{
+	int ret, index, reg, val;
+
+	for (index = 0; index < max ; index += 1) {
+		ret = sscanf(&buf[index], "%x:%x", &reg, &val);
+		if (ret != 2) {
+			dev_err(model_data->dev, "@%d: sscan error %d\n",
+				index, ret);
+			return -EINVAL;
+		}
+
+		dev_info(model_data->dev, "@%d: reg=%x val=%x\n", index, reg, val);
+
+		switch (reg) {
+		/* model parameters (fg-params) */
+		case MAX77779_FG_NVM_nNVCfg0:
+			model_data->parameters.nvcfg0 = val;
+			break;
+		case MAX77779_FG_NVM_RelaxCFG:
+			model_data->parameters.relaxcfg = val;
+			break;
+		case MAX77779_FG_NVM_nLearnCfg:
+			model_data->parameters.learncfg = val;
+			break;
+		case MAX77779_FG_Config:
+			model_data->parameters.config = val;
+			break;
+		case MAX77779_FG_Config2:
+			model_data->parameters.config2 = val;
+			break;
+		case MAX77779_FG_NVM_nFullSOCThr:
+			model_data->parameters.fullsocthr = val;
+			break;
+		case MAX77779_FG_NVM_nFullCapRep:
+			model_data->parameters.fullcaprep = val;
+			break;
+		case MAX77779_FG_NVM_nDesignCap:
+			model_data->parameters.designcap = val;
+			break;
+		case MAX77779_FG_dPAcc:
+			model_data->parameters.dpacc = val;
+			break;
+		case MAX77779_FG_NVM_nFullCapNom:
+			model_data->parameters.fullcapnom = val;
+			break;
+		case MAX77779_FG_NVM_nVEmpty:
+			model_data->parameters.v_empty = val;
+			break;
+		case MAX77779_FG_NVM_nQRTable00:
+			model_data->parameters.qresidual00 = val;
+			break;
+		case MAX77779_FG_NVM_nQRTable10:
+			model_data->parameters.qresidual10 = val;
+			break;
+		case MAX77779_FG_NVM_nQRTable20:
+			model_data->parameters.qresidual20 = val;
+			break;
+		case MAX77779_FG_NVM_nQRTable30:
+			model_data->parameters.qresidual30 = val;
+			break;
+		case MAX77779_FG_NVM_nRComp0:
+			model_data->parameters.rcomp0 = val;
+			break;
+		case MAX77779_FG_NVM_nTempCo:
+			model_data->parameters.tempco = val;
+			break;
+		case MAX77779_FG_NVM_nIChgTerm:
+			model_data->parameters.ichgterm = val;
+			break;
+		case MAX77779_FG_NVM_nMiscCfg:
+			model_data->parameters.misccfg = val;
+			break;
+		case MAX77779_FG_NVM_nModelCfg:
+			model_data->parameters.modelcfg = val;
+			break;
+		case MAX77779_FG_NVM_nThermCfg:
+			model_data->parameters.thermcfg = val;
+			break;
+		case MAX77779_FG_NVM_nFilterCfg:
+			model_data->parameters.filtercfg = val;
+			break;
+		default:
+			dev_err(model_data->dev, "@%d: reg=%x out of range\n", index, reg);
+			return -EINVAL;
+		}
+
+		for ( ; index < max && buf[index] != '\n'; index++)
+			;
+	}
+
+	return 0;
 }
 
 ssize_t max77779_gmsr_state_cstr(char *buf, int max)
@@ -615,14 +830,20 @@ ssize_t max77779_gmsr_state_cstr(char *buf, int max)
 	ret = gbms_storage_read(GBMS_TAG_GMSR, &saved_data, GBMS_GMSR_LEN);
 	if (ret < 0)
 		return ret;
+	if (ret != GBMS_GMSR_LEN)
+		return -EIO;
 
 	len = scnprintf(&buf[len], max - len,
 			"rcomp0     :%04X\ntempco     :%04X\n"
 			"fullcaprep :%04X\ncycles     :%04X\n"
-			"fullcapnom :%04X\n",
+			"fullcapnom :%04X\nqresidual00:%04X\n"
+			"qresidual10:%04X\nqresidual20:%04X\n"
+			"qresidual30:%04X\n",
 			saved_data.rcomp0, saved_data.tempco,
 			saved_data.fullcaprep, saved_data.cycles,
-			saved_data.fullcapnom);
+			saved_data.fullcapnom, saved_data.qrtable00,
+			saved_data.qrtable10, saved_data.qrtable20,
+			saved_data.qrtable30);
 
 	return len;
 }

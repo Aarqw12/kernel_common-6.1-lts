@@ -25,6 +25,12 @@
 #define DEFAULT_BATTERY_ID_RETRIES	20
 #define DUMMY_BATTERY_ID		170
 
+enum monitor_log_tags {
+	MONITOR_TAG_AB = 0x4142, /* registers snapshot by abnormal event */
+	MONITOR_TAG_HV = 0x4856, /* result of EEPROM history validation */
+	MONITOR_TAG_LH = 0x4C48, /* registers snapshot by learning event */
+	MONITOR_TAG_RM = 0x524D, /* registers snapshot by regular monitor */
+};
 
 enum maxfg_reg_tags {
 	MAXFG_TAG_avgc,
@@ -64,6 +70,17 @@ enum maxfg_reg_tags {
 	MAXFG_TAG_relaxcfg,
 	MAXFG_TAG_avgt,
 	MAXFG_TAG_avgv,
+	MAXFG_TAG_mixcap,
+	MAXFG_TAG_vfremcap,
+	MAXFG_TAG_vfsoc0,
+	MAXFG_TAG_qrtable00,
+	MAXFG_TAG_qrtable10,
+	MAXFG_TAG_qrtable20,
+	MAXFG_TAG_qrtable30,
+	MAXFG_TAG_status,
+	MAXFG_TAG_fstat2,
+	MAXFG_TAG_config,
+	MAXFG_TAG_config2,
 
 	MAXFG_TAG_BCNT,
 	MAXFG_TAG_SNUM,
@@ -206,6 +223,12 @@ static inline u16 percentage_to_reg(int val)
 {
 	/* LSB: 1/256% */
 	return val << 8;
+}
+
+static inline u8 s8_to_u4_boundary(s8 val)
+{
+	/* Convert s8 to u4 with boundary, range 0 to 15 */
+	return val < 0 ? 0 : val > 15 ? 15 : val;
 }
 
 #define NB_REGMAP_MAX 256
@@ -351,7 +374,7 @@ void dump_model(struct device *dev, u16 model_start, u16 *data, int count);
 int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate, enum gbms_property p);
 const struct maxfg_reg * maxfg_find_by_tag(struct maxfg_regmap *map, enum maxfg_reg_tags tag);
 int maxfg_reg_read(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 *val);
-int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap,
+int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap, u16 RSense,
 			       struct maxfg_regmap *regmap, struct maxfg_regmap *regmap_debug);
 int maxfg_read_resistance_avg(u16 RSense);
 int maxfg_read_resistance_raw(struct maxfg_regmap *map);
@@ -362,6 +385,8 @@ void batt_ce_dump_data(const struct gbatt_capacity_estimation *cap_esti, struct 
 void batt_ce_store_data(struct maxfg_regmap *map, struct gbatt_capacity_estimation *cap_esti);
 void batt_ce_stop_estimation(struct gbatt_capacity_estimation *cap_esti, int reason);
 int maxfg_health_write_ai(u16 act_impedance, u16 act_timerh);
+int maxfg_reg_log_abnormal(struct maxfg_regmap *map, struct maxfg_regmap *map_debug,
+			   char *buf, int buf_len);
 int maxfg_reg_log_data(struct maxfg_regmap *map, struct maxfg_regmap *map_debug, char *buf);
 
 void maxfg_init_fg_learn_capture_config(struct maxfg_capture_config *config,

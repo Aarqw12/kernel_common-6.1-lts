@@ -86,6 +86,13 @@
  *   MAX77779_CHG_INT2_MASK_CHG_STA_CC_M |
  *   MAX77779_CHG_INT2_MASK_CHG_STA_CV_M |
  *   MAX77779_CHG_INT_MASK_CHG_M
+ *
+ * NOTE: don't use this to write to the interupt mask register. Read/write the
+ * MAX77779_CHG_INT_MASK because external interrupt handlers can mask/unmask their
+ * own bits.
+ *
+ * This array only contains the internally handled interupts. It doesn't take into
+ * account externally registered interupts
  */
 static u8 max77779_int_mask[MAX77779_CHG_INT_COUNT] = {
 	~(MAX77779_CHG_INT_CHGIN_I_MASK |
@@ -158,7 +165,7 @@ static int max77779_chg_prot(struct max77779_chgr_data *data, uint8_t reg, int c
 	if (ret)
 		dev_err(data->dev, "error modifying protection bits reg:0x%x count:%d "
 			"enable:%d ret:%d\n", reg, count, enable, ret);
-	if (enable)
+	if (enable || ret)
 		mutex_unlock(&data->prot_lock);
 
 	return ret ? ret : changed;
@@ -384,6 +391,8 @@ static int max77779_read_vbatt(struct max77779_chgr_data *data, int *vbatt)
 	return ret;
 }
 
+#define MAX77779_WCIN_RAW_TO_UV 625
+
 static int max77779_read_wcin(struct max77779_chgr_data *data, int *vbyp)
 {
 	u16 tmp;
@@ -395,8 +404,7 @@ static int max77779_read_wcin(struct max77779_chgr_data *data, int *vbyp)
 		return ret;
 	}
 
-	/* LSB: 0.625 */
-	*vbyp = div_u64((u64) tmp * 625, 1000);
+	*vbyp = tmp * MAX77779_WCIN_RAW_TO_UV;
 	return 0;
 }
 
@@ -518,7 +526,22 @@ static int max77779_foreach_callback(void *data, const char *reason,
 		pr_debug("%s: WLC_TX vote=%x\n", __func__, mode);
 		cb_data->wlc_tx += 1;
 		break;
-
+	case GBMS_CHGR_MODE_FWUPDATE_BOOST_ON:
+		pr_debug("%s: FWUPDATE vote=%x\n", __func__, mode);
+		cb_data->fwupdate_on = true;
+		break;
+	case GBMS_POGO_VIN:
+		if (!cb_data->pogo_vin)
+			cb_data->reason = reason;
+		pr_debug("%s: POGO VIN vote=%x\n", __func__, mode);
+		cb_data->pogo_vin += 1;
+		break;
+	case GBMS_POGO_VOUT:
+		if (!cb_data->pogo_vout)
+			cb_data->reason = reason;
+		pr_debug("%s: POGO VOUT vote=%x\n", __func__, mode);
+		cb_data->pogo_vout += 1;
+		break;
 	default:
 		pr_err("mode=%x not supported\n", mode);
 		break;
@@ -565,7 +588,10 @@ static int max77779_get_otg_usecase(struct max77779_foreach_cb_data *cb_data,
 		return -EINVAL;
 	}
 
-	if (!cb_data->wlc_rx && !cb_data->wlc_tx) {
+	if (cb_data->pogo_vout) {
+		usecase = GSU_MODE_USB_OTG_POGO_VOUT;
+		mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
+	} else if (!cb_data->wlc_rx && !cb_data->wlc_tx) {
 		/* 9: USB_OTG or  10: USB_OTG_FRS */
 		if (cb_data->frs_on) {
 			usecase = GSU_MODE_USB_OTG_FRS;
@@ -658,6 +684,17 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 		/* USB+WLC for factory and testing */
 		usecase = GSU_MODE_USB_WLC_RX;
 		mode = MAX77779_CHGR_MODE_CHGR_BUCK_ON;
+	} else if (cb_data->pogo_vout) {
+		if (!buck_on) {
+			mode = MAX77779_CHGR_MODE_ALL_OFF;
+			usecase = GSU_MODE_POGO_VOUT;
+		} else if (chgr_on) {
+			mode = MAX77779_CHGR_MODE_CHGR_BUCK_ON;
+			usecase = GSU_MODE_USB_CHG_POGO_VOUT;
+		} else {
+			mode = MAX77779_CHGR_MODE_BUCK_ON;
+			usecase = GSU_MODE_USB_CHG_POGO_VOUT;
+		}
 	} else if (!buck_on && !wlc_rx) {
 		mode = MAX77779_CHGR_MODE_ALL_OFF;
 
@@ -666,16 +703,12 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 		dc_on = false;
 		if (wlc_tx) {
 			usecase = GSU_MODE_WLC_TX;
-			if (!uc_data->reverse12_en)
-				mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
+			mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
 		}
 	} else if (wlc_tx) {
 		/* above checks that buck_on is false */
 		usecase = GSU_MODE_WLC_TX;
-		if (uc_data->reverse12_en)
-			mode = MAX77779_CHGR_MODE_ALL_OFF;
-		else
-			mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
+		mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
 	} else if (wlc_rx) {
 
 		/* will be in mode 4 if in stby unless dc is enabled */
@@ -732,17 +765,8 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 
 	}
 
-	if (!cb_data->dc_avail_votable)
-		cb_data->dc_avail_votable = gvotable_election_get_handle(VOTABLE_DC_CHG_AVAIL);
-	if (cb_data->dc_avail_votable)
-		gvotable_cast_int_vote(cb_data->dc_avail_votable,
-				       "WLC_TX", wlc_tx? 0 : 1, wlc_tx);
-	if (wlc_tx) {
-		if (uc_data->reverse12_en)
-			dc_on = true;
-		else
-			dc_on = false;
-	}
+	if (wlc_tx)
+		dc_on = false;
 
 	/* reg might be ignored later */
 	cb_data->reg = _max77779_chg_cnfg_00_cp_en_set(cb_data->reg, dc_on);
@@ -802,8 +826,11 @@ static int max77779_set_insel(struct max77779_chgr_data *data,
 		force_wlc = true;
 	}
 
-	/* always disable USB when Dock is present */
-	if (uc_data->dcin_is_dock && max77779_wcin_is_valid(data) && !cb_data->wlcin_off) {
+	if (cb_data->pogo_vout) {
+		/* always disable WCIN when pogo power out */
+		insel_value &= ~MAX77779_CHG_CNFG_12_WCINSEL;
+	} else if (cb_data->pogo_vin && !cb_data->wlcin_off) {
+		/* always disable USB when Dock is present */
 		insel_value &= ~MAX77779_CHG_CNFG_12_CHGINSEL;
 		insel_value |= MAX77779_CHG_CNFG_12_WCINSEL;
 	}
@@ -956,6 +983,11 @@ static int max77779_mode_callback(struct gvotable_election *el,
 	/* read directly instead of using the vote */
 	cb_data.wlc_rx = (max77779_wcin_is_online(data) &&
 			 !data->wcin_input_suspend) || data->wlc_spoof;
+	/* Block wlc_rx for POGO_VIN if it is from POGO_VOUT */
+	cb_data.wlc_rx = cb_data.wlc_rx &&
+			 from_use_case != GSU_MODE_POGO_VOUT &&
+			 from_use_case != GSU_MODE_USB_CHG_POGO_VOUT &&
+			 from_use_case != GSU_MODE_USB_OTG_POGO_VOUT;
 	cb_data.wlcin_off = !!data->wcin_input_suspend;
 
 	pr_debug("%s: wcin_is_online=%d data->wcin_input_suspend=%d data->wlc_spoof=%d\n", __func__,
@@ -968,7 +1000,8 @@ static int max77779_mode_callback(struct gvotable_election *el,
 	       !cb_data.chgr_on && !cb_data.buck_on &&
 	       !cb_data.otg_on && !cb_data.wlc_tx &&
 	       !cb_data.wlc_rx && !cb_data.wlcin_off && !cb_data.chgin_off &&
-	       !cb_data.usb_wlc;
+	       !cb_data.usb_wlc && !cb_data.fwupdate_on &&
+	       !cb_data.pogo_vout && !cb_data.pogo_vin;
 	if (nope) {
 		pr_debug("%s: nope callback\n", __func__);
 		goto unlock_done;
@@ -976,15 +1009,21 @@ static int max77779_mode_callback(struct gvotable_election *el,
 
 	dev_info(data->dev, "%s:%s full=%d raw=%d stby_on=%d, dc_on=%d, chgr_on=%d, buck_on=%d,"
 		" otg_on=%d, wlc_tx=%d wlc_rx=%d usb_wlc=%d"
-		" chgin_off=%d wlcin_off=%d frs_on=%d\n",
+		" chgin_off=%d wlcin_off=%d frs_on=%d fwupdate=%d"
+		" pogo_vout=%d, pogo_vin=%d\n",
 		__func__, trigger ? trigger : "<>",
 		data->charge_done, cb_data.use_raw, cb_data.stby_on, cb_data.dc_on,
 		cb_data.chgr_on, cb_data.buck_on, cb_data.otg_on,
 		cb_data.wlc_tx, cb_data.wlc_rx, cb_data.usb_wlc,
-		cb_data.chgin_off, cb_data.wlcin_off, cb_data.frs_on);
+		cb_data.chgin_off, cb_data.wlcin_off, cb_data.frs_on, cb_data.fwupdate_on,
+		cb_data.pogo_vout, cb_data.pogo_vin);
 
 	/* just use raw "as is", no changes to switches etc */
-	if (cb_data.use_raw) {
+	if (unlikely(cb_data.fwupdate_on)) {
+		cb_data.reg =  MAX77779_CHGR_MODE_BOOST_ON;
+		cb_data.reason = MAX77779_REASON_FIRMWARE;
+		use_case = GSU_MODE_FWUPDATE;
+	} else if (cb_data.use_raw) {
 		cb_data.reg = cb_data.raw_value;
 		use_case = GSU_RAW_MODE;
 	} else {
@@ -1383,11 +1422,9 @@ static void max77779_cop_enable_work(struct work_struct *work)
 
 static int max77779_cop_config(struct max77779_chgr_data * data)
 {
-	int ret = 0;
+	int ret;
 
-	ret = max77779_get_cop_warn(data, &data->cop_warn);
-	if (ret < 0)
-		dev_err(data->dev, "Error getting COP warn\n");
+	max77779_set_cop_warn(data, MAX77779_COP_MAX_VALUE);
 
 	/* TODO: b/293487608 Support COP limit */
 	/* Setting limit to MAX to not trip */
@@ -1698,16 +1735,30 @@ static int max77779_wlc_spoof_callback(struct gvotable_election *el,
 static void max77779_inlim_irq_en(struct max77779_chgr_data *data, bool en)
 {
 	int ret;
+	uint16_t intb_mask;
 
-	if (en)
+	mutex_lock(&data->io_lock);
+
+	ret = max77779_readn(data, MAX77779_CHG_INT_MASK, (uint8_t*)&intb_mask, 2);
+	if (ret < 0) {
+		dev_err(data->dev, "Unable to read interrupt mask (%d)\n", ret);
+		goto unlock_out;
+	}
+
+	if (en) {
 		max77779_int_mask[0] &= ~MAX77779_CHG_INT_INLIM_I_MASK;
-	else
+		intb_mask &= ~MAX77779_CHG_INT_INLIM_I_MASK;
+	} else {
 		max77779_int_mask[0] |= MAX77779_CHG_INT_INLIM_I_MASK;
-	ret = max77779_writen(data, MAX77779_CHG_INT_MASK,
-					max77779_int_mask,
-					sizeof(max77779_int_mask));
+		intb_mask |= MAX77779_CHG_INT_INLIM_I_MASK;
+	}
+	ret = max77779_writen(data, MAX77779_CHG_INT_MASK, /* NOTYPO */
+			      (uint8_t*)&intb_mask, sizeof(intb_mask));
 	if (ret < 0)
-		pr_err("%s: cannot set irq_mask (%d)\n", __func__, ret);
+		dev_err(data->dev, "%s: cannot set irq_mask (%d)\n", __func__, ret);
+
+unlock_out:
+	mutex_unlock(&data->io_lock);
 }
 
 static void max77779_wcin_inlim_work(struct work_struct *work)
@@ -1722,6 +1773,7 @@ static void max77779_wcin_inlim_work(struct work_struct *work)
 		goto done;
 
 	if (!data->dc_icl_votable) {
+		mutex_unlock(&data->wcin_inlim_lock);
 		dev_err(data->dev, "Could not get votable: DC_ICL\n");
 		return;
 	}
@@ -3430,6 +3482,8 @@ static void max77779_chg_bus_sync_unlock(struct irq_data *d)
 	uint16_t intb_mask, offset, value;
 	int err;
 
+	mutex_lock(&data->io_lock);
+
 	if (!data->mask_u)
 		goto unlock_out;
 
@@ -3452,12 +3506,12 @@ static void max77779_chg_bus_sync_unlock(struct irq_data *d)
 
 	err = max77779_writen(data, MAX77779_CHG_INT_MASK, /* NOTYPO */
 			      (uint8_t*)&intb_mask, 2);
-	if (err < 0) {
+	if (err < 0)
 		dev_err(data->dev, "Unable to write interrupt mask (%d)\n", err);
-		goto unlock_out;
-	}
+
 
  unlock_out:
+	mutex_unlock(&data->io_lock);
 	mutex_unlock(&data->irq_lock);
 }
 
@@ -3680,13 +3734,27 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 						"max77779_charger",
 						data);
 		if (ret == 0) {
+			uint16_t intb_mask;
+
 			/* might cause the isr to be called */
 			max77779_chg_irq_handler(-1, data);
+
+			mutex_lock(&data->io_lock);
+
+			ret = max77779_readn(data, MAX77779_CHG_INT_MASK, (uint8_t*)&intb_mask, 2);
+			if (ret < 0) {
+				dev_err(data->dev, "Unable to read interrupt mask (%d)\n", ret);
+				goto unlock;
+			}
+
+			intb_mask &= (max77779_int_mask[0] | (max77779_int_mask[1] << 8));
+
 			ret = max77779_writen(data, MAX77779_CHG_INT_MASK, /* NOTYPO */
-					      max77779_int_mask,
-					      sizeof(max77779_int_mask));
+					      (uint8_t*)&intb_mask, sizeof(intb_mask));
 			if (ret < 0)
 				dev_warn(dev, "cannot set irq_mask (%d)\n", ret);
+unlock:
+			mutex_unlock(&data->io_lock);
 
 			device_init_wakeup(data->dev, true);
 			ret = enable_irq_wake(data->irq_int);

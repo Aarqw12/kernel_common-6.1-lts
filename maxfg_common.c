@@ -165,7 +165,7 @@ static int maxfg_reg_write_verify(struct maxfg_regmap *map, enum maxfg_reg_tags 
 
 #define REG_HALF_HIGH(reg)     ((reg >> 8) & 0x00FF)
 #define REG_HALF_LOW(reg)      (reg & 0x00FF)
-int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap,
+int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designcap, u16 RSense,
 			       struct maxfg_regmap *regmap, struct maxfg_regmap *regmap_debug)
 {
 	struct maxfg_eeprom_history hist = { 0 };
@@ -244,18 +244,18 @@ int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designc
 	if (ret)
 		return ret;
 
-	/* Convert LSB from 1degC to 3degC, store values from 25degC min */
-	hist.maxtemp = ((s8)REG_HALF_HIGH(data) - 25) / 3;
-	/* Convert LSB from 1degC to 3degC, store values from -20degC min */
-	hist.mintemp = ((s8)REG_HALF_LOW(data) + 20) / 3;
+	/* Convert LSB from 1degC to 3degC, store values from 25degC min to 70degC max */
+	hist.maxtemp = s8_to_u4_boundary(((s8)REG_HALF_HIGH(data) - 25) / 3);
+	/* Convert LSB from 1degC to 3degC, store values from -20degC min to 25degC max */
+	hist.mintemp = s8_to_u4_boundary(((s8)REG_HALF_LOW(data) + 20) / 3);
 
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_mmdc, &data);
 	if (ret)
 		return ret;
 
-	/* Convert LSB from 0.08A to 0.5A */
-	hist.maxchgcurr = (s8)REG_HALF_HIGH(data) * 8 / 50;
-	hist.maxdischgcurr = (s8)REG_HALF_LOW(data) * 8 / 50;
+	/* Convert LSB from 400uV/RSENSE(Rsense LSB is 10μΩ) to 0.5A, range 0A to 7.5A */
+	hist.maxchgcurr = (s8)REG_HALF_HIGH(data) * 400 * 2 / (RSense * 10);
+	hist.maxdischgcurr = -(s8)REG_HALF_LOW(data) * 400 * 2 / (RSense * 10);
 
 	memcpy(buff, &hist, sizeof(hist));
 	return (size_t)sizeof(hist);
@@ -472,6 +472,67 @@ int maxfg_health_write_ai(u16 act_impedance, u16 act_timerh)
 	ret = gbms_storage_write(GBMS_TAG_THAS, &act_timerh, sizeof(act_timerh));
 	if (ret < 0)
 		return -EIO;
+
+	return 0;
+}
+
+/* for abnormal event log */
+static enum maxfg_reg_tags fg_event_regs[] = {
+	MAXFG_TAG_cycles,
+	MAXFG_TAG_vcel,
+	MAXFG_TAG_avgv,
+	MAXFG_TAG_curr,
+	MAXFG_TAG_avgc,
+	MAXFG_TAG_timerh,
+	MAXFG_TAG_temp,
+	MAXFG_TAG_repcap,
+	MAXFG_TAG_mixcap,
+	MAXFG_TAG_fcrep,
+	MAXFG_TAG_fcnom,
+	MAXFG_TAG_qresd,
+	MAXFG_TAG_avcap,
+	MAXFG_TAG_vfremcap,
+	MAXFG_TAG_repsoc,
+	MAXFG_TAG_vfsoc,
+	MAXFG_TAG_msoc,
+	MAXFG_TAG_vfocv,
+	MAXFG_TAG_dpacc,
+	MAXFG_TAG_dqacc,
+	MAXFG_TAG_qh,
+	MAXFG_TAG_qh0,
+	MAXFG_TAG_vfsoc0,
+	MAXFG_TAG_qrtable20,
+	MAXFG_TAG_qrtable30,
+	MAXFG_TAG_status,
+	MAXFG_TAG_fstat,
+};
+
+static enum maxfg_reg_tags fg_event_dbg_regs[] = {
+	MAXFG_TAG_rcomp0,
+	MAXFG_TAG_tempco,
+};
+
+
+int maxfg_reg_log_abnormal(struct maxfg_regmap *map, struct maxfg_regmap *map_debug,
+			   char *buf, int buf_len)
+{
+	u16 ret, i, addr, val, pos = 0;
+	size_t reg_cnt = sizeof(fg_event_regs) / sizeof(enum maxfg_reg_tags);
+	size_t dbg_reg_cnt = sizeof(fg_event_dbg_regs) / sizeof(enum maxfg_reg_tags);
+
+	for (i = 0; i < reg_cnt; i++) {
+		ret = maxfg_reg_read_addr(map, fg_event_regs[i], &val, &addr);
+		if (ret < 0)
+			return ret;
+		pos += scnprintf(&buf[pos], buf_len - pos, " %04X", val);
+	}
+
+	for (i = 0; i < dbg_reg_cnt; i++) {
+		ret = maxfg_reg_read_addr(map_debug, fg_event_dbg_regs[i], &val, &addr);
+		if (ret < 0)
+			return ret;
+		pos += scnprintf(&buf[pos], buf_len - pos, " %04X", val);
+	}
 
 	return 0;
 }
@@ -783,6 +844,9 @@ int maxfg_capture_to_cstr(struct maxfg_capture_config *config, u16* reg_val,
 				 reg_val[reg_idx]);
 	}
 
+	len += scnprintf(&str_buf[len], buf_len - len, "TS:%X",
+			 (unsigned int)ktime_get_real_seconds());
+
 	return len;
 }
 
@@ -948,7 +1012,7 @@ int maxfg_dynrel_mark_det(struct maxfg_dynrel_state *dr_state,
 		dr_state->temp_det = 0xffff;
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_vfocv, &dr_state->vfocv_det);
 	if (ret < 0)
-		dr_state->temp_det = 0xffff;
+		dr_state->vfocv_det = 0xffff;
 
 	return 0;
 }
@@ -1013,20 +1077,20 @@ void maxfg_dynrel_init(struct maxfg_dynrel_state *dr_state,
 		value = MAXFG_DR_LEARN_STAGE_MIN_DEFAULT;
 	dr_state->learn_stage_min = value;
 
-	ret = of_property_read_u16(node, "maxfg,dr_min_deci_temp_c", &value16);
+	ret = of_property_read_u32(node, "maxfg,dr_min_deci_temp_c", &value);
 	if (ret < 0)
 		value = MAXFG_DR_TEMP_MIN_DEFAULT;
 	dr_state->temp_qual.min = deci_deg_cel_to_reg(value);
-	ret = of_property_read_u16(node, "maxfg,dr_max_deci_temp_c", &value16);
+	ret = of_property_read_u32(node, "maxfg,dr_max_deci_temp_c", &value);
 	if (ret < 0)
 		value = MAXFG_DR_TEMP_MAX_DEFAULT;
 	dr_state->temp_qual.max = deci_deg_cel_to_reg(value);
 
-	ret = of_property_read_u16(node, "maxfg,vfocv_inhibit_min_mv", &value16);
+	ret = of_property_read_u32(node, "maxfg,vfocv_inhibit_min_mv", &value);
 	if (ret < 0)
 		value = MAXFG_DR_VFOCV_MV_INHIB_MIN_DEFAULT;
 	dr_state->vfocv_inhibit.min = micro_volt_to_reg(value * 1000);
-	ret = of_property_read_u16(node, "maxfg,vfocv_inhibit_max_mv", &value16);
+	ret = of_property_read_u32(node, "maxfg,vfocv_inhibit_max_mv", &value);
 	if (ret < 0)
 		value = MAXFG_DR_VFOCV_MV_INHIB_MAX_DEFAULT;
 	dr_state->vfocv_inhibit.max = micro_volt_to_reg(value * 1000);
