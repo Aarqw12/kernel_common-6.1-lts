@@ -17,7 +17,6 @@
 #include <linux/types.h>
 
 #include "edgetpu.h"
-#include "edgetpu-debug-dump.h"
 #include "edgetpu-device-group.h"
 #include "edgetpu-firmware.h"
 #include "edgetpu-firmware-util.h"
@@ -319,8 +318,6 @@ static int edgetpu_firmware_handshake(struct edgetpu_firmware *et_fw)
 		ret = edgetpu_firmware_tracing_restore_on_powering(et_fw);
 		if (ret)
 			etdev_warn_ratelimited(etdev, "firmware tracing restore error: %d", ret);
-		/* Set debug dump buffer in FW */
-		edgetpu_get_debug_dump(etdev, 0);
 	}
 	return 0;
 }

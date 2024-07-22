@@ -22,7 +22,6 @@
 
 #include "edgetpu-config.h"
 #include "edgetpu-internal.h"
-#include "mobile-debug-dump.h"
 
 #define to_mobile_dev(etdev) container_of(etdev, struct edgetpu_mobile_platform_dev, edgetpu_dev)
 
@@ -94,8 +93,6 @@ struct edgetpu_mobile_platform_dev {
 #if IS_ENABLED(CONFIG_GOOGLE_BCL)
 	struct bcl_device *bcl_dev;
 #endif
-	/* subsystem coredump info struct */
-	struct mobile_sscd_info sscd_info;
 	/* Protects TZ Mailbox client pointer */
 	struct mutex tz_mailbox_lock;
 	/* TZ mailbox client */

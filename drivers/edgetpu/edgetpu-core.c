@@ -23,7 +23,6 @@
 #include <linux/uidgid.h>
 
 #include "edgetpu-config.h"
-#include "edgetpu-debug-dump.h"
 #include "edgetpu-device-group.h"
 #include "edgetpu-dram.h"
 #include "edgetpu-internal.h"
@@ -494,10 +493,6 @@ int edgetpu_device_add(struct edgetpu_dev *etdev,
 		goto remove_kci;
 	}
 
-	ret = edgetpu_debug_dump_init(etdev);
-	if (ret)
-		etdev_warn(etdev, "debug dump init fail: %d", ret);
-
 	edgetpu_chip_init(etdev);
 	/* No limit on DMA segment size */
 	dma_set_max_seg_size(etdev->dev, UINT_MAX);
@@ -518,7 +513,6 @@ remove_dev:
 void edgetpu_device_remove(struct edgetpu_dev *etdev)
 {
 	edgetpu_chip_exit(etdev);
-	edgetpu_debug_dump_exit(etdev);
 	edgetpu_device_dram_exit(etdev);
 	edgetpu_mailbox_remove_all(etdev->mailbox_manager);
 	edgetpu_usage_stats_exit(etdev);

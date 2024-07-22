@@ -16,7 +16,7 @@ edgetpu-objs	:= edgetpu-mailbox.o edgetpu-telemetry.o edgetpu-mapping.o edgetpu-
 
 mobile-objs	:= edgetpu-kci.o
 
-abrolhos-y	:= abrolhos-device.o abrolhos-device-group.o abrolhos-fs.o abrolhos-core.o abrolhos-platform.o abrolhos-firmware.o abrolhos-thermal.o abrolhos-pm.o abrolhos-iommu.o abrolhos-debug-dump.o abrolhos-usage-stats.o abrolhos-wakelock.o $(mobile-objs) $(edgetpu-objs)
+abrolhos-y	:= abrolhos-device.o abrolhos-device-group.o abrolhos-fs.o abrolhos-core.o abrolhos-platform.o abrolhos-firmware.o abrolhos-thermal.o abrolhos-pm.o abrolhos-iommu.o abrolhos-usage-stats.o abrolhos-wakelock.o $(mobile-objs) $(edgetpu-objs)
 
 # This -I is for the trace file include. It was removed from ccflags-y to avoid
 # including the header stubs.

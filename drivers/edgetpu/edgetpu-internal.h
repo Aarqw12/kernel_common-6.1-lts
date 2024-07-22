@@ -151,8 +151,6 @@ struct edgetpu_kci_response_element;
 struct edgetpu_telemetry_ctx;
 struct edgetpu_mempool;
 
-typedef int(*edgetpu_debug_dump_handlers)(void *etdev, void *dump_setup);
-
 #define EDGETPU_DEVICE_NAME_MAX	64
 
 /* ioremapped resource */
@@ -221,11 +219,6 @@ struct edgetpu_dev {
 	/* counts of error events */
 	uint firmware_crash_count;
 	uint watchdog_timeout_count;
-
-	struct edgetpu_coherent_mem debug_dump_mem;	/* debug dump memory */
-	/* debug dump handlers */
-	edgetpu_debug_dump_handlers *debug_dump_handlers;
-	struct work_struct debug_dump_work;
 
 	struct mutex freq_lock;	/* protects below freq_* variables */
 	uint32_t *freq_table;	/* Array to record reported frequencies by f/w */
