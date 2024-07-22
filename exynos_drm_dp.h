@@ -138,6 +138,7 @@ enum dp_state_for_hdcp22 {
 	DP_DISCONNECT,
 	DP_CONNECT,
 	DP_PHYSICAL_DISCONNECT,
+	DP_SHUTDOWN,
 };
 
 enum link_training_status {
@@ -182,10 +183,9 @@ struct dp_device {
 	int dp_hotplug_error_code;
 
 	/* DP Driver State */
-	enum dp_state state;
+	volatile enum dp_state state;
 
 	/* DRM Mode */
-	int cur_mode_vic; /* VIC number of cur_mode */
 	struct drm_display_mode cur_mode;
 	int num_modes;
 	int num_sads;
@@ -222,6 +222,8 @@ struct dp_device {
 	struct dentry *dp_crc_values_debugfs_file;
 
 	bool hdcp_and_audio_enabled;
+
+	bool restart_pending;
 
 	/* DP stats/error counters */
 	struct dp_stats_counters stats;

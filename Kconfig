@@ -50,6 +50,13 @@ config DRM_SAMSUNG_DSI
 	  supports to read and write mipi command to and from the mipi panel.
 	  So, this driver can use various panel feature.
 
+config DSIM_LOGBUFF
+	bool "DSIM logbuffer"
+	depends on DRM_SAMSUNG_DSI
+	default n
+	help
+	  This enables support for logging DSI commands in a logbuffer.
+
 config DRM_SAMSUNG_WB
 	bool "WB on Exynos"
 	depends on DRM_SAMSUNG_DECON
@@ -82,5 +89,13 @@ config DRM_SAMSUNG_TUI
 	help
 	  This enables the TUI reverse proxy which allows the TA to allocate
 	  framebuffer.
+
+config QUEUE_DDIC_CMD_CALL_BACK
+	bool "dsim driver send callback after queue command"
+	depends on !GS_DRM_PANEL_UNIFIED
+	default n
+	help
+	  This will enable sending a notification to exynos panel
+	  when a command is queued on dsim driver.
 
 endif

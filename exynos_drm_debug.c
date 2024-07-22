@@ -304,6 +304,10 @@ void DPU_EVENT_LOG(enum dpu_event_type type, int index, void *priv)
 		log->data.bts_update.prev_rt_avg_bw = decon->bts.prev_rt_avg_bw;
 		log->data.bts_update.total_bw = decon->bts.total_bw;
 		log->data.bts_update.prev_total_bw = decon->bts.prev_total_bw;
+		if (decon->bts_scen.enabled && decon->bts_scen.voted)
+			log->data.bts_update.dpu_scen_idx = decon->bts_scen.idx;
+		else
+			log->data.bts_update.dpu_scen_idx = 0;
 		break;
 	case DPU_EVT_BTS_CALC_BW:
 		dpu_event_save_freqs(&log->data.bts_cal.freqs);
@@ -517,10 +521,10 @@ static void dpu_print_log_rsc(char *buf, int len, u32 decon_id, struct dpu_log_r
 static int dpu_print_log_bts_update(char *buf, int len, struct dpu_log_bts_update *update)
 {
 	return scnprintf(buf + len, LOG_BUF_SIZE - len,
-			"\tmif(%lu) int(%lu) disp(%lu) peak(%u,%u) rt(%u,%u) total(%u,%u)",
+			"\tmif(%lu) int(%lu) disp(%lu) peak(%u,%u) rt(%u,%u) total(%u,%u) scen(%u)",
 			update->freqs.mif_freq, update->freqs.int_freq, update->freqs.disp_freq,
 			update->prev_peak, update->peak, update->prev_rt_avg_bw, update->rt_avg_bw,
-			update->prev_total_bw, update->total_bw);
+			update->prev_total_bw, update->total_bw, update->dpu_scen_idx);
 }
 
 static int dpu_print_log_partial(char *buf, int len, struct dpu_log_partial *p)
@@ -2253,11 +2257,35 @@ static ssize_t dphy_diag_reg_write(struct file *file, const char *user_buf,
 	uint32_t val;
 	struct seq_file *m = file->private_data;
 	struct dsim_dphy_diag *diag = m->private;
+	struct dsim_device *dsim = diag->private;
 
 	ret = kstrtou32_from_user(user_buf, count, 0, &val);
 	if (ret)
 		return ret;
 
+	/* config dphy of another dsim_device for dual dsi */
+	if (dsim->dual_dsi == DSIM_DUAL_DSI_MAIN) {
+		int i;
+		struct dsim_device *sec_dsi = NULL;
+		struct dsim_dphy_diag *sec_diag = NULL;
+
+		sec_dsi = exynos_get_dual_dsi(DSIM_DUAL_DSI_SEC);
+		if (sec_dsi) {
+			/* found the corresponding diag of second dsim device */
+			for (i = 0; i < sec_dsi->config.num_dphy_diags; ++i) {
+				if (!strcmp(sec_dsi->config.dphy_diags[i].name, diag->name)) {
+					sec_diag = &sec_dsi->config.dphy_diags[i];
+					break;
+				}
+			}
+
+			ret = dsim_dphy_diag_set_reg(sec_dsi, sec_diag, val);
+			if (ret)
+				return ret;
+		} else {
+			return -ENODEV;
+		}
+	}
 	ret = dsim_dphy_diag_set_reg(diag->private, diag, val);
 	if (ret)
 		return ret;

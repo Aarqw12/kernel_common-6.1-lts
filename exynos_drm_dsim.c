@@ -59,8 +59,6 @@
 #include <regs-dsim.h>
 
 #include <trace/dpu_trace.h>
-#define CREATE_TRACE_POINTS
-#include <trace/panel_trace.h>
 
 #include "exynos_drm_connector.h"
 #include "exynos_drm_crtc.h"
@@ -76,8 +74,6 @@
 #define BRIDGE_PORT 0
 #define BRIDGE_ENDPOINT 0
 #endif
-
-EXPORT_TRACEPOINT_SYMBOL(dsi_label_scope);
 
 struct dsim_device *dsim_drvdata[MAX_DSI_CNT];
 
@@ -141,7 +137,7 @@ inline void dsim_trace_msleep(u32 delay_ms)
 	trace_msleep(delay_ms);
 	usleep_range(delay_ms * 1000, delay_ms * 1000 + 10);
 }
-EXPORT_SYMBOL(dsim_trace_msleep);
+EXPORT_SYMBOL_GPL(dsim_trace_msleep);
 
 static struct drm_crtc *drm_encoder_get_new_crtc(struct drm_encoder *encoder,
 						 struct drm_atomic_state *state)
@@ -1528,6 +1524,41 @@ static bool dsim_has_graph_link_to_bridge(struct device *dsim_dev)
 		return false;
 	return true;
 }
+
+/**
+ * dsim_parse_remote_port() - Get reg property of remote port in a connector
+ * @dsim_dev: Pointer to device object associated with dsim device
+ *
+ * Specifically, this function parses the reg property of the port linked from
+ * the dsim entry in the device tree, using the BRIDGE_PORT and BRIDGE_ENDPOINT
+ * constants (default: port 0, endpoint 0).
+ *
+ * Return: reg property of the remote port linked from the dsim entry
+ */
+static int dsim_parse_remote_port(struct device *dsim_dev)
+{
+	struct device_node *endpoint_node, *remote_endpoint_node;
+	struct of_endpoint endpoint;
+
+	/* Get endpoint node in dsim device */
+	endpoint_node =
+		of_graph_get_endpoint_by_regs(dsim_dev->of_node, BRIDGE_PORT, BRIDGE_ENDPOINT);
+	if (!endpoint_node)
+		return 0;
+
+	/* Get remote-endpoint node linked to endpoint_node */
+	remote_endpoint_node = of_graph_get_remote_endpoint(endpoint_node);
+	of_node_put(endpoint_node);
+	if (!remote_endpoint_node)
+		return 0;
+
+	/* Get endpoint data structure from remote_endpoint_node */
+	of_graph_parse_endpoint(remote_endpoint_node, &endpoint);
+	of_node_put(remote_endpoint_node);
+
+	/* Return reg property of the port which endpoint belongs to */
+	return endpoint.port;
+}
 #endif
 
 static int dsim_add_mipi_dsi_device(struct dsim_device *dsim,
@@ -1553,6 +1584,9 @@ static int dsim_add_mipi_dsi_device(struct dsim_device *dsim,
 		 * panel detection and name comparison happens in connector
 		 */
 		gs_connector_set_panel_name(pname, strnlen(pname, PANEL_DRV_LEN), idx);
+		if (dsim_parse_remote_port(dsim->dev) >= 1)
+			dsim->dual_dsi = DSIM_DUAL_DSI_SEC;
+		/* if port == 0, then we can find out if it's actual dual dsi or not later */
 		return 0;
 	}
 	/* implied else case: search for legacy panel below */
@@ -1782,6 +1816,13 @@ static int dsim_bind(struct device *dev, struct device *master, void *data)
 
 		/* ignore cases where there's no dsi device to be attached */
 		return ret == -ENODEV ? 0 : ret;
+	}
+
+	if (of_property_read_bool(dsim->dsi_device->dev.of_node, "google,dual-dsi-panel")) {
+		if (!exynos_get_dual_dsi(DSIM_DUAL_DSI_SEC))
+			dsim_err(dsim, "google,dual-dsi-panel is set, but cannot get sec dsi\n");
+		else
+			dsim->dual_dsi = DSIM_DUAL_DSI_MAIN;
 	}
 
 	drm_encoder_init(drm_dev, encoder, &dsim_encoder_funcs,
@@ -2254,6 +2295,7 @@ static void __dsim_cmd_write_locked(struct dsim_device *dsim, const struct mipi_
 {
 	WARN_ON(!mutex_is_locked(&dsim->cmd_lock));
 
+	DPU_ATRACE_BEGIN(__func__);
 	if (packet->payload_length > 0)
 		dsim_write_payload(dsim, packet->payload, packet->payload_length);
 	dsim_reg_wr_tx_header(dsim->id, packet->header[0], packet->header[1], packet->header[2],
@@ -2262,11 +2304,13 @@ static void __dsim_cmd_write_locked(struct dsim_device *dsim, const struct mipi_
 	dsim_debug(dsim, "header(0x%x 0x%x 0x%x) size(%lu) ph fifo(%d)\n", packet->header[0],
 		   packet->header[1], packet->header[2], packet->size,
 		   dsim_reg_get_ph_cnt(dsim->id));
+	DPU_ATRACE_END(__func__);
 }
 
 static void dsim_cmd_packetgo_queue_locked(struct dsim_device *dsim,
 					   const struct mipi_dsi_packet *packet)
 {
+	DPU_ATRACE_BEGIN(__func__);
 	/* if this is the first packet being queued, enable packet go feature */
 	if (!dsim->total_pend_ph)
 		__dsim_cmd_packetgo_enable_locked(dsim, true);
@@ -2278,6 +2322,7 @@ static void dsim_cmd_packetgo_queue_locked(struct dsim_device *dsim,
 
 	dsim_debug(dsim, "total pending packet header(%u) payload(%u)\n", dsim->total_pend_ph,
 		   dsim->total_pend_pl);
+	DPU_ATRACE_END(__func__);
 }
 
 static void __dsim_cmd_prepare(struct dsim_device *dsim)
@@ -2370,6 +2415,7 @@ static void need_wait_vblank(struct dsim_device *dsim)
 	drm_crtc_vblank_put(crtc);
 }
 
+#if IS_ENABLED(CONFIG_DSIM_LOGBUFF)
 static void dsim_dump_cmd(struct dsim_device *dsim, const struct mipi_dsi_msg *msg, bool is_last)
 {
 	int tx_len = msg->tx_len;
@@ -2378,13 +2424,14 @@ static void dsim_dump_cmd(struct dsim_device *dsim, const struct mipi_dsi_msg *m
 	logbuffer_log(dsim->log, "last=%d delay=%d tx=", is_last, dsim->tx_delay_ms);
 	while (tx_len > 0) {
 		/* "%*phN" limits up to 64 bytes */
-		size_t sz = min(tx_len, 64);
+		int sz = min(tx_len, 64);
 
 		logbuffer_log(dsim->log, "%*phN", sz, tx_buf);
 		tx_buf += sz;
 		tx_len -= sz;
 	}
 }
+#endif
 
 #define PL_FIFO_THRESHOLD	mult_frac(MAX_PL_FIFO, 75, 100) /* 75% */
 #define IS_LAST(flags)		(((flags) & EXYNOS_DSI_MSG_QUEUE) == 0)
@@ -2476,7 +2523,11 @@ static int dsim_write_data_locked(struct dsim_device *dsim, const struct mipi_ds
 	}
 
 trace_dsi_cmd:
+#if IS_ENABLED(CONFIG_DSIM_LOGBUFF)
+	DPU_ATRACE_BEGIN("dsim_dump_cmd");
 	dsim_dump_cmd(dsim, msg, is_last);
+	DPU_ATRACE_END("dsim_dump_cmd");
+#endif
 	/* TODO(b/278175371): print actual delay time */
 	trace_dsi_tx(msg->type, msg->tx_buf, msg->tx_len, is_last, dsim->tx_delay_ms);
 	dsim_debug(dsim, "%s last command\n", is_last ? "" : "Not");
@@ -3129,7 +3180,7 @@ static int dsim_probe(struct platform_device *pdev)
 			goto err;
 		}
 	}
-
+#if IS_ENABLED(CONFIG_DSIM_LOGBUFF)
 	if (dsim->id == 0)
 		dsim->log = logbuffer_register("dsim0");
 	else if (dsim->id == 1)
@@ -3140,7 +3191,7 @@ static int dsim_probe(struct platform_device *pdev)
 		dev_err(dsim->dev, "logbuffer register failed\n");
 		dsim->log = NULL;
 	}
-
+#endif
 	dsim_info(dsim, "driver has been probed.\n");
 	return 0;
 
@@ -3169,12 +3220,12 @@ static int dsim_remove(struct platform_device *pdev)
 	iounmap(dsim->res.phy_regs_ex);
 	iounmap(dsim->res.phy_regs);
 	iounmap(dsim->res.regs);
-
+#if IS_ENABLED(CONFIG_DSIM_LOGBUFF)
 	if (dsim->log) {
 		logbuffer_unregister(dsim->log);
 		dsim->log = NULL;
 	}
-
+#endif
 	return 0;
 }
 
