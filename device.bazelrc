@@ -2,47 +2,20 @@
 #
 # Copyright (C) 2023 Google LLC
 
-build:pixel_debug_common --notrim
-build:pixel_debug_common --nokmi_symbol_list_strict_mode
-build:pixel_debug_common --nokmi_symbol_list_violations_check
-build:pixel_debug_common --config=no_download_gki
+build --flag_alias=kernel_package=//common:kernel_package
 
-build:blktest --config=pixel_debug_common --//private/devices/google/common:debug_fragment=blktest \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.blktest
-build:debug_all --config=pixel_debug_common
-build:debug_all --defconfig_fragment=//private/devices/google/common:debug_all_defconfig
-build:debug_api --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_api \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_api
-build:debug_kmemleak --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_kmemleak \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_kmemleak
-build:debug_locking --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_locking \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_locking
-build:debug_memory --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_memory \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_memory
-build:debug_memory_accounting --config=pixel_debug_common --//private/devices/google/common:debug_fragment=debug_memory_accounting \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.debug_memory_accounting
-build:function_tracer --config=pixel_debug_common --//private/devices/google/common:debug_fragment=function_tracer \
-    --defconfig_fragment=//private/devices/google/common:function_tracer_defconfig
-build:kasan --config=pixel_debug_common --//private/devices/google/common:debug_fragment=kasan \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.kasan
-build:khwasan --config=pixel_debug_common --//private/devices/google/common:debug_fragment=khwasan \
-    --gki_build_config_fragment=//private/devices/google/common:build.config.khwasan
-
-build:aosp_staging --//private/devices/google/common:gki_kernel_dir=aosp-staging
-
-build:use_source_tree_aosp --//private/devices/google/common:gki_kernel_dir=aosp
-build:use_source_tree_aosp_staging --//private/devices/google/common:gki_kernel_dir=aosp-staging
+# For compatibility. Recommand to use --kernel_package directly.
+build:aosp_staging --kernel_package=@//aosp-staging
+build:use_source_tree_aosp --kernel_package=@//aosp
+build:use_source_tree_aosp_staging --kernel_package=@//aosp-staging
 
 build:download_gki --use_prebuilt_gki
 #build:download_gki --use_signed_prebuilts
 build:download_gki --action_env=KLEAF_DOWNLOAD_BUILD_NUMBER_MAP="gki_prebuilts=11611633"
 build:no_download_gki --use_prebuilt_gki=false
 
-# enable GKI Kernel (build from aosp/) by default
-build --config=use_source_tree_aosp
-
-# enable Pixel Staging Kernel (go/pixel-staging, build from aosp-staging/) by default
-#build --config=use_source_tree_aosp_staging
+build:download_gki_fips140 --//private/devices/google/common:download_prebuilt_gki_fips140=1
+build:no_download_gki_fips140 --//private/devices/google/common:download_prebuilt_gki_fips140=0
 
 # disable GKI prebuilts by default
 build --config=no_download_gki
@@ -50,9 +23,18 @@ build --config=no_download_gki
 # enable GKI prebuilts by default
 #build --config=download_gki
 
+# disable download prebuilt GKI fips140.ko by default
+#build --config=no_download_gki_fips140
+
+# enable download prebuilt GKI fips140.ko by default
+build --config=download_gki_fips140
+
 # enable dependencies for KUNIT
 build:pixel_kunit --//private/devices/google/common:enable_kunit
 build:pixel_kunit --notrim
+
+# Debug configs
+import %workspace%/private/devices/google/common/debug/debug.bazelrc
 
 # Placeholders for device specific bazelrc files. Add as many as you need.
 try-import %workspace%/.d1.bazelrc

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-load("@bazel_skylib//lib:selects.bzl", "selects")
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 
 package(
     default_visibility = [
@@ -9,109 +8,25 @@ package(
     ],
 )
 
+# Do not use this flag directly, use --config=[no_]download_gki_fips140,
+# which will enable this and any necessary dependencies.
+bool_flag(
+    name = "download_prebuilt_gki_fips140",
+    build_setting_default = True,
+)
+
 config_setting(
-    name = "gki_aosp",
+    name = "enable_download_fips140",
     flag_values = {
-        ":gki_kernel_dir": "aosp",
+        ":download_prebuilt_gki_fips140": "1",
     },
 )
 
 config_setting(
-    name = "gki_aosp_staging",
+    name = "disable_download_fips140",
     flag_values = {
-        ":gki_kernel_dir": "aosp-staging",
+        ":download_prebuilt_gki_fips140": "0",
     },
-)
-
-string_flag(
-    name = "gki_kernel_dir",
-    build_setting_default = "aosp",
-)
-
-string_flag(
-    name = "debug_fragment",
-    build_setting_default = "",
-)
-
-config_setting(
-    name = "blktest",
-    flag_values = {
-        ":debug_fragment": "blktest",
-    },
-)
-
-config_setting(
-    name = "debug_api",
-    flag_values = {
-        ":debug_fragment": "debug_api",
-    },
-)
-
-config_setting(
-    name = "debug_kmemleak",
-    flag_values = {
-        ":debug_fragment": "debug_kmemleak",
-    },
-)
-
-config_setting(
-    name = "debug_locking",
-    flag_values = {
-        ":debug_fragment": "debug_locking",
-    },
-)
-
-config_setting(
-    name = "debug_memory",
-    flag_values = {
-        ":debug_fragment": "debug_memory",
-    },
-)
-
-config_setting(
-    name = "debug_memory_accounting",
-    flag_values = {
-        ":debug_fragment": "debug_memory_accounting",
-    },
-)
-
-config_setting(
-    name = "function_tracer",
-    flag_values = {
-        ":debug_fragment": "function_tracer",
-    },
-)
-
-config_setting(
-    name = "kasan",
-    flag_values = {
-        ":debug_fragment": "kasan",
-    },
-)
-
-config_setting(
-    name = "khwasan",
-    flag_values = {
-        ":debug_fragment": "khwasan",
-    },
-)
-
-config_setting(
-    name = "cmdline_lto_is_none",
-    flag_values = {
-        "//build/kernel/kleaf:lto": "none",
-    },
-)
-
-# These debug fragments sets LTO=none.
-selects.config_setting_group(
-    name = "lto_none",
-    match_any = [
-        # keep sorted
-        ":cmdline_lto_is_none",
-        ":function_tracer",
-        ":kasan",
-    ],
 )
 
 # Do not use this flag directly, use --config=pixel_kunit,
@@ -129,15 +44,8 @@ config_setting(
 )
 
 filegroup(
-    name = "debug_build_configs",
-    srcs = [
-        "build.config.blktest",
-        "build.config.debug_api",
-        "build.config.debug_kmemleak",
-        "build.config.debug_locking",
-        "build.config.debug_memory",
-        "build.config.debug_memory_accounting",
-        "build.config.kasan",
-        "build.config.khwasan",
-    ],
+    name = "sepolicy",
+    srcs = glob([
+        "sepolicy/*",
+    ]),
 )

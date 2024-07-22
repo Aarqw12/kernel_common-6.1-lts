@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("//build/kernel/kleaf:download_repo.bzl", "download_artifacts_repo")
 load("//build/kernel/kleaf:workspace.bzl", "define_kleaf_workspace")
 
-define_kleaf_workspace(common_kernel_package = "@//aosp")
+define_kleaf_workspace()
+
+download_artifacts_repo(
+    name = "gki_prebuilt_fips140",
+    build_number = "11690398",
+    files = ["fips140.ko"],
+    target = "kernel_aarch64_fips140",
+)

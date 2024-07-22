@@ -1,24 +1,15 @@
-# Building with Bazel (recommended)
+# Building with Bazel
 
 ```shell
-# Files are copied to out/{branch}/dist
+# Files are copied to out/raviole/dist
 $ tools/bazel run --config=raviole //private/devices/google/raviole:gs101_raviole_dist
 ```
 
 See `build/kernel/kleaf/README.md` for details.
 
-## Disable LTO
+# ABI monitoring with Bazel
 
-**Note**: This only works on `raviole-mainline` branch.
-
-```shell
-# Files are copied to out/{branch}/dist
-$ tools/bazel run --lto=none --config=raviole //private/devices/google/raviole:gs101_raviole_dist
-```
-
-# ABI monitoring with Bazel (recommended)
-
-**Note**: ABI monitoring is not supported on `raviole-mainline` branch.
+**Note**: ABI monitoring is not supported on `android-mainline` branch.
 
 ```shell
 # Compare ABI and build files for distribution
@@ -29,7 +20,4 @@ $ tools/bazel run --config=raviole //private/devices/google/raviole:gs101_raviol
 
 # Update ABI aosp/android/abi_gki_aarch64.xml
 $ tools/bazel run //aosp:kernel_aarch64_abi_update
-
-# Copy files to distribution
-$ tools/bazel run --config=raviole //private/devices/google/raviole:gs101_raviole_abi_dist
 ```
