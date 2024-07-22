@@ -17,7 +17,7 @@
 				/* S2MPG11X01 -> GPIO_6 -> CHARGE_PUMP_EN */
 				google,dc-en = <&s2mpg11_gpio 0 0>;
 				/* DC enabled by default */
-				google,dc-en-value = <1>;
+				google,dc-en-value;
 
 				google,tcpm-power-supply = <&max77759tcpc>;
 				google,pps-awake;
@@ -58,7 +58,6 @@
 		pca9468,float-voltage = <4300000>; /* 4.3V */
 
 		pca9468,input-itopoff = <500000>; /* 500mA */
-		pca9468,sense-resistance = <0>; /* 5mOhm */
 		pca9468,switching-frequency = <3>; /* 980KHz */
 
 		/* disable USBC NTC */

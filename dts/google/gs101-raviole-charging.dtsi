@@ -20,7 +20,7 @@
 				/* S2MPG10X01 -> GPIO_1 -> CHARGE_PUMP_EN */
 				google,dc-en = <&s2mpg10_gpio 1 0>;
 				/* DC enabled by default */
-				google,dc-en-value = <1>;
+				google,dc-en-value;
 				google,dc_limit-demand = <5600000>;
 				google,dc_limit-vbatt = <4350000>;
 				google,dc_limit-vbatt_min = <3400000>;
@@ -110,7 +110,6 @@
 		pca9468,float-voltage = <4300000>; /* 4.3V */
 
 		pca9468,input-itopoff = <600000>; /* 600mA */
-		pca9468,sense-resistance = <0>; /* 5mOhm */
 		pca9468,switching-frequency = <3>; /* 980KHz */
 
 		/* disable USBC NTC */
@@ -118,9 +117,6 @@
 
 		/* USBC thermal zone */
 		google,usb-port-tz-name = "usbc-therm-adc";
-
-		/* irdrop */
-		google,irdrop-limits = <105000 75000 0>;
 
 		pca9468,google_cpm = <&google_cpm>;
 	};

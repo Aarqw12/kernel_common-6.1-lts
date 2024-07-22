@@ -21,7 +21,7 @@
 				pinctrl-0 = <&charge_pump_en>;
 
 				google,dc-en = <&gpp23 7 0>;
-				google,dc-en-value = <1>;
+				google,dc-en-value;
 
 				google,tcpm-power-supply = <&max77759tcpc>;
 				google,pps-awake;
@@ -73,7 +73,6 @@
 		pca9468,float-voltage = <4300000>; /* 4.3V */
 
 		pca9468,input-itopoff = <500000>; /* 500mA */
-		pca9468,sense-resistance = <0>; /* 5mOhm */
 		pca9468,switching-frequency = <3>; /* 980KHz */
 
 		/* disable USBC NTC */
