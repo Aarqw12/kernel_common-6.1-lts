@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
+build:pixel_debug_common --use_prebuilt_gki=false
 build:pixel_debug_common --notrim
 build:pixel_debug_common --nokmi_symbol_list_strict_mode
 build:pixel_debug_common --nokmi_symbol_list_violations_check
