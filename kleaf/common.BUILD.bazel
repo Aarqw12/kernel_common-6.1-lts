@@ -27,6 +27,7 @@ _KERNEL_TARGETS = [
     "kernel_aarch64_headers_download_or_build",
     "kernel_aarch64_images",
     "kernel_aarch64_images_download_or_build",
+    "kernel_aarch64_modules",
     "kernel_aarch64_sources",
     "set_kernel_dir_build_config",
 ] + [
