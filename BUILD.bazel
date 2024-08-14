@@ -43,6 +43,18 @@ config_setting(
     },
 )
 
+bool_flag(
+    name = "factory",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "factory_build",
+    flag_values = {
+        ":factory": "true",
+    },
+)
+
 filegroup(
     name = "sepolicy",
     srcs = glob([
