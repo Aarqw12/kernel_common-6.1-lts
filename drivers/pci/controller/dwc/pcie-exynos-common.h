@@ -315,6 +315,7 @@ struct exynos_pcie {
 	struct notifier_block   ss_dma_mon_nb;
 	struct delayed_work	dislink_work;
 	struct delayed_work	cpl_timeout_work;
+	struct delayed_work     link_recovery_fail_work;
 	struct exynos_pcie_register_event *event_reg;
 #if IS_ENABLED(CONFIG_PM_DEVFREQ)
 	unsigned int            int_min_lock;
