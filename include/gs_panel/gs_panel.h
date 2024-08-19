@@ -316,6 +316,16 @@ struct gs_panel_funcs {
 	void (*set_dimming)(struct gs_panel *gs_panel, bool dimming_on);
 
 	/**
+	 * @get_local_hbm_mode_effective_delay_frames:
+	 *
+	 * This callback is used to implement panel specific logic for gs_panel to
+	 * get local hbm mode effective delay frames. If this is not defined, it uses
+	 * gs_panel_lhbm_desc.effective_delay_frames directly.
+	 *
+	 */
+	u32 (*get_local_hbm_mode_effective_delay_frames)(struct gs_panel *gs_panel);
+
+	/**
 	 * @set_local_hbm_mode:
 	 *
 	 * This callback is used to implement panel specific logic for local high
