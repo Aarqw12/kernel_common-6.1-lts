@@ -330,6 +330,7 @@ kernel_images(
     kernel_build = ":kernel",
     kernel_modules_install = ":kernel_modules_install",
     modules_list = ":vendor_ramdisk_modules_list",
+    ramdisk_compression = "lz4",
     system_dlkm_modules_blocklist = ":system_dlkm_modules_blocklist",
     system_dlkm_modules_list = ":system_dlkm_modules_list",
     system_dlkm_props = ":system_dlkm_props",
