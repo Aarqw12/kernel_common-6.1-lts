@@ -734,6 +734,7 @@ static int request_pcie_int(struct link_device *ld, struct platform_device *pdev
 {
 #define DOORBELL_INT_MASK(x)	((x) | 0x10000)
 
+	static struct lock_class_key lock_class, request_class;
 	int ret, base_irq;
 	struct mem_link_device *mld = to_mem_link_device(ld);
 	struct device *dev = &pdev->dev;
@@ -752,6 +753,12 @@ static int request_pcie_int(struct link_device *ld, struct platform_device *pdev
 		return -EFAULT;
 	}
 	mif_info("MSI base_irq(%d)\n", base_irq);
+
+	/*
+	 * This lock class tells lockdep that base_irqs are in a different
+	 * category than their parents, so it won't report false recursion.
+	 */
+	irq_set_lockdep_class(base_irq, &lock_class, &request_class);
 
 	ret = devm_request_irq(dev, base_irq + irq_offset, shmem_irq_handler,
 			       IRQF_SHARED, "mif_cp2ap_msg", mld);
