@@ -40,16 +40,26 @@ enum vendor_group {
 	VG_MAX,
 };
 
-struct vendor_binder_task_struct {
-	unsigned int uclamp[UCLAMP_CNT];
-	bool uclamp_fork_reset;
-	bool prefer_idle;
-	bool active;
+enum vendor_inheritnace_t {
+	VI_BINDER = 0,
+	VI_RTMUTEX,
+	VI_MAX,
+};
+
+struct vendor_inheritance_struct {
+	unsigned int uclamp[VI_MAX][UCLAMP_CNT];
+	short int uclamp_fork_reset;
+	short int prefer_idle;
 };
 
 struct uclamp_filter {
 	unsigned int uclamp_min_ignored : 1;
 	unsigned int uclamp_max_ignored : 1;
+};
+
+struct thermal_cap {
+	unsigned int uclamp_max;
+	unsigned int freq;
 };
 
 /*
@@ -70,11 +80,10 @@ struct vendor_task_struct {
 	struct uclamp_filter uclamp_filter;
 	int orig_prio;
 	unsigned long iowait_boost;
+	bool is_binder_task;
 
-	/* parameters for binder inheritance */
-	struct vendor_binder_task_struct binder_task;
-	/* parameters for RT inheritance */
-	unsigned int uclamp_pi[UCLAMP_CNT];
+	/* parameters for inheritance */
+	struct vendor_inheritance_struct vi;
 
 	u64 runnable_start_ns;
 	u64 prev_sum_exec_runtime;
@@ -95,15 +104,14 @@ struct vendor_task_struct {
 
 ANDROID_VENDOR_CHECK_SIZE_ALIGN(u64 android_vendor_data1[64], struct vendor_task_struct t);
 
-
 static inline struct vendor_task_struct *get_vendor_task_struct(struct task_struct *p)
 {
 	return (struct vendor_task_struct *)p->android_vendor_data1;
 }
 
-static inline struct vendor_binder_task_struct *get_vendor_binder_task_struct(struct task_struct *p)
+static inline struct vendor_inheritance_struct *get_vendor_inheritance_struct(struct task_struct *p)
 {
-	return &get_vendor_task_struct(p)->binder_task;
+	return &get_vendor_task_struct(p)->vi;
 }
 
 static inline int get_vendor_group(struct task_struct *p)
@@ -131,4 +139,6 @@ static inline unsigned long get_and_reset_vendor_task_struct_private(struct vend
 	p->private = 0;
 	return val;
 }
+
+int sched_thermal_freq_cap(unsigned int cpu, unsigned int freq);
 #endif

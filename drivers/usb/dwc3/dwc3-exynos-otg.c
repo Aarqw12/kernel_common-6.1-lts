@@ -216,6 +216,86 @@ static void dwc3_usb3_phy_restart(struct dwc3_otg *dotg)
 	mutex_unlock(&dotg->role_lock);
 }
 
+static struct device_node *exynos_dwusb_parse_dt(void)
+{
+	struct device_node *np = NULL;
+
+	np = of_find_compatible_node(NULL, NULL, "samsung,exynos9-dwusb");
+	if (!np) {
+		pr_err("%s: failed to get the usbdrd node\n", __func__);
+		goto err;
+	}
+	return np;
+err:
+	return NULL;
+}
+
+static struct dwc3_exynos *exynos_dwusb_get_struct(void)
+{
+	struct device_node *np = NULL;
+	struct platform_device *pdev = NULL;
+	struct device *dev;
+	struct dwc3_exynos *exynos;
+
+	np = exynos_dwusb_parse_dt();
+	if (np) {
+		pdev = of_find_device_by_node(np);
+		dev = &pdev->dev;
+		of_node_put(np);
+		if (pdev) {
+			exynos = dev->driver_data;
+			return exynos;
+		}
+	}
+
+	pr_err("%s: failed to get the platform_device\n", __func__);
+	return NULL;
+}
+
+int usb_power_notify_control(int on)
+{
+	struct dwc3_exynos *exynos;
+	struct dwc3_otg	*dotg;
+	struct dwc3	*dwc;
+	struct device	*dev;
+
+	exynos = exynos_dwusb_get_struct();
+	if (!exynos) {
+		pr_err("%s: error\n", __func__);
+		return -ENODEV;
+	}
+
+	dwc = exynos->dwc;
+
+	if (dwc && exynos->dotg && dwc->dev) {
+		dotg = exynos->dotg;
+		dev = dwc->dev;
+	} else {
+		pr_err("%s: dwc or dotg or dev NULL\n", __func__);
+		return -ENODEV;
+	}
+
+	// Don't let xhci control power state if dp is active
+	if (exynos->phy_owner_bits & DWC3_EXYNOS_PHY_OWNER_DP) {
+		pr_warn("%s: DP active, ignoring phy control\n", __func__);
+		return -EINVAL;
+	}
+
+	if (dwc->maximum_speed == USB_SPEED_HIGH) {
+		dev_dbg(dev, "%s: Ignore USB3.0 phy control.\n", __func__);
+		return -EINVAL;
+	}
+
+	dev_dbg(dev, "%s: on=%d\n", __func__, on);
+
+	mutex_lock(&dotg->lock);
+	usb3_phy_control(dotg, SSPHY_USB, on);
+	mutex_unlock(&dotg->lock);
+
+	return 0;
+}
+EXPORT_SYMBOL(usb_power_notify_control);
+
 void dwc3_otg_phy_tune(struct dwc3 *dwc, bool is_host)
 {
 	int phy_state;
@@ -249,7 +329,7 @@ int dwc3_otg_start_host(struct dwc3_otg *dotg, int on)
 	__pm_stay_awake(dotg->wakelock);
 
 	if (on) {
-		if (!dwc3_otg_check_usb_suspend(exynos))
+		if (!exynos->phy_owner_bits && !dwc3_otg_check_usb_suspend(exynos))
 			dev_err(dev, "too long to wait for dwc3 suspended\n");
 
 		/* hold gadget lock to prevent gadget driver bind and undesirable resume */
@@ -270,8 +350,10 @@ int dwc3_otg_start_host(struct dwc3_otg *dotg, int on)
 			ret = dwc3_exynos_host_init(exynos);
 			if (ret) {
 				dev_err(dev, "%s: failed to init dwc3 host\n", __func__);
+				dotg->otg_connection = 0;
 				device_unlock(&dwc->gadget->dev);
-				goto err1;
+				__pm_relax(dotg->wakelock);
+				return ret;
 			}
 		}
 
@@ -283,7 +365,11 @@ int dwc3_otg_start_host(struct dwc3_otg *dotg, int on)
 		exynos->need_dr_role = 1;
 
 		ret = pm_runtime_get_sync(dev);
-		if (ret) {
+		if (exynos->phy_owner_bits && ret == 1) {
+			/* dwc3 is active due to votes from other phy owners such as DP */
+			dev_info(dev, "DWC3 device active phy owners %x\n", exynos->phy_owner_bits);
+			ret = 0;
+		} else if (ret) {
 			dev_err(dev, "failed to resume exynos device, ret=%d\n", ret);
 			if (ret == 1)
 				/*
@@ -296,10 +382,19 @@ int dwc3_otg_start_host(struct dwc3_otg *dotg, int on)
 			pm_runtime_put_sync_suspend(dev);
 			exynos->need_dr_role = 0;
 			mutex_unlock(&dotg->lock);
+			dwc->gadget_driver = temp_gadget_driver;
+			temp_gadget_driver = NULL;
+			if (dwc->xhci) {
+				platform_device_put(dwc->xhci);
+				dwc->xhci = NULL;
+			}
+			dotg->otg_connection = 0;
 			device_unlock(&dwc->gadget->dev);
-			goto err1;
+			__pm_relax(dotg->wakelock);
+			return ret;
 		}
 		exynos->need_dr_role = 0;
+		exynos->phy_owner_bits |= DWC3_EXYNOS_PHY_OWNER_USB;
 
 		/* To ignore gadget suspend/resume on host l2 suspend */
 		exynos->dwc->current_dr_role = DWC3_EXYNOS_IGNORE_CORE_OPS;
@@ -345,6 +440,7 @@ err1:
 		mutex_lock(&dotg->lock);
 		exynos->dwc->current_dr_role = DWC3_GCTL_PRTCAP_DEVICE;
 		pm_runtime_put_sync_suspend(dev);
+		exynos->phy_owner_bits &= ~DWC3_EXYNOS_PHY_OWNER_USB;
 		mutex_unlock(&dotg->lock);
 	}
 	__pm_relax(dotg->wakelock);
@@ -362,7 +458,7 @@ int dwc3_otg_start_gadget(struct dwc3_otg *dotg, int on)
 	if (on) {
 		__pm_stay_awake(dotg->wakelock);
 
-		if (!dwc3_otg_check_usb_suspend(exynos))
+		if (!exynos->phy_owner_bits && !dwc3_otg_check_usb_suspend(exynos))
 			dev_err(dev, "too long to wait for dwc3 suspended\n");
 
 		/* hold gadget lock to prevent gadget driver bind and undesirable resume */
@@ -383,7 +479,11 @@ int dwc3_otg_start_gadget(struct dwc3_otg *dotg, int on)
 		dwc->connected = true;
 
 		ret = pm_runtime_get_sync(dev);
-		if (ret) {
+		if (exynos->phy_owner_bits && ret == 1) {
+			/* dwc3 is active due to votes from other phy owners such as DP */
+			dev_info(dev, "DWC3 device active phy owners %x\n", exynos->phy_owner_bits);
+			ret = 0;
+		} else if (ret) {
 			dev_err(dev, "failed to resume exynos device, ret=%d\n", ret);
 			if (ret == 1)
 				/*
@@ -402,6 +502,7 @@ int dwc3_otg_start_gadget(struct dwc3_otg *dotg, int on)
 			return ret;
 		}
 		exynos->need_dr_role = 0;
+		exynos->phy_owner_bits |= DWC3_EXYNOS_PHY_OWNER_USB;
 		mutex_unlock(&dotg->lock);
 
 		device_unlock(&dwc->gadget->dev);
@@ -432,6 +533,7 @@ int dwc3_otg_start_gadget(struct dwc3_otg *dotg, int on)
 
 		mutex_lock(&dotg->lock);
 		pm_runtime_put_sync(dev);
+		exynos->phy_owner_bits &= ~DWC3_EXYNOS_PHY_OWNER_USB;
 		mutex_unlock(&dotg->lock);
 
 		exynos->gadget_state = false;
@@ -443,42 +545,6 @@ int dwc3_otg_start_gadget(struct dwc3_otg *dotg, int on)
 }
 
 /* -------------------------------------------------------------------------- */
-static struct device_node *exynos_dwusb_parse_dt(void)
-{
-	struct device_node *np = NULL;
-
-	np = of_find_compatible_node(NULL, NULL, "samsung,exynos9-dwusb");
-	if (!np) {
-		pr_err("%s: failed to get the usbdrd node\n", __func__);
-		goto err;
-	}
-	return np;
-err:
-	return NULL;
-}
-
-static struct dwc3_exynos *exynos_dwusb_get_struct(void)
-{
-	struct device_node *np = NULL;
-	struct platform_device *pdev = NULL;
-	struct device *dev;
-	struct dwc3_exynos *exynos;
-
-	np = exynos_dwusb_parse_dt();
-	if (np) {
-		pdev = of_find_device_by_node(np);
-		dev = &pdev->dev;
-		of_node_put(np);
-		if (pdev) {
-			exynos = dev->driver_data;
-			return exynos;
-		}
-	}
-
-	pr_err("%s: failed to get the platform_device\n", __func__);
-	return NULL;
-}
-
 int dwc3_otg_host_ready(bool ready)
 {
 	struct dwc3_exynos *exynos;

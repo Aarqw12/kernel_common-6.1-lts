@@ -562,24 +562,25 @@ int dwc3_exynos_phy_enable(int owner, bool on)
 	dev = dwc->dev;
 	dotg = exynos->dotg;
 	if (on) {
-		if (!dwc3_exynos_check_usb_suspend(dotg))
+		if (!exynos->phy_owner_bits && !dwc3_exynos_check_usb_suspend(dotg))
 			dev_err(dev, "too long to wait for dwc3 suspended\n");
 
 		mutex_lock(&dotg->lock);
 		exynos->need_dr_role = 1;
-		ret = pm_runtime_get_sync(dev);
+		ret = pm_runtime_resume_and_get(dev);
 		if (ret < 0) {
 			dev_err(dwc->dev, "%s: failed to initialize core: %d\n",
 					__func__, ret);
-			pm_runtime_set_suspended(dev);
 		}
 		exynos->need_dr_role = 0;
+		exynos->phy_owner_bits |= BIT(owner);
 		mutex_unlock(&dotg->lock);
 	} else {
 		mutex_lock(&dotg->lock);
 		if (!dotg->otg_connection)
 			exynos->dwc->current_dr_role = DWC3_GCTL_PRTCAP_DEVICE;
 		pm_runtime_put_sync_suspend(dev);
+		exynos->phy_owner_bits &= ~BIT(owner);
 		mutex_unlock(&dotg->lock);
 	}
 
@@ -1387,11 +1388,18 @@ static int dwc3_exynos_runtime_idle(struct device *dev)
 	struct dwc3_exynos *exynos = dev_get_drvdata(dev);
 	u32 reg;
 
+	/*
+	 * TODO: Explore alternative approaches to guarantee the disconnect
+	 * flow executes seamlessly, eliminating the need for the dwc3 module
+	 * to verify dwc3 registers.
+	 */
+	exynos_pd_hsi0_write_lock();
 	if (exynos->dwc && exynos_pd_hsi0_get_ldo_status()) {
 		reg = dwc3_exynos_readl(exynos->dwc->regs, DWC3_DALEPENA);
 		if (reg)
 			return -EBUSY;
 	}
+	exynos_pd_hsi0_write_unlock();
 #endif
 
 	pm_runtime_mark_last_busy(dev);

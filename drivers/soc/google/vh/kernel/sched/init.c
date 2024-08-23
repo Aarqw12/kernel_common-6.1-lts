@@ -47,8 +47,6 @@ extern void rvh_util_est_update_pixel_mod(void *data, struct cfs_rq *cfs_rq, str
 extern void rvh_cpu_cgroup_online_pixel_mod(void *data, struct cgroup_subsys_state *css);
 #endif
 extern void rvh_post_init_entity_util_avg_pixel_mod(void *data, struct sched_entity *se);
-extern void rvh_check_preempt_wakeup_ignore_pixel_mod(void *data, struct task_struct *curr,
-			bool *ignore);
 extern void rvh_check_preempt_wakeup_pixel_mod(void *data, struct rq *rq, struct task_struct *p,
 			bool *preempt, bool *nopreempt, int wake_flags, struct sched_entity *se,
 			struct sched_entity *pse, int next_buddy_marked, unsigned int granularity);
@@ -110,8 +108,6 @@ extern void rvh_setscheduler_pixel_mod(void *data, struct task_struct *p);
 extern void rvh_find_lowest_rq_pixel_mod(void *data, struct task_struct *p,
 					 struct cpumask *lowest_mask,
 					 int ret, int *cpu);
-extern void rvh_update_misfit_status_pixel_mod(void *data, struct task_struct *p, struct rq *rq,
-					       bool *need_update);
 extern void rvh_util_fits_cpu_pixel_mod(void *data, unsigned long util, unsigned long uclamp_min,
 	unsigned long uclamp_max, int cpu, bool *fits, bool *done);
 
@@ -470,18 +466,8 @@ static int vh_sched_init(void)
 	if (ret)
 		return ret;
 
-	ret = register_trace_android_rvh_update_misfit_status(
-		rvh_update_misfit_status_pixel_mod, NULL);
-	if (ret)
-		return ret;
-
 	ret = register_trace_android_rvh_post_init_entity_util_avg(
 		rvh_post_init_entity_util_avg_pixel_mod, NULL);
-	if (ret)
-		return ret;
-
-	ret = register_trace_android_rvh_check_preempt_wakeup_ignore(
-		rvh_check_preempt_wakeup_ignore_pixel_mod, NULL);
 	if (ret)
 		return ret;
 
