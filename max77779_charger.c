@@ -698,13 +698,15 @@ static int max77779_get_usecase(struct max77779_foreach_cb_data *cb_data,
 	} else if (!buck_on && !wlc_rx) {
 		mode = MAX77779_CHGR_MODE_ALL_OFF;
 
-		/* Rtx using the internal battery */
-		usecase = GSU_MODE_STANDBY;
-		dc_on = false;
-		if (wlc_tx) {
+		if (cb_data->buck_on) {
+			usecase = GSU_MODE_STANDBY_BUCK_ON;
+		} else if (wlc_tx) { /* Rtx using the internal battery */
 			usecase = GSU_MODE_WLC_TX;
 			mode = MAX77779_CHGR_MODE_BOOST_UNO_ON;
+		} else {
+			usecase = GSU_MODE_STANDBY;
 		}
+		dc_on = false;
 	} else if (wlc_tx) {
 		/* above checks that buck_on is false */
 		usecase = GSU_MODE_WLC_TX;
@@ -1244,8 +1246,8 @@ static int max77779_chgin_input_suspend(struct max77779_chgr_data *data,
 	const int old_value = data->chgin_input_suspend;
 	int ret;
 
-	pr_debug("%s enabled=%d->%d reason=%s\n", __func__,
-		 data->wcin_input_suspend, enabled, reason);
+	dev_dbg(data->dev, "%s enabled=%d->%d reason=%s\n", __func__,
+		 data->chgin_input_suspend, enabled, reason);
 
 	data->chgin_input_suspend = enabled; /* the callback might use this */
 	ret = gvotable_cast_long_vote(data->mode_votable, "CHGIN_SUSP",
@@ -1883,6 +1885,12 @@ static int max77779_wcin_is_valid(struct max77779_chgr_data *data)
 	uint8_t val;
 	uint8_t wcin_dtls;
 	int ret;
+
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_12, &val);
+	if (ret < 0)
+		return ret;
+	if (!_max77779_chg_cnfg_12_wcinsel_get(val))
+		return 0;
 
 	ret = max77779_reg_read(data, MAX77779_CHG_DETAILS_00, &val);
 	if (ret < 0)
