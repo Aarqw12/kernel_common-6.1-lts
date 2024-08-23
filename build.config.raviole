@@ -4,17 +4,7 @@ DEVICE_DIR=private/devices/google/raviole
 SOC_DIR=private/google-modules/soc/gs
 
 # These just need to be relative to the ROOT_DIR
-FRAGMENT_CONFIG=${DEVICE_DIR}/raviole_gki.fragment
 . ${ROOT_DIR}/private/devices/google/gs101/build.config.gs101
 
 DTC_INCLUDE=${ROOT_DIR}/${SOC_DIR}/include/dtc
 MKDTIMG_FLAGS="--page_size=4096 --id=/:board_id --rev=/:board_rev"
-
-VENDOR_RAMDISK_CMDS="modify_vendor_ramdisk"
-function modify_vendor_ramdisk() {
-  ln -f init.recovery.gs101.rc init.recovery.slider.rc
-  ln -f init.recovery.gs101.rc init.recovery.whitefin.rc
-  ln -f init.recovery.gs101.rc init.recovery.oriole.rc
-  ln -f init.recovery.gs101.rc init.recovery.raven.rc
-  ln -f init.recovery.gs101.rc init.recovery.bluejay.rc
-}

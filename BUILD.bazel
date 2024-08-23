@@ -123,7 +123,6 @@ kernel_build(
     srcs = glob([
         "build.config.*",
         "dts/**",
-        "raviole*.fragment",
     ]) + [
         # keep sorted
         "//common:kernel_aarch64_sources",
@@ -150,6 +149,7 @@ kernel_build(
     base_kernel = "//common:kernel_aarch64_download_or_build",
     build_config = ":raviole_build_config",
     collect_unstripped_modules = True,
+    defconfig_fragments = ["raviole_defconfig"],
     dtstree = "//private/devices/google/raviole/dts:raviole.dt",
     implicit_outs = RAVIOLE_DTBOS,
     kconfig_ext = "Kconfig.ext",
@@ -366,7 +366,7 @@ kernel_images(
     build_boot = False,
     build_dtbo = True,
     build_initramfs = True,
-    build_vendor_boot = True,
+    build_vendor_boot = False,
     build_vendor_dlkm = True,
     dtbo_srcs = [":gs101_raviole/" + e for e in RAVIOLE_DTBOS],
     kernel_build = ":gs101_raviole",
@@ -377,7 +377,6 @@ kernel_images(
     vendor_dlkm_modules_blocklist = "vendor_dlkm.blocklist.raviole",
     vendor_dlkm_modules_list = "vendor_dlkm_modules.raviole",
     vendor_dlkm_props = "vendor_dlkm.props.raviole",
-    vendor_ramdisk_binaries = ["vendor_ramdisk-oriole.img"],
     deps = [
         # Keep the following in sync with vendor_dlkm.props:
         # selinux_fc
