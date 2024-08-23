@@ -337,6 +337,8 @@ static int exynos_ehld_start_cpu(unsigned int cpu)
 		exynos_ehld_start_cpu(0);
 
 	if (!event) {
+		int ret;
+
 		event = perf_event_create_kernel_counter(&exynos_ehld_attr,
 							 cpu,
 							 NULL,
@@ -351,6 +353,15 @@ static int exynos_ehld_start_cpu(unsigned int cpu)
 		ehld_debug(1, "@%s: cpu%u event make success\n", __func__, cpu);
 		ctrl->event = event;
 		perf_event_enable(event);
+
+		ret = adv_tracer_ehld_set_pmu_cntr_id(cpu, 1, ARMV8_IDX_TO_COUNTER(event->hw.idx));
+		if (ret) {
+			ehld_err(1, "@%s: cpu%u set_pmu_cntr_id failed: %d\n", __func__, cpu, ret);
+			ctrl->event = NULL;
+			perf_event_disable(event);
+			perf_event_release_kernel(event);
+			return ret;
+		}
 	}
 
 	ctrl->ehld_running = 1;
@@ -399,6 +410,7 @@ static int exynos_ehld_stop_cpu(unsigned int cpu)
 
 	event = ctrl->event;
 	if (event) {
+		adv_tracer_ehld_set_pmu_cntr_id(cpu, 0, 0);
 		ctrl->event = NULL;
 		perf_event_disable(event);
 		perf_event_release_kernel(event);
