@@ -282,6 +282,9 @@ static int usb_audio_offload_init(struct xhci_hcd *xhci)
 	offload_data->offload_state = true;
 	offload_data->usb_audio_count = 0;
 
+	/* Notification for xhci driver probing */
+	usb_host_mode_state_notify(USB_CONNECTED);
+
 	aoc_alsa_usb_callback_register(setup_transfer_ring);
 	usb_register_notify(&xhci_udev_nb);
 	offload_data->xhci = xhci;
