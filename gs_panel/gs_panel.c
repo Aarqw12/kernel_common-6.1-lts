@@ -1020,6 +1020,8 @@ static int gs_update_backlight_status(struct backlight_device *bl)
 	if (bl->props.power != FB_BLANK_UNBLANK)
 		brightness = 0;
 
+	min_brightness = ctx->desc->brightness_desc->lower_min_brightness ?
+		ctx->desc->brightness_desc->lower_min_brightness : min_brightness;
 	if (brightness && brightness < min_brightness)
 		brightness = min_brightness;
 
@@ -1027,12 +1029,12 @@ static int gs_update_backlight_status(struct backlight_device *bl)
 
 	mutex_lock(&ctx->mode_lock); /*TODO(b/267170999): MODE*/
 	if (ctx->base.backlight && !ctx->bl_ctrl_dcs) {
-		dev_info(dev, "Setting brightness via backlight function\n");
+		dev_dbg(dev, "Setting brightness via backlight function\n");
 		backlight_device_set_brightness(ctx->base.backlight, brightness);
 	} else if (gs_panel_has_func(ctx, set_brightness)) {
 		ctx->desc->gs_panel_func->set_brightness(ctx, brightness);
 	} else {
-		dev_info(dev, "Setting brightness via dcs\n");
+		dev_dbg(dev, "Setting brightness via dcs\n");
 		gs_dcs_set_brightness(ctx, brightness);
 	}
 
@@ -1586,7 +1588,8 @@ int gs_dsi_panel_common_init(struct mipi_dsi_device *dsi, struct gs_panel *ctx)
 		for (i = 0; i < ctx->desc->modes->num_modes; i++) {
 			const struct gs_panel_mode *pmode = &ctx->desc->modes->modes[i];
 			const int vrefresh = drm_mode_vrefresh(&pmode->mode);
-			const int bts_fps = gs_drm_mode_bts_fps(&pmode->mode);
+			const int bts_fps = gs_drm_mode_bts_fps(&pmode->mode,
+				pmode->gs_mode.min_bts_fps);
 
 			if (ctx->max_vrefresh < vrefresh)
 				ctx->max_vrefresh = vrefresh;
@@ -1661,18 +1664,9 @@ int gs_dsi_panel_common_init(struct mipi_dsi_device *dsi, struct gs_panel *ctx)
 	ret = gs_panel_sysfs_create_files(dev, ctx);
 	if (ret)
 		dev_warn(dev, "unable to add panel sysfs files (%d)\n", ret);
-	ret = gs_panel_sysfs_create_bl_files(&ctx->bl->dev);
+	ret = gs_panel_sysfs_create_bl_files(&ctx->bl->dev, ctx);
 	if (ret)
 		dev_warn(dev, "unable to add panel backlight sysfs files (%d)\n", ret);
-
-	/* TODO(tknelms): cabc_mode
-	if (ctx->desc->gs_panel_func && ctx->desc->gs_panel_func->base &&
-	    ctx->desc->gs_panel_func->base->set_cabc_mode) {
-		ret = sysfs_create_file(&ctx->bl->dev.kobj, *dev_attr_cabc_mode.attr);
-		if (ret)
-			dev_err(dev, "unable to create cabc_mode\n");
-	}
-	*/
 
 	/* dsi attach */
 	ret = mipi_dsi_attach(dsi);
