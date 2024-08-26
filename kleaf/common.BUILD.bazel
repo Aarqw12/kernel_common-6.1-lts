@@ -22,14 +22,10 @@ package(
 _KERNEL_TARGETS = [
     "all_headers_aarch64",
     "android/abi_gki_aarch64_pixel",
-    "kernel_aarch64",
     "kernel_aarch64_config",
     "kernel_aarch64_download_or_build",
-    "kernel_aarch64_gki_artifacts",
     "kernel_aarch64_gki_artifacts_download_or_build",
-    "kernel_aarch64_headers",
     "kernel_aarch64_headers_download_or_build",
-    "kernel_aarch64_images",
     "kernel_aarch64_images_download_or_build",
     "kernel_aarch64_modules",
     "kernel_aarch64_sources",
@@ -57,6 +53,26 @@ kernel_aliases(
     targets = _KERNEL_TARGETS,
 )
 
+alias(
+    name = "kernel_aarch64",
+    actual = ":kernel_aarch64_download_or_build",
+)
+
+alias(
+    name = "kernel_aarch64_gki_artifacts",
+    actual = ":kernel_aarch64_gki_artifacts_download_or_build",
+)
+
+alias(
+    name = "kernel_aarch64_headers",
+    actual = ":kernel_aarch64_headers_download_or_build",
+)
+
+alias(
+    name = "kernel_aarch64_images",
+    actual = ":kernel_aarch64_images_download_or_build",
+)
+
 string_flag(
     name = "kernel_compression",
     build_setting_default = "lz4",
@@ -79,7 +95,7 @@ config_setting(
 
 select_file(
     name = "kernel_aarch64_gki_boot_image_selection",
-    srcs = "//common:kernel_aarch64_gki_artifacts_download_or_build",
+    srcs = ":kernel_aarch64_gki_artifacts",
     subpath = select({
         ":kernel_compression_is_lz4": "boot-lz4.img",
         ":kernel_compression_is_gz": "boot-gz.img",
@@ -96,5 +112,5 @@ copy_file(
 extracted_system_dlkm(
     name = "kernel_aarch64_gki_modules",
     gki_modules = [paths.basename(m) for m in get_gki_modules_list("arm64")],
-    images = ":kernel_aarch64_images_download_or_build",
+    images = ":kernel_aarch64_images",
 )
