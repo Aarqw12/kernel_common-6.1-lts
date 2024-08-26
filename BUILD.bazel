@@ -70,7 +70,7 @@ kernel_build(
     name = "kernel",
     srcs = [":kernel_sources"],
     outs = GS101_DTBS,
-    base_kernel = "//common:kernel_aarch64_download_or_build",
+    base_kernel = "//common:kernel_aarch64",
     build_config = ":build_config",
     collect_unstripped_modules = True,
     defconfig_fragments = [":defconfig_fragments"],
@@ -323,7 +323,7 @@ create_file(
 
 kernel_images(
     name = "kernel_images",
-    base_kernel_images = "//common:kernel_aarch64_images_download_or_build",
+    base_kernel_images = "//common:kernel_aarch64_images",
     build_initramfs = True,
     build_system_dlkm = True,
     build_vendor_dlkm = True,
