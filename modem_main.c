@@ -33,6 +33,8 @@
 #include <uapi/linux/in.h>
 #include <linux/inet.h>
 #include <net/ipv6.h>
+#include <soc/google/exynos-modem-ctrl.h>
+#include <soc/google/modem_notifier.h>
 
 #if IS_ENABLED(CONFIG_S5910)
 #include <linux/s5910.h>

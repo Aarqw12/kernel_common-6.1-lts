@@ -718,6 +718,8 @@ struct modem_ctl {
 	struct notifier_block call_state_nb;
 #endif
 
+	struct notifier_block force_crash_nb;
+
 #if IS_ENABLED(CONFIG_LINK_DEVICE_PCIE_GPIO_WA)
 	atomic_t dump_toggle_issued;
 #endif
