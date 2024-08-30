@@ -4,6 +4,12 @@
 
 build --flag_alias=kernel_package=//common:kernel_package
 
+# Debug configs
+import %workspace%/private/devices/google/common/debug/debug.bazelrc
+
+build:factory --//private/devices/google/common:factory
+build:factory --config=pixel_debug_common
+
 # For compatibility. Recommand to use --kernel_package directly.
 build:aosp_staging --kernel_package=@//aosp-staging
 build:use_source_tree_aosp --kernel_package=@//aosp
@@ -33,8 +39,15 @@ build --config=download_gki_fips140
 build:pixel_kunit --//private/devices/google/common:enable_kunit
 build:pixel_kunit --notrim
 
-# Debug configs
-import %workspace%/private/devices/google/common/debug/debug.bazelrc
+# Placeholders for soc specific bazelrc files. Add as many as you need.
+try-import %workspace%/.c1.bazelrc
+try-import %workspace%/.c2.bazelrc
+try-import %workspace%/.c3.bazelrc
+try-import %workspace%/.c4.bazelrc
+try-import %workspace%/.c5.bazelrc
+try-import %workspace%/.c6.bazelrc
+try-import %workspace%/.c7.bazelrc
+try-import %workspace%/.c8.bazelrc
 
 # Placeholders for device specific bazelrc files. Add as many as you need.
 try-import %workspace%/.d1.bazelrc
