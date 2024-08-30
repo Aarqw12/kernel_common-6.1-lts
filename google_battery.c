@@ -270,6 +270,7 @@ enum batt_aacr_state {
 	BATT_AACR_ENABLED = 1,
 	BATT_AACR_ALGO_DEFAULT = BATT_AACR_ENABLED,
 	BATT_AACR_ALGO_LOW_B, /* lower bound */
+	BATT_AACR_ALGO_REFERENCE_CAP, /* reference capacity only */
 	BATT_AACR_MAX,
 };
 
@@ -3867,6 +3868,9 @@ static int aacr_get_capacity_for_algo(const struct batt_drv *batt_drv, int cycle
 	if (reference_capacity <= 0)
 		return design_capacity;
 
+	if (aacr_algo == BATT_AACR_ALGO_REFERENCE_CAP)
+		return reference_capacity;
+
 	/* full_cap_nom in uAh, need to scale to mAh */
 	full_cap_nom = GPSY_GET_PROP(fg_psy, POWER_SUPPLY_PROP_CHARGE_FULL);
 	if (full_cap_nom < 0)
@@ -5157,6 +5161,16 @@ static void google_battery_dump_profile(const struct gbms_chg_profile *profile)
 	}
 }
 
+static void aacr_update_chg_table(struct batt_drv *batt_drv)
+{
+	u32 capacity = aacr_get_capacity(batt_drv);
+
+	if (capacity != batt_drv->chg_profile.capacity_ma) {
+		gbms_init_chg_table(&batt_drv->chg_profile, batt_drv->device->of_node, capacity);
+		google_battery_dump_profile(&batt_drv->chg_profile);
+	}
+}
+
 /* cell fault: disconnect of one of the battery cells */
 static bool batt_cell_fault_detect(struct batt_bpst *bpst_state)
 {
@@ -5334,9 +5348,7 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 	 */
 	if (batt_drv->ssoc_state.buck_enabled <= 0) {
 		struct bhi_data *bhi_data = &batt_drv->health_data.bhi_data;
-		struct device_node *node = batt_drv->device->of_node;
 		const qnum_t ssoc_delta = ssoc_get_delta(batt_drv);
-		u32 capacity;
 
 		/*
 		 * FIX: BatteryDefenderUI needs use a different curve because
@@ -5352,11 +5364,7 @@ static int batt_chg_logic(struct batt_drv *batt_drv)
 		if (bhi_data->res_state.estimate_filter)
 			batt_res_state_set(&bhi_data->res_state, true);
 
-		capacity = aacr_get_capacity(batt_drv);
-		if (capacity != batt_drv->chg_profile.capacity_ma) {
-			gbms_init_chg_table(&batt_drv->chg_profile, node, capacity);
-			google_battery_dump_profile(&batt_drv->chg_profile);
-		}
+		aacr_update_chg_table(batt_drv);
 
 		batt_chg_stats_start(batt_drv);
 
@@ -7542,6 +7550,10 @@ static ssize_t aacr_state_store(struct device *dev,
 		state = BATT_AACR_ENABLED;
 		algo = BATT_AACR_ALGO_LOW_B;
 		break;
+	case BATT_AACR_ALGO_REFERENCE_CAP:
+		state = BATT_AACR_ENABLED;
+		algo = BATT_AACR_ALGO_REFERENCE_CAP;
+		break;
 	default:
 		return -ERANGE;
 	}
@@ -7553,6 +7565,9 @@ static ssize_t aacr_state_store(struct device *dev,
 		batt_drv->aacr_state, state, batt_drv->aacr_algo, algo);
 	batt_drv->aacr_state = state;
 	batt_drv->aacr_algo = algo;
+
+	aacr_update_chg_table(batt_drv);
+
 	return count;
 }
 
@@ -7879,7 +7894,7 @@ static ssize_t first_usage_date_store(struct device *dev,
 		return ret;
 
 	/* return if the device tree is set */
-	if (bhi_data->first_usage_date)
+	if (bhi_data->first_usage_date >= 0)
 		return count > 0 ? count : 0;
 
 	/*
@@ -7956,7 +7971,7 @@ static ssize_t first_usage_date_show(struct device *dev,
 	int ret;
 
 	/* return if the device tree is set */
-	if (bhi_data->first_usage_date)
+	if (bhi_data->first_usage_date >= 0)
 		return scnprintf(buf, PAGE_SIZE, "%d\n", bhi_data->first_usage_date);
 
 	ret = get_activation_date(&batt_drv->health_data, &tm);
@@ -9304,7 +9319,9 @@ static int batt_history_data_work(struct batt_drv *batt_drv)
 	/* TODO: google_battery caches cycle count, should use that */
 	cycle_cnt = GPSY_GET_PROP(batt_drv->fg_psy,
 				  POWER_SUPPLY_PROP_CYCLE_COUNT);
-	if (cycle_cnt < 0)
+
+	/* not update history if cycle count is not ready */
+	if (cycle_cnt <= 0)
 		return -EIO;
 
 	if (batt_drv->blf_collect_now) {
@@ -10124,6 +10141,8 @@ static int gbatt_get_health(struct batt_drv *batt_drv)
 
 	switch (charging_state) {
 	case BATTERY_STATUS_NORMAL:
+	case BATTERY_STATUS_LONGLIFE:
+	case BATTERY_STATUS_ADAPTIVE:
 		health = POWER_SUPPLY_HEALTH_GOOD;
 		break;
 	case BATTERY_STATUS_TOO_COLD:
@@ -11103,7 +11122,7 @@ static void google_battery_init_work(struct work_struct *work)
 	ret = of_property_read_u32(node, "google,first-usage-date",
 				   &batt_drv->health_data.bhi_data.first_usage_date);
 	if (ret < 0)
-		batt_drv->health_data.bhi_data.first_usage_date = 0;
+		batt_drv->health_data.bhi_data.first_usage_date = -1;
 
 	/* single battery disconnect */
 	(void)batt_bpst_init_debugfs(batt_drv);
