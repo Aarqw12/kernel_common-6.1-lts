@@ -1,423 +1,233 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 load("//build/bazel_common_rules/dist:dist.bzl", "copy_to_dist_dir")
-load("//build/kernel/kleaf:hermetic_tools.bzl", "hermetic_genrule")
 load(
     "//build/kernel/kleaf:kernel.bzl",
     "kernel_abi",
     "kernel_build",
     "kernel_build_config",
+    "kernel_dtstree",
     "kernel_images",
-    "kernel_module",
     "kernel_module_group",
     "kernel_modules_install",
     "kernel_unstripped_modules_archive",
     "merged_kernel_uapi_headers",
 )
-load("//common:modules.bzl", "get_gki_modules_list")
-
-RAVIOLE_DTBOS = [
-    "google/gs101-oriole.dtbo",
-    "google/gs101-oriole-evt1_1.dtbo",
-    "google/gs101-oriole-evt1.dtbo",
-    "google/gs101-oriole-evt-wingboard.dtbo",
-    "google/gs101-oriole-proto1_1.dtbo",
-    "google/gs101-oriole-proto1.dtbo",
-    "google/gs101-raven.dtbo",
-    "google/gs101-raven-evt1_1.dtbo",
-    "google/gs101-raven-evt1.dtbo",
-    "google/gs101-raven-evt-wingboard.dtbo",
-    "google/gs101-raven-proto1_1.dtbo",
-    "google/gs101-raven-proto1.dtbo",
-    "google/gs101-slider2.dtbo",
-    "google/gs101-slider2-o6r4.dtbo",
-    "google/gs101-slider.dtbo",
-    "google/gs101-whitefin2.dtbo",
-    "google/gs101-whitefin2v2.dtbo",
-    "google/gs101-whitefin.dtbo",
-    "google/gs101-bluejay-dev.dtbo",
-    "google/gs101-bluejay-proto1_0.dtbo",
-    "google/gs101-bluejay-proto1_1.dtbo",
-    "google/gs101-bluejay-evt1_0.dtbo",
-    "google/gs101-bluejay-evt1_1.dtbo",
-    "google/gs101-bluejay-evt1_2.dtbo",
-    "google/gs101-bluejay-dvt1_0.dtbo",
-    "google/gs101-bluejay-dvt1_1.dtbo",
-    "google/gs101-bluejay-pvt1_0.dtbo",
-    "google/gs101-bluejay-mp1_0.dtbo",
-]
+load("//private/devices/google/common/kleaf:create_file.bzl", "create_file")
+load("//private/devices/google/gs101:constants.bzl", "GS101_DTBS", "GS101_MODULE_OUTS")
+load(":constants.bzl", "RAVIOLE_DTBOS")
 
 kernel_build_config(
-    name = "raviole_build_config",
+    name = "build_config",
     srcs = [
         # do not sort
-        "//common:set_kernel_dir_build_config",
-        "build.config.raviole",
+        "//private/devices/google/gs101:build_config",
+    ],
+)
+
+kernel_dtstree(
+    name = "dtstree",
+    srcs = glob(["dts/**"]) + [
+        "//private/google-modules/soc/gs:gs.dt-bindings",
+    ],
+    makefile = "dts/Makefile",
+)
+
+create_file(
+    name = "kconfig_ext",
+    srcs = [
+        # do not sort
+        "//private/devices/google/gs101:kconfig_ext",
+        "Kconfig.ext.raviole",
+    ],
+    out = "Kconfig.ext",
+)
+
+filegroup(
+    name = "defconfig_fragments",
+    srcs = [
+        # do not sort
+        "//private/devices/google/gs101:defconfig_fragments",
+        "raviole_defconfig",
     ],
 )
 
 filegroup(
-    name = "gki_aarch64_boot_lz4",
-    srcs = ["//common:kernel_aarch64_gki_artifacts_download_or_build"],
-)
-
-hermetic_genrule(
-    name = "gki_aarch64_boot",
-    srcs = [":gki_aarch64_boot_lz4"],
-    outs = ["boot.img"],
-    cmd = """
-        for f in $(locations :gki_aarch64_boot_lz4); do
-            if [[ "$${f##*/}" == "boot-lz4.img" ]]; then
-                cp -L $$f $(location boot.img)
-                break
-            fi
-        done
-    """,
-)
-
-# The list ordering matches EXT_MODULES in build.config.raviole in order to
-# retain the very fragile module load ordering.
-kernel_module_group(
-    name = "raviole_ext_modules",
+    name = "kernel_sources",
     srcs = [
-        # do not sort
-        "//private/devices/google/raviole:gs101_soc.raviole",
-        "//private/devices/google/raviole/display:drm_panel.google",
-        "//private/google-modules/display/common/gs_drm",
-        "//private/google-modules/display/common/gs_panel",
-        "//private/google-modules/display/samsung:display.samsung",
-        "//private/google-modules/wlan/bcm4389:bcmdhd4389",
-        "//private/google-modules/gps/broadcom/bcm47765",
-        "//private/google-modules/gpu/mali_kbase",
-        "//private/google-modules/gpu/mali_pixel",
-        "//private/google-modules/lwis",
-        "//private/google-modules/misc/sscoredump",
-        "//private/google-modules/edgetpu/abrolhos/drivers/edgetpu:edgetpu.abrolhos",
-        "//private/google-modules/bms",
-        "//private/google-modules/bms/misc:bms-misc",
-        "//private/google-modules/amplifiers/snd_soc_wm_adsp:snd-soc-wm-adsp",
-        "//private/google-modules/amplifiers/drv2624",
-        "//private/google-modules/amplifiers/cs40l25",
-        "//private/google-modules/amplifiers/cs40l26",
-        "//private/google-modules/amplifiers/cs35l41",
-        "//private/google-modules/amplifiers/audiometrics",
-        "//private/google-modules/aoc",
-        "//private/google-modules/aoc/alsa",
-        "//private/google-modules/aoc/usb:aoc.usb",
-        "//private/google-modules/touch/common:touch.common",
-        "//private/google-modules/touch/fts/ftm5_legacy:ftm5",
-        "//private/google-modules/touch/sec",
-        "//private/google-modules/trusty",
-        "//private/google-modules/power/mitigation:bcl",
-        "//private/google-modules/power/reset",
-        "//private/google-modules/radio/samsung/s5300:cpif.dit",
-        "//private/google-modules/bluetooth/broadcom:bluetooth.broadcom",
-        "//private/google-modules/nfc",
-        "//private/google-modules/video/gchips:video.gchips",
-        "//private/google-modules/uwb/qorvo/dw3000/kernel:uwb.dw3000",
+        # keep sorted
+        "//private/devices/google/gs101:kernel_sources",
+        "//private/google-modules/radio/samsung/s5300:cpif.kconfig",
+        "//private/google-modules/touch/common:touch.common.kconfig",
+        "//private/google-modules/touch/fts/ftm5:ftm5.kconfig",
+        "//private/google-modules/touch/sec:sec.kconfig",
     ],
 )
 
 kernel_build(
-    name = "gs101_raviole",
-    srcs = glob([
-        "build.config.*",
-        "dts/**",
-    ]) + [
-        # keep sorted
-        "//common:kernel_aarch64_sources",
-        "//private/devices/google/gs101:build.config.gs101",
-        "//private/google-modules/bms/misc:bms-misc.kconfig",
-        "//private/google-modules/display/common:common.kconfig",
-        "//private/google-modules/display/samsung:display.samsung.kconfig",
-        "//private/google-modules/fingerprint/qcom/qfs4008:qbt_handler.kconfig",
-        "//private/google-modules/power/mitigation:bcl.kconfig",
-        "//private/google-modules/power/reset:reset.kconfig",
-        "//private/google-modules/radio/samsung/s5300:cpif.kconfig",
-        "//private/google-modules/radio/samsung/s5400:cpif.kconfig",
-        "//private/google-modules/soc/gs:gs_soc.kconfig",
-        "//private/google-modules/touch/common:touch.common.kconfig",
-        "//private/google-modules/touch/fts/ftm5:ftm5.kconfig",
-        "//private/google-modules/touch/sec:sec.kconfig",
-        "//private/google-modules/trusty:trusty.kconfig",
-        "//private/google-modules/wlan/wlan_ptracker:wlan_ptracker.kconfig",
-    ],
+    name = "kernel",
+    srcs = [":kernel_sources"],
     outs = [
-        "google/gs101-a0.dtb",
-        "google/gs101-b0.dtb",
-    ],
-    base_kernel = "//common:kernel_aarch64_download_or_build",
-    build_config = ":raviole_build_config",
+        "gs101/{}".format(dtb)
+        for dtb in GS101_DTBS
+    ] + RAVIOLE_DTBOS,
+    base_kernel = "//common:kernel_aarch64",
+    build_config = ":build_config",
     collect_unstripped_modules = True,
-    defconfig_fragments = ["raviole_defconfig"],
-    dtstree = "//private/devices/google/raviole/dts:raviole.dt",
-    implicit_outs = RAVIOLE_DTBOS,
-    kconfig_ext = "Kconfig.ext",
+    defconfig_fragments = [":defconfig_fragments"],
+    dtstree = ":dtstree",
+    kconfig_ext = ":kconfig_ext",
     kmi_symbol_list = "//common:android/abi_gki_aarch64_pixel",
     make_goals = [
         "modules",
         "dtbs",
     ],
-    module_outs = [
-        # keep sorted
-        "drivers/gpu/drm/display/drm_display_helper.ko",
-        "drivers/i2c/i2c-dev.ko",
-        "drivers/misc/eeprom/at24.ko",
-        "drivers/perf/arm_dsu_pmu.ko",
-        "drivers/scsi/sg.ko",
-        "drivers/spi/spidev.ko",
-        "drivers/watchdog/softdog.ko",
-        "net/core/pktgen.ko",
-        "net/mac80211/mac80211.ko",
-        "net/wireless/cfg80211.ko",
-    ],
+    module_outs = GS101_MODULE_OUTS,
     strip_modules = True,
 )
 
-kernel_abi(
-    name = "gs101_raviole_abi",
-    kernel_build = ":gs101_raviole",
-    kernel_modules = [":raviole_ext_modules"],
-    kmi_symbol_list_add_only = True,
-    module_grouping = False,
-)
-
-kernel_module(
-    name = "gs101_soc.raviole",
+kernel_module_group(
+    name = "kernel_ext_modules",
+    # FIXME: Do not sort here because of the fragile module load ordering, which needs to be fixed.
     srcs = [
-        "//private/google-modules/soc/gs:gs_soc_sources",
-        "//private/google-modules/trusty:headers",
-    ],
-    outs = [
-        # keep sorted
-        "drivers/block/zram/zcomp_cpu.ko",
-        "drivers/block/zram/zcomp_eh.ko",
-        "drivers/block/zram/zram_gs.ko",
-        "drivers/bts/bts.ko",
-        "drivers/char/hw_random/exyswd-rng.ko",
-        "drivers/clk/gs/clk_exynos_gs.ko",
-        "drivers/clocksource/exynos_mct.ko",
-        "drivers/cpufreq/exynos-acme.ko",
-        "drivers/devfreq-whi/google/exynos_devfreq.ko",
-        "drivers/dma-buf/heaps/samsung/samsung_dma_heap.ko",
-        "drivers/dma/pl330.ko",
-        "drivers/dma/samsung-dma.ko",
-        "drivers/gpu/exynos/g2d/g2d.ko",
-        "drivers/i2c/busses/i2c-acpm.ko",
-        "drivers/i2c/busses/i2c-exynos5.ko",
-        "drivers/iio/power/odpm-whi.ko",
-        "drivers/input/fingerprint/goodixfp.ko",
-        "drivers/input/keycombo.ko",
-        "drivers/input/keydebug.ko",
-        "drivers/input/misc/vl53l1/stmvl53l1.ko",
-        "drivers/iommu/samsung-iommu-group.ko",
-        "drivers/iommu/samsung-secure-iova.ko",
-        "drivers/iommu/samsung_iommu.ko",
-        "drivers/media/platform/exynos/mfc/exynos_mfc.ko",
-        "drivers/media/platform/exynos/smfc/smfc.ko",
-        "drivers/mfd/s2mpg10-mfd.ko",
-        "drivers/mfd/s2mpg11-mfd.ko",
-        "drivers/mfd/s2mpg1x-gpio.ko",
-        "drivers/mfd/slg51000-core.ko",
-        "drivers/misc/gsc-spi.ko",
-        "drivers/misc/sbb-mux/sbb-mux.ko",
-        "drivers/misc/sscoredump/sscoredump.ko",
-        "drivers/pci/controller/dwc-whi/pcie-exynos-gs.ko",
-        "drivers/pci/controller/dwc-whi/pcie-exynos-gs101-rc-cal.ko",
-        "drivers/performance/gs_perf_mon/gs_perf_mon.ko",
-        "drivers/performance/lat_governors/gs_governor_memlat.ko",
-        "drivers/performance/lat_governors/gs_governor_utils.ko",
-        "drivers/phy/samsung/phy-exynos-mipi.ko",
-        "drivers/phy/samsung/phy-exynos-mipi-dsim.ko",
-        "drivers/phy/samsung/phy-exynos-usbdrd-super.ko",
-        "drivers/pinctrl/gs/pinctrl-exynos-gs.ko",
-        "drivers/pinctrl/pinctrl-slg51000.ko",
-        "drivers/power/reset/debug-reboot.ko",
-        "drivers/regulator/max77826-gs-regulator.ko",
-        "drivers/regulator/pmic_class.ko",
-        "drivers/regulator/s2mpg10-powermeter.ko",
-        "drivers/regulator/s2mpg10-regulator.ko",
-        "drivers/regulator/s2mpg11-powermeter.ko",
-        "drivers/regulator/s2mpg11-regulator.ko",
-        "drivers/regulator/slg51000-regulator.ko",
-        "drivers/rtc/rtc-s2mpg10.ko",
-        "drivers/soc/google/acpm/acpm_flexpmu_dbg.ko",
-        "drivers/soc/google/acpm/acpm_mbox_test.ko",
-        "drivers/soc/google/acpm/gs_acpm.ko",
-        "drivers/soc/google/acpm/power_stats.ko",
-        "drivers/soc/google/bcm_dbg.ko",
-        "drivers/soc/google/boot_control/boot_control_sysfs.ko",
-        "drivers/soc/google/cal-if/cmupmucal.ko",
-        "drivers/soc/google/dbgcore-dump.ko",
-        "drivers/soc/google/debug/debug-snapshot-debug-kinfo.ko",
-        "drivers/soc/google/debug/debug-snapshot-qd.ko",
-        "drivers/soc/google/debug/debug-snapshot-sfrdump.ko",
-        "drivers/soc/google/debug/dss.ko",
-        "drivers/soc/google/debug/ehld.ko",
-        "drivers/soc/google/debug/exynos-adv-tracer.ko",
-        "drivers/soc/google/debug/exynos-adv-tracer-s2d.ko",
-        "drivers/soc/google/debug/exynos-coresight.ko",
-        "drivers/soc/google/debug/exynos-coresight-etm.ko",
-        "drivers/soc/google/debug/exynos-debug-test.ko",
-        "drivers/soc/google/debug/exynos-ecc-handler.ko",
-        "drivers/soc/google/debug/itmon.ko",
-        "drivers/soc/google/debug/pixel-boot-metrics.ko",
-        "drivers/soc/google/debug/pixel-debug-test.ko",
-        "drivers/soc/google/debug/pixel-suspend-diag.ko",
-        "drivers/soc/google/debug/sjtag-driver.ko",
-        "drivers/soc/google/ect_parser.ko",
-        "drivers/soc/google/eh/eh.ko",
-        "drivers/soc/google/exynos-bcm_dbg-dump.ko",
-        "drivers/soc/google/exynos-cpuhp.ko",
-        "drivers/soc/google/exynos-cpupm.ko",
-        "drivers/soc/google/exynos-dm.ko",
-        "drivers/soc/google/exynos-pd.ko",
-        "drivers/soc/google/exynos-pd-dbg.ko",
-        "drivers/soc/google/exynos-pd_el3.ko",
-        "drivers/soc/google/exynos-pd_hsi0.ko",
-        "drivers/soc/google/exynos-pm.ko",
-        "drivers/soc/google/exynos-pmu-if.ko",
-        "drivers/soc/google/exynos-seclog.ko",
-        "drivers/soc/google/exynos_pm_qos.ko",
-        "drivers/soc/google/gs-chipid.ko",
-        "drivers/soc/google/gsa/gsa.ko",
-        "drivers/soc/google/gsa/gsa_gsc.ko",
-        "drivers/soc/google/hardlockup-debug.ko",
-        "drivers/soc/google/hardlockup-watchdog.ko",
-        "drivers/soc/google/kernel-top.ko",
-        "drivers/soc/google/pixel_stat/mm/pixel_stat_mm.ko",
-        "drivers/soc/google/pixel_stat/pixel_stat_sysfs.ko",
-        "drivers/soc/google/pt/slc_acpm.ko",
-        "drivers/soc/google/pt/slc_dummy.ko",
-        "drivers/soc/google/pt/slc_pmon.ko",
-        "drivers/soc/google/pt/slc_pt.ko",
-        "drivers/soc/google/s2mpu/s2mpu.ko",
-        "drivers/soc/google/sysrq-hook.ko",
-        "drivers/soc/google/vh/kernel/cgroup/vh_cgroup.ko",
-        "drivers/soc/google/vh/kernel/fs/vh_fs.ko",
-        "drivers/soc/google/vh/kernel/metrics/pixel_metrics.ko",
-        "drivers/soc/google/vh/kernel/mm/vh_mm.ko",
-        "drivers/soc/google/vh/kernel/pixel_em/pixel_em.ko",
-        "drivers/soc/google/vh/kernel/sched/sched_tp.ko",
-        "drivers/soc/google/vh/kernel/sched/vh_preemptirq_long.ko",
-        "drivers/soc/google/vh/kernel/sched/vh_sched.ko",
-        "drivers/soc/google/vh/kernel/systrace.ko",
-        "drivers/soc/google/vh/kernel/thermal/vh_thermal.ko",
-        "drivers/spi/spi-s3c64xx.ko",
-        "drivers/thermal/google/gs101_spmic_thermal.ko",
-        "drivers/thermal/samsung/gpu_cooling.ko",
-        "drivers/thermal/samsung/gs_thermal.ko",
-        "drivers/tty/serial/exynos_tty.ko",
-        "drivers/ufs/ufs-exynos-gs.ko",
-        "drivers/ufs/ufs-pixel-fips140.ko",
-        "drivers/usb/dwc3/dwc3-exynos-usb.ko",
-        "drivers/usb/gadget/function/usb_f_dm.ko",
-        "drivers/usb/gadget/function/usb_f_dm1.ko",
-        "drivers/usb/gadget/function/usb_f_etr_miu.ko",
-        "drivers/usb/host/xhci-exynos.ko",
-        "drivers/usb/typec/tcpm/google/bc_max77759.ko",
-        "drivers/usb/typec/tcpm/google/google_tcpci_shim.ko",
-        "drivers/usb/typec/tcpm/google/max77759_contaminant.ko",
-        "drivers/usb/typec/tcpm/google/max77759_helper.ko",
-        "drivers/usb/typec/tcpm/google/max77779_contaminant.ko",
-        "drivers/usb/typec/tcpm/google/max777x9_contaminant.ko",
-        "drivers/usb/typec/tcpm/google/slg46826.ko",
-        "drivers/usb/typec/tcpm/google/tcpci_fusb307.ko",
-        "drivers/usb/typec/tcpm/google/tcpci_max77759.ko",
-        "drivers/usb/typec/tcpm/google/usb_psy.ko",
-        "drivers/usb/typec/tcpm/google/usbc_cooling_dev.ko",
-        "drivers/watchdog/s3c2410_wdt.ko",
-    ],
-    kernel_build = "//private/google-modules/soc/gs:gs_kernel_build",
-    makefile = ["//private/google-modules/soc/gs:Makefile"],
-    visibility = [
-        # keep sorted
-        "//private/devices/google:__subpackages__",
-        "//private/google-modules:__subpackages__",
-    ],
-    deps = [
-        "//private/google-modules/bms/misc:bms-misc",
-        "//private/google-modules/trusty",
+        # do not sort
+        "//private/devices/google/gs101:kernel_ext_modules",
+        "//private/devices/google/raviole/display:drm_panel.google",
+        "//private/google-modules/wlan/bcm4389:bcmdhd4389",
+        "//private/google-modules/gps/broadcom/bcm47765",
+        "//private/google-modules/amplifiers/drv2624",
+        "//private/google-modules/amplifiers/cs40l25",
+        "//private/google-modules/amplifiers/cs40l26",
+        "//private/google-modules/amplifiers/cs35l41",
+        "//private/google-modules/touch/common:touch.common",
+        "//private/google-modules/touch/fts/ftm5_legacy:ftm5",
+        "//private/google-modules/touch/sec",
+        "//private/google-modules/radio/samsung/s5300:cpif.dit",
+        "//private/google-modules/bluetooth/broadcom:bluetooth.broadcom",
+        "//private/google-modules/nfc",
+        "//private/google-modules/uwb/qorvo/dw3000/kernel:uwb.dw3000",
     ],
 )
 
 kernel_modules_install(
-    name = "gs101_raviole_modules_install",
-    kernel_build = ":gs101_raviole",
-    kernel_modules = [":raviole_ext_modules"],
+    name = "kernel_modules_install",
+    kernel_build = ":kernel",
+    kernel_modules = [":kernel_ext_modules"],
 )
 
-merged_kernel_uapi_headers(
-    name = "gs101_raviole_merged_kernel_uapi_headers",
-    kernel_build = ":gs101_raviole",
-    kernel_modules = [":raviole_ext_modules"],
+create_file(
+    name = "vendor_ramdisk_modules_list",
+    srcs = [
+        # do not sort
+        "//private/devices/google/gs101:vendor_ramdisk_modules_list",
+        "vendor_ramdisk.modules.raviole",
+    ],
+    out = "vendor_ramdisk.modules",
 )
 
-kernel_unstripped_modules_archive(
-    name = "gs101_raviole_unstripped_modules_archive",
-    kernel_build = ":gs101_raviole",
-    kernel_modules = [":raviole_ext_modules"],
+create_file(
+    name = "vendor_dlkm_modules_list",
+    srcs = [
+        # do not sort
+        "//private/devices/google/gs101:system_dlkm_modules_list",
+        "//private/devices/google/gs101:vendor_dlkm_modules_list",
+    ],
+    out = "vendor_dlkm.modules",
+)
+
+create_file(
+    name = "vendor_dlkm_modules_blocklist",
+    srcs = [
+        # do not sort
+        "//private/devices/google/gs101:system_dlkm_modules_blocklist",
+        "//private/devices/google/gs101:vendor_dlkm_modules_blocklist",
+        "vendor_dlkm.blocklist.raviole",
+    ],
+    out = "vendor_dlkm.blocklist",
+)
+
+create_file(
+    name = "vendor_dlkm_props",
+    srcs = ["//private/devices/google/gs101:vendor_dlkm_props"],
+    out = "vendor_dlkm.props",
 )
 
 kernel_images(
-    name = "gs101_raviole_images",
-    base_kernel_images = "//common:kernel_aarch64_images_download_or_build",
-    boot_image_outs = ["dtb.img"],
-    build_boot = False,
+    name = "kernel_images",
+    base_kernel_images = "//common:kernel_aarch64_images",
     build_dtbo = True,
     build_initramfs = True,
-    build_vendor_boot = False,
     build_vendor_dlkm = True,
-    dtbo_srcs = [":gs101_raviole/" + e for e in RAVIOLE_DTBOS],
-    kernel_build = ":gs101_raviole",
-    kernel_modules_install = ":gs101_raviole_modules_install",
-    # Keep the following in sync with build.config.raviole:
-    modules_list = "vendor_boot_modules.raviole",
+    dtbo_srcs = [":kernel/" + dtbo for dtbo in RAVIOLE_DTBOS],
+    kernel_build = ":kernel",
+    kernel_modules_install = ":kernel_modules_install",
+    modules_list = ":vendor_ramdisk_modules_list",
+    ramdisk_compression = "lz4",
     vendor_dlkm_archive = True,
-    vendor_dlkm_modules_blocklist = "vendor_dlkm.blocklist.raviole",
-    vendor_dlkm_modules_list = "vendor_dlkm_modules.raviole",
-    vendor_dlkm_props = "vendor_dlkm.props.raviole",
-    deps = [
-        # Keep the following in sync with vendor_dlkm.props:
-        # selinux_fc
-        "//private/devices/google/common:sepolicy",
-    ],
+    vendor_dlkm_modules_blocklist = ":vendor_dlkm_modules_blocklist",
+    vendor_dlkm_modules_list = ":vendor_dlkm_modules_list",
+    vendor_dlkm_props = ":vendor_dlkm_props",
+    deps = ["//private/devices/google/common:sepolicy/vendor_dlkm_file_contexts"],
 )
 
-# Don't load the zram GKI module
-_GKI_MODULES = [m for m in get_gki_modules_list("arm64") if not m.endswith("zram.ko")]
+kernel_unstripped_modules_archive(
+    name = "kernel_unstripped_modules_archive",
+    kernel_build = ":kernel",
+    kernel_modules = [":kernel_ext_modules"],
+)
 
-raviole_dist_targets = [
-    ":gs101_raviole",
-    ":gs101_raviole_images",
-    ":gki_aarch64_boot",
-    # At the time of writing (2022-02-04), this intentionally diverges from
-    # the behavior of build.sh-style mixed builds by also incorporating
-    # UAPI headers of external modules, while build.sh-style mixed builds
-    # always uses kernel-uapi-headers.tar.gz from GKI_DIST_DIR.
-    # To use GKI's kernel-uapi-headers.tar.gz in DIST_DIR, use
-    #     //common:kernel_aarch64_uapi_headers
-    # instead.
-    ":gs101_raviole_merged_kernel_uapi_headers",
-    ":gs101_raviole_modules_install",
-    ":gs101_raviole_unstripped_modules_archive",
-    "vendor_dlkm.props.raviole",
-    "//private/devices/google/common:sepolicy/vendor_dlkm_file_contexts",
-    "//common:android/abi_gki_aarch64_pixel",
-    "//common:kernel_aarch64",
-    "//common:kernel_aarch64_headers",
-] + [
-    "//common:kernel_aarch64/{}".format(m)
-    for m in _GKI_MODULES
-] + select({
-    "//private/devices/google/common:enable_download_fips140": ["@gki_prebuilt_fips140//fips140.ko"],
-    "//private/devices/google/common:disable_download_fips140": [],
-})
+merged_kernel_uapi_headers(
+    name = "merged_kernel_uapi_headers",
+    kernel_build = ":kernel",
+    kernel_modules = [":kernel_ext_modules"],
+)
 
 copy_to_dist_dir(
-    name = "gs101_raviole_dist",
-    data = raviole_dist_targets,
+    name = "dist",
+    data = [
+        # keep sorted
+        ":kernel",
+        ":kernel_images",
+        ":kernel_modules_install",
+        ":kernel_unstripped_modules_archive",
+        ":merged_kernel_uapi_headers",
+        ":vendor_dlkm_props",
+        "//common:android/abi_gki_aarch64_pixel",
+        "//common:kernel_aarch64",
+        "//common:kernel_aarch64_gki_boot_image",
+        "//common:kernel_aarch64_gki_modules",
+        "//common:kernel_aarch64_headers",
+        "//private/devices/google/common:sepolicy/vendor_dlkm_file_contexts",
+    ] + select({
+        "//private/devices/google/common:enable_download_fips140": ["@gki_prebuilt_fips140//fips140.ko"],
+        "//private/devices/google/common:disable_download_fips140": [],
+    }),
     dist_dir = "out/raviole/dist",
     flat = True,
     log = "info",
+)
+
+# For ABI monitoring
+kernel_abi(
+    name = "kernel_abi",
+    kernel_build = ":kernel",
+    kernel_modules = [":kernel_ext_modules"],
+    kmi_symbol_list_add_only = True,
+    module_grouping = False,
+)
+
+# For compatibility
+alias(
+    name = "gs101_soc.raviole",
+    actual = "//private/devices/google/gs101:gs101_soc",
+)
+
+alias(
+    name = "gs101_raviole_dist",
+    actual = ":dist",
+)
+
+alias(
+    name = "gs101_raviole_abi_update_symbol_list",
+    actual = ":kernel_abi_update_symbol_list",
 )
