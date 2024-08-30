@@ -74,7 +74,7 @@ extern unsigned int sysctl_sched_uclamp_max_filter_divider;
 #define MAX_PROC_SIZE 128
 
 static const char *GRP_NAME[VG_MAX] = {"sys", "ta", "fg", "cam", "cam_power", "bg", "sys_bg",
-				       "nnapi", "rt", "dex2oat", "ota", "sf"};
+				       "nnapi", "rt", "dex2oat", "ota", "sf", "fg_wi"};
 
 enum vendor_procfs_type {
 	DEFAULT_TYPE = 0,
@@ -157,6 +157,7 @@ enum vendor_procfs_type {
 		__PROC_GROUP_ENTRY(uclamp_max_on_nice_mid_prio, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(uclamp_max_on_nice_high_prio, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(rampup_multiplier, __group_name, __vg),	\
+		__PROC_GROUP_ENTRY(disable_util_est, __group_name, __vg),	\
 		__PROC_SET_GROUP_ENTRY(set_task_group, __group_name, __vg),	\
 		__PROC_SET_GROUP_ENTRY(set_proc_group, __group_name, __vg)
 
@@ -314,11 +315,13 @@ enum vendor_procfs_type {
 				return -EINVAL;						      \
 			if (val == gp->uc_req[__cid].value)				      \
 				return count;						      \
-			if (val == AUTO_UCLAMP_MAX_MAGIC) {				      \
-				gp->auto_uclamp_max = true;				      \
-				val = uclamp_none(UCLAMP_MAX);				      \
-			} else {							      \
-				gp->auto_uclamp_max = false;				      \
+			if (__cid == UCLAMP_MAX) {					      \
+				if (val == AUTO_UCLAMP_MAX_MAGIC) {			      \
+					gp->auto_uclamp_max = true;			      \
+					val = uclamp_none(UCLAMP_MAX);			      \
+				} else {						      \
+					gp->auto_uclamp_max = false;			      \
+				}							      \
 			}								      \
 			gp->uc_req[__cid].value = val;					      \
 			gp->uc_req[__cid].bucket_id = get_bucket_id(val);		      \
@@ -492,6 +495,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(ta, uclamp_min_on_nice_enable, VG_TOPAPP);
 VENDOR_GROUP_BOOL_ATTRIBUTE(ta, uclamp_max_on_nice_enable, VG_TOPAPP);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ta, rampup_multiplier, VG_TOPAPP, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(ta, disable_util_est, VG_TOPAPP);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ta, ug, VG_TOPAPP, check_ug);
 #endif
@@ -530,6 +534,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(fg, uclamp_min_on_nice_enable, VG_FOREGROUND);
 VENDOR_GROUP_BOOL_ATTRIBUTE(fg, uclamp_max_on_nice_enable, VG_FOREGROUND);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg, rampup_multiplier, VG_FOREGROUND, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg, disable_util_est, VG_FOREGROUND);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg, ug, VG_FOREGROUND, check_ug);
 #endif
@@ -568,6 +573,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(sys, uclamp_min_on_nice_enable, VG_SYSTEM);
 VENDOR_GROUP_BOOL_ATTRIBUTE(sys, uclamp_max_on_nice_enable, VG_SYSTEM);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sys, rampup_multiplier, VG_SYSTEM, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sys, disable_util_est, VG_SYSTEM);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sys, ug, VG_SYSTEM, check_ug);
 #endif
@@ -606,6 +612,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(cam, uclamp_min_on_nice_enable, VG_CAMERA);
 VENDOR_GROUP_BOOL_ATTRIBUTE(cam, uclamp_max_on_nice_enable, VG_CAMERA);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam, rampup_multiplier, VG_CAMERA, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(cam, disable_util_est, VG_CAMERA);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam, ug, VG_CAMERA, check_ug);
 #endif
@@ -644,6 +651,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, uclamp_min_on_nice_enable, VG_CAMERA_POWE
 VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, uclamp_max_on_nice_enable, VG_CAMERA_POWER);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam_power, rampup_multiplier, VG_CAMERA_POWER, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, disable_util_est, VG_CAMERA_POWER);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam_power, ug, VG_CAMERA_POWER, check_ug);
 #endif
@@ -682,6 +690,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(bg, uclamp_min_on_nice_enable, VG_BACKGROUND);
 VENDOR_GROUP_BOOL_ATTRIBUTE(bg, uclamp_max_on_nice_enable, VG_BACKGROUND);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(bg, rampup_multiplier, VG_BACKGROUND, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(bg, disable_util_est, VG_BACKGROUND);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(bg, ug, VG_BACKGROUND, check_ug);
 #endif
@@ -720,6 +729,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, uclamp_min_on_nice_enable, VG_SYSTEM_BACKGROU
 VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, uclamp_max_on_nice_enable, VG_SYSTEM_BACKGROUND);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sysbg, rampup_multiplier, VG_SYSTEM_BACKGROUND, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, disable_util_est, VG_SYSTEM_BACKGROUND);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sysbg, ug, VG_SYSTEM_BACKGROUND, check_ug);
 #endif
@@ -758,6 +768,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, uclamp_min_on_nice_enable, VG_NNAPI_HAL);
 VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, uclamp_max_on_nice_enable, VG_NNAPI_HAL);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(nnapi, rampup_multiplier, VG_NNAPI_HAL, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, disable_util_est, VG_NNAPI_HAL);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(nnapi, ug, VG_NNAPI_HAL, check_ug);
 #endif
@@ -796,6 +807,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(rt, uclamp_min_on_nice_enable, VG_RT);
 VENDOR_GROUP_BOOL_ATTRIBUTE(rt, uclamp_max_on_nice_enable, VG_RT);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(rt, rampup_multiplier, VG_RT, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(rt, disable_util_est, VG_RT);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(rt, ug, VG_RT, check_ug);
 #endif
@@ -834,6 +846,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, uclamp_min_on_nice_enable, VG_DEX2OAT);
 VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, uclamp_max_on_nice_enable, VG_DEX2OAT);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(dex2oat, rampup_multiplier, VG_DEX2OAT, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, disable_util_est, VG_DEX2OAT);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(dex2oat, ug, VG_DEX2OAT, check_ug);
 #endif
@@ -872,6 +885,7 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(ota, uclamp_min_on_nice_enable, VG_OTA);
 VENDOR_GROUP_BOOL_ATTRIBUTE(ota, uclamp_max_on_nice_enable, VG_OTA);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ota, rampup_multiplier, VG_OTA, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(ota, disable_util_est, VG_OTA);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ota, ug, VG_OTA, check_ug);
 #endif
@@ -910,8 +924,48 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(sf, uclamp_min_on_nice_enable, VG_SF);
 VENDOR_GROUP_BOOL_ATTRIBUTE(sf, uclamp_max_on_nice_enable, VG_SF);
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sf, rampup_multiplier, VG_SF, \
 	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sf, disable_util_est, VG_SF);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sf, ug, VG_SF, check_ug);
+#endif
+
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, prefer_idle, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, prefer_high_cap, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, task_spreading, VG_FOREGROUND_WINDOW);
+#if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
+VENDOR_GROUP_UINT_ATTRIBUTE(fg_wi, group_throttle, VG_FOREGROUND_WINDOW);
+#endif
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(fg_wi, group_cfs_skip_mask, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(fg_wi, preferred_idle_mask_low, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(fg_wi, preferred_idle_mask_mid, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_CPUMASK_ATTRIBUTE(fg_wi, preferred_idle_mask_high, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_UCLAMP_ATTRIBUTE(fg_wi, uclamp_min, VG_FOREGROUND_WINDOW, UCLAMP_MIN);
+VENDOR_GROUP_UCLAMP_ATTRIBUTE(fg_wi, uclamp_max, VG_FOREGROUND_WINDOW, UCLAMP_MAX);
+VENDOR_GROUP_UINT_ATTRIBUTE(fg_wi, uclamp_min_on_nice_low_value, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_UINT_ATTRIBUTE(fg_wi, uclamp_min_on_nice_mid_value, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_UINT_ATTRIBUTE(fg_wi, uclamp_min_on_nice_high_value, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_UINT_ATTRIBUTE(fg_wi, uclamp_max_on_nice_low_value, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_UINT_ATTRIBUTE(fg_wi, uclamp_max_on_nice_mid_value, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_UINT_ATTRIBUTE(fg_wi, uclamp_max_on_nice_high_value, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg_wi, uclamp_min_on_nice_low_prio, VG_FOREGROUND_WINDOW, \
+	check_uclamp_min_on_nice_prio);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg_wi, uclamp_min_on_nice_mid_prio, VG_FOREGROUND_WINDOW, \
+	check_uclamp_min_on_nice_prio);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg_wi, uclamp_min_on_nice_high_prio, VG_FOREGROUND_WINDOW, \
+	check_uclamp_min_on_nice_prio);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg_wi, uclamp_max_on_nice_low_prio, VG_FOREGROUND_WINDOW, \
+	check_uclamp_max_on_nice_prio);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg_wi, uclamp_max_on_nice_mid_prio, VG_FOREGROUND_WINDOW, \
+	check_uclamp_max_on_nice_prio);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg_wi, uclamp_max_on_nice_high_prio, VG_FOREGROUND_WINDOW, \
+	check_uclamp_max_on_nice_prio);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, uclamp_min_on_nice_enable, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, uclamp_max_on_nice_enable, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg_wi, rampup_multiplier, VG_FOREGROUND_WINDOW, \
+	check_rampup_multiplier);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, disable_util_est, VG_FOREGROUND_WINDOW);
+#if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
+VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg_wi, ug, VG_FOREGROUND_WINDOW, check_ug);
 #endif
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
@@ -1490,6 +1544,7 @@ SET_VENDOR_GROUP_STORE(rt, VG_RT);
 SET_VENDOR_GROUP_STORE(dex2oat, VG_DEX2OAT);
 SET_VENDOR_GROUP_STORE(ota, VG_OTA);
 SET_VENDOR_GROUP_STORE(sf, VG_SF);
+SET_VENDOR_GROUP_STORE(fg_wi, VG_FOREGROUND_WINDOW);
 
 // Create per-task attribute nodes
 PER_TASK_BOOL_ATTRIBUTE(prefer_idle);
@@ -3059,6 +3114,7 @@ static struct pentry entries[] = {
 	PROC_GROUP_ENTRIES(dex2oat, VG_DEX2OAT),
 	PROC_GROUP_ENTRIES(ota, VG_OTA),
 	PROC_GROUP_ENTRIES(sf, VG_SF),
+	PROC_GROUP_ENTRIES(fg_wi, VG_FOREGROUND_WINDOW),
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 	// FG util group attributes
 #if IS_ENABLED(CONFIG_USE_GROUP_THROTTLE)

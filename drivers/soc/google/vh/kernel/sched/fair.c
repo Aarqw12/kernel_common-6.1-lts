@@ -58,10 +58,10 @@ unsigned int sched_dvfs_headroom[CONFIG_VH_SCHED_MAX_CPU_NR] =
 	{ [0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1] = DEF_UTIL_THRESHOLD };
 
 unsigned int sched_auto_uclamp_max[CONFIG_VH_SCHED_MAX_CPU_NR] =
-	{ [0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1] = 1024 };
+	{ [0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1] = SCHED_CAPACITY_SCALE };
 
 struct thermal_cap thermal_cap[CONFIG_VH_SCHED_MAX_CPU_NR] = {
-	[0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1].uclamp_max = 1024,
+	[0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1].uclamp_max = SCHED_CAPACITY_SCALE,
 	[0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1].freq = UINT_MAX};
 
 unsigned int __read_mostly sched_per_task_iowait_boost_max_value = 0;
@@ -2251,6 +2251,7 @@ void initialize_vendor_group_property(void)
 		vg[i].ug = UG_AUTO;
 #endif
 		vg[i].rampup_multiplier = 1;
+		vg[i].disable_util_est = false;
 	}
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
@@ -2318,13 +2319,13 @@ void rvh_util_est_update_pixel_mod(void *data, struct cfs_rq *cfs_rq, struct tas
 		else
 			rampup_multiplier = vg[get_vendor_group(p)].rampup_multiplier;
 
-		if (!rampup_multiplier) {
+		if (vg[get_vendor_group(p)].disable_util_est) {
 			p->se.avg.util_est.enqueued = 0;
 			p->se.avg.util_est.ewma = 0;
 			return;
 		}
 
-		if (vp->ignore_util_est_update)
+		if (vp->ignore_util_est_update && rampup_multiplier)
 			return;
 	}
 
@@ -3041,15 +3042,19 @@ static int find_target_cap(unsigned int freq, unsigned int cpu)
 
 	em_cluster = profile->cpu_to_cluster[cpu];
 
-	for (i = 0; i < em_cluster->num_opps; i++) {
-		struct pixel_em_opp *opp = &em_cluster->opps[i];
-		if (opp->freq >= freq) {
-			/* use -3 to make sure the various conversion logic
-			 * which can end up rounding up or down by 1
-			 * doesn't lead to wrong results.
-			 */
-			target_cap =  opp->capacity - 3;
-			break;
+	if (freq >= em_cluster->opps[em_cluster->num_opps - 1].freq)
+		target_cap = SCHED_CAPACITY_SCALE;
+	else {
+		for (i = 0; i < em_cluster->num_opps; i++) {
+			struct pixel_em_opp *opp = &em_cluster->opps[i];
+			if (opp->freq >= freq) {
+				/* use -3 to make sure the various conversion logic
+				* which can end up rounding up or down by 1
+				* doesn't lead to wrong results.
+				*/
+				target_cap =  opp->capacity - 3;
+				break;
+			}
 		}
 	}
 
