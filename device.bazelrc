@@ -39,16 +39,6 @@ build --config=download_gki_fips140
 build:pixel_kunit --//private/devices/google/common:enable_kunit
 build:pixel_kunit --notrim
 
-# Placeholders for soc specific bazelrc files. Add as many as you need.
-try-import %workspace%/.c1.bazelrc
-try-import %workspace%/.c2.bazelrc
-try-import %workspace%/.c3.bazelrc
-try-import %workspace%/.c4.bazelrc
-try-import %workspace%/.c5.bazelrc
-try-import %workspace%/.c6.bazelrc
-try-import %workspace%/.c7.bazelrc
-try-import %workspace%/.c8.bazelrc
-
 # Placeholders for device specific bazelrc files. Add as many as you need.
 try-import %workspace%/.d1.bazelrc
 try-import %workspace%/.d2.bazelrc
