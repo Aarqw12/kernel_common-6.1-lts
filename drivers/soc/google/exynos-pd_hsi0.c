@@ -108,8 +108,6 @@ int exynos_pd_hsi0_ldo_manual_control(bool on)
 
 	mutex_unlock(&hsi0_data->power_lock);
 
-	eusb_repeater_update_usb_state(on);
-
 	return 0;
 
 }
