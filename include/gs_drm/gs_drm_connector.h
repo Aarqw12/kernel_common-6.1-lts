@@ -38,6 +38,11 @@ enum gs_mipi_sync_mode {
 	GS_MIPI_CMD_SYNC_OP_RATE = BIT(5),
 };
 
+enum gs_drm_connector_lhbm_hist_roi_type {
+	GS_HIST_ROI_FULL_SCREEN,
+	GS_HIST_ROI_CIRCLE,
+};
+
 struct gs_drm_connector;
 
 struct gs_drm_connector_properties {
@@ -70,13 +75,17 @@ struct gs_display_partial {
 /**
  * struct gs_drm_connector_lhbm_hist_data - state of lhbm histogram data
  * @enabled: Whether this feature is enabled
- * @d: depth of lhbm circle center below center of phone, in pixels
- * @r: radius of lhbm circle, in pixels
+ * @roi_type: Config different type of roi shape.
+ * @lhbm_circle_d: depth of lhbm circle center below center of phone, in pixels
+ *	            Only applicable when roi_type is GS_HIST_ROI_CIRCLE
+ * @lhbm_circle_r: radius of lhbm circle, in pixels
+ *	            Only applicable when roi_type is GS_HIST_ROI_CIRCLE
  */
 struct gs_drm_connector_lhbm_hist_data {
 	bool enabled;
-	int d;
-	int r;
+	enum gs_drm_connector_lhbm_hist_roi_type roi_type;
+	int lhbm_circle_d;
+	int lhbm_circle_r;
 };
 
 /**
