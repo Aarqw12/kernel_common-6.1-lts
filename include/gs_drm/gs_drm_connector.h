@@ -308,14 +308,33 @@ struct gs_drm_connector_properties *
 gs_drm_connector_get_properties(struct gs_drm_connector *gs_conector);
 
 static inline struct gs_drm_connector_state *
-crtc_get_gs_connector_state(const struct drm_atomic_state *state,
-			    const struct drm_crtc_state *crtc_state)
+crtc_get_new_gs_connector_state(const struct drm_atomic_state *state,
+				const struct drm_crtc_state *crtc_state)
 {
 	const struct drm_connector *conn;
 	struct drm_connector_state *conn_state;
 	int i;
 
 	for_each_new_connector_in_state(state, conn, conn_state, i) {
+		if (!(crtc_state->connector_mask & drm_connector_mask(conn)))
+			continue;
+
+		if (is_gs_drm_connector(conn))
+			return to_gs_connector_state(conn_state);
+	}
+
+	return NULL;
+}
+
+static inline struct gs_drm_connector_state *
+crtc_get_old_gs_connector_state(const struct drm_atomic_state *state,
+				const struct drm_crtc_state *crtc_state)
+{
+	const struct drm_connector *conn;
+	struct drm_connector_state *conn_state;
+	int i;
+
+	for_each_old_connector_in_state(state, conn, conn_state, i) {
 		if (!(crtc_state->connector_mask & drm_connector_mask(conn)))
 			continue;
 
