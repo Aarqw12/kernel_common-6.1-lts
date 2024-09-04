@@ -166,7 +166,6 @@ extra/private/google-modules/bms/max20339.ko
 extra/private/google-modules/bms/max77779_pmic.ko
 extra/private/google-modules/bms/misc/gvotable.ko
 extra/private/google-modules/bms/misc/logbuffer.ko
-extra/private/google-modules/amplifiers/snd_soc_wm_adsp/snd-soc-wm-adsp.ko
 extra/private/google-modules/amplifiers/audiometrics/audiometrics.ko
 extra/private/google-modules/aoc/mailbox-wc.ko
 extra/private/google-modules/aoc/aoc_core.ko
