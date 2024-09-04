@@ -245,27 +245,26 @@ kernel_module(
 
 kernel_module_group(
     name = "kernel_ext_modules",
-    # FIXME: Do not sort here because of the fragile module load ordering, which needs to be fixed.
     srcs = [
-        # do not sort
-        "//private/devices/google/gs101:gs101_soc",
-        "//private/google-modules/display/common/gs_drm",
-        "//private/google-modules/display/common/gs_panel",
-        "//private/google-modules/display/samsung:display.samsung",
-        "//private/google-modules/gpu/mali_kbase",
-        "//private/google-modules/gpu/mali_pixel",
-        "//private/google-modules/lwis",
-        "//private/google-modules/misc/sscoredump",
-        "//private/google-modules/edgetpu/abrolhos/drivers/edgetpu:edgetpu.abrolhos",
-        "//private/google-modules/bms",
-        "//private/google-modules/bms/misc:bms-misc",
+        # keep sorted
+        ":gs101_soc",
         "//private/google-modules/amplifiers/audiometrics",
         "//private/google-modules/aoc",
         "//private/google-modules/aoc/alsa",
         "//private/google-modules/aoc/usb:aoc.usb",
-        "//private/google-modules/trusty",
+        "//private/google-modules/bms",
+        "//private/google-modules/bms/misc:bms-misc",
+        "//private/google-modules/display/common/gs_drm",
+        "//private/google-modules/display/common/gs_panel",
+        "//private/google-modules/display/samsung:display.samsung",
+        "//private/google-modules/edgetpu/abrolhos/drivers/edgetpu:edgetpu.abrolhos",
+        "//private/google-modules/gpu/mali_kbase",
+        "//private/google-modules/gpu/mali_pixel",
+        "//private/google-modules/lwis",
+        "//private/google-modules/misc/sscoredump",
         "//private/google-modules/power/mitigation:bcl",
         "//private/google-modules/power/reset",
+        "//private/google-modules/trusty",
         "//private/google-modules/video/gchips:video.gchips",
     ],
 )
