@@ -19,16 +19,19 @@ gs101_overlays := \
 	gs101-raven-evt1.dtbo \
 	gs101-raven-proto1.dtbo \
 	gs101-raven-proto1_1.dtbo \
-	gs101-bluejay-dev.dtbo \
-	gs101-bluejay-proto1_0.dtbo \
-	gs101-bluejay-proto1_1.dtbo \
-	gs101-bluejay-evt1_0.dtbo \
-	gs101-bluejay-evt1_1.dtbo \
-	gs101-bluejay-evt1_2.dtbo \
-	gs101-bluejay-dvt1_0.dtbo \
-	gs101-bluejay-dvt1_1.dtbo \
-	gs101-bluejay-pvt1_0.dtbo \
-	gs101-bluejay-mp1_0.dtbo
+
+# TODO: b/358264236 - Remove bluejay dtbos.
+gs101_overlays += \
+	bluejay/gs101-bluejay-dev.dtbo \
+	bluejay/gs101-bluejay-proto1_0.dtbo \
+	bluejay/gs101-bluejay-proto1_1.dtbo \
+	bluejay/gs101-bluejay-evt1_0.dtbo \
+	bluejay/gs101-bluejay-evt1_1.dtbo \
+	bluejay/gs101-bluejay-evt1_2.dtbo \
+	bluejay/gs101-bluejay-dvt1_0.dtbo \
+	bluejay/gs101-bluejay-dvt1_1.dtbo \
+	bluejay/gs101-bluejay-pvt1_0.dtbo \
+	bluejay/gs101-bluejay-mp1_0.dtbo
 
 gs101_dtbs := \
 	gs101/gs101-a0.dtb \
