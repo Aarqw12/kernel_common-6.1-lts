@@ -50,8 +50,8 @@
 #define CHGR_CHG_CNFG_12_VREG_4P7V			0x2
 
 #define WCIN_INLIM_T					(5000)
-#define WCIN_INLIM_HEADROOM_MA				(200000)
-#define WCIN_INLIM_STEP_MV				(50000)
+#define WCIN_INLIM_HEADROOM_MA				(50000)
+#define WCIN_INLIM_STEP_MV				(25000)
 #define MAX77779_GPIO_WCIN_INLIM_EN			0
 #define MAX77779_NUM_GPIOS				1
 
@@ -1886,12 +1886,6 @@ static int max77779_wcin_is_valid(struct max77779_chgr_data *data)
 	uint8_t wcin_dtls;
 	int ret;
 
-	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_12, &val);
-	if (ret < 0)
-		return ret;
-	if (!_max77779_chg_cnfg_12_wcinsel_get(val))
-		return 0;
-
 	ret = max77779_reg_read(data, MAX77779_CHG_DETAILS_00, &val);
 	if (ret < 0)
 		return ret;
@@ -1901,6 +1895,15 @@ static int max77779_wcin_is_valid(struct max77779_chgr_data *data)
 
 static inline int max77779_wcin_is_online(struct max77779_chgr_data *data)
 {
+	uint8_t val;
+	int ret;
+
+	ret = max77779_reg_read(data, MAX77779_CHG_CNFG_12, &val);
+	if (ret < 0)
+		return ret;
+	if (!_max77779_chg_cnfg_12_wcinsel_get(val))
+		return 0;
+
 	return max77779_wcin_is_valid(data);
 }
 
