@@ -1643,6 +1643,19 @@ u32 panel_calc_linear_luminance(const u32 value, const u32 coef_x_1k, const int 
  */
 void gs_dsi_cmd_align(struct gs_panel *ctx);
 
+/**
+ * gs_panel_disable_normal_feat_locked() - disable normal mode features
+ * @ctx: pointer to gs_panel
+ *
+ * This function disabled features required panel in power on state.
+ * Disabled features:
+ * 1. lhbm
+ * 2. hbm
+ *
+ * Context: Expects ctx->mode_lock to be locked
+ */
+void gs_panel_disable_normal_feat_locked(struct gs_panel *ctx);
+
 /* HBM */
 
 #define GS_HBM_FLAG_GHBM_UPDATE BIT(0)
