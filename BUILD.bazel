@@ -8,15 +8,6 @@ package(
     ],
 )
 
-label_flag(
-    name = "kernel",
-    build_setting_default = "//common:kernel_aarch64",
-    visibility = [
-        "//private/devices/google:__subpackages__",
-        "//private/google-modules:__subpackages__",
-    ],
-)
-
 # Do not use this flag directly, use --config=[no_]download_gki_fips140,
 # which will enable this and any necessary dependencies.
 bool_flag(
@@ -49,18 +40,6 @@ config_setting(
     name = "kunit_enabled",
     flag_values = {
         ":enable_kunit": "1",
-    },
-)
-
-bool_flag(
-    name = "factory",
-    build_setting_default = False,
-)
-
-config_setting(
-    name = "factory_build",
-    flag_values = {
-        ":factory": "true",
     },
 )
 
