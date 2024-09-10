@@ -9,7 +9,6 @@
 #include <linux/module.h>
 #include <soc/google/meminfo.h>
 #include <trace/hooks/mm.h>
-#include <trace/hooks/vmscan.h>
 #include "cma.h"
 #include "vmscan.h"
 #include "compaction.h"
@@ -21,7 +20,6 @@ extern int pixel_mm_sysfs(void);
 extern void vh_filemap_get_folio_mod(void *data,
 		struct address_space *mapping, pgoff_t index,
 		int fgp_flags, gfp_t gfp_mask, struct folio *folio);
-extern void rvh_mapping_shrinkable(void *data, bool *shrinkable);
 
 extern int create_mm_procfs_node(void);
 
@@ -85,18 +83,6 @@ static int pixel_stat_mm_init(void)
 		return ret;
 
 	ret = register_trace_android_rvh_reclaim_folio_list(rvh_reclaim_folio_list, NULL);
-	if (ret)
-		return ret;
-
-	ret = register_trace_android_rvh_mapping_shrinkable(rvh_mapping_shrinkable, NULL);
-	if (ret)
-		return ret;
-
-	ret = register_trace_mm_vmscan_kswapd_wake(vh_vmscan_kswapd_wake, NULL);
-	if (ret)
-		return ret;
-
-	ret = register_trace_android_vh_vmscan_kswapd_done(vh_vmscan_kswapd_done, NULL);
 	if (ret)
 		return ret;
 

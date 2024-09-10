@@ -180,9 +180,16 @@ void rvh_enqueue_task_pixel_mod(void *data, struct rq *rq, struct task_struct *p
 		return;
 
 	if (static_branch_likely(&auto_dvfs_headroom_enable)) {
-		if (vg[get_vendor_group(p)].disable_util_est) {
+		unsigned int rampup_multiplier;
+		if (get_uclamp_fork_reset(p, true))
+			rampup_multiplier = vendor_sched_adpf_rampup_multiplier;
+		else
+			rampup_multiplier = vg[get_vendor_group(p)].rampup_multiplier;
+
+		if (!rampup_multiplier) {
 			p->se.avg.util_est.enqueued = 0;
 			p->se.avg.util_est.ewma = 0;
+			return;
 		}
 	}
 
@@ -348,13 +355,6 @@ void rvh_rtmutex_prepare_setprio_pixel_mod(void *data, struct task_struct *p,
 	struct task_struct *pi_task)
 {
 	set_performance_inheritance(p, pi_task, VI_RTMUTEX);
-}
-
-void rvh_try_to_wake_up_success_pixel_mod(void *data, struct task_struct *p)
-{
-	trace_sched_wakeup_task_attr(p, p->cpus_ptr, task_util_est(p),
-				     uclamp_eff_value_pixel_mod(p, UCLAMP_MIN),
-				     p->se.vruntime);
 }
 
 void set_cluster_enabled_cb(int cluster, int enabled)
