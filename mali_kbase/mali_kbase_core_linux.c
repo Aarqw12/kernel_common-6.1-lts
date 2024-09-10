@@ -213,6 +213,9 @@ static void kbase_set_sched_rt(struct kbase_device *kbdev, struct task_struct *t
 		.sched_priority = KBASE_RT_THREAD_PRIO,
 	};
 
+	attr.sched_util_min = kbdev->uclamp_rt.min;
+	attr.sched_util_max = kbdev->uclamp_rt.max;
+
 	wake_up_process(task);
 	if(sched_setattr_nocheck(task, &attr))
 		dev_warn(kbdev->dev, "%s attributes weren't set", thread_name);

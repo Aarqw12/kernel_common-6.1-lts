@@ -548,6 +548,14 @@ int kbase_device_early_init(struct kbase_device *kbdev)
 	if (err)
 		goto gpuprops_term;
 
+	if (!of_property_read_u32(kbdev->dev->of_node, "kbase-rt-uclamp-min", &kbdev->uclamp_rt.min)) {
+		kbdev->uclamp_rt.min = 0;
+	}
+
+	if (!of_property_read_u32(kbdev->dev->of_node, "kbase-rt-uclamp-max", &kbdev->uclamp_rt.max)) {
+		kbdev->uclamp_rt.max = 1024;
+	}
+
 	/* We're done accessing the GPU registers for now. */
 	kbase_pm_register_access_disable(kbdev);
 
