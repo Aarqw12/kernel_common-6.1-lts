@@ -403,8 +403,7 @@ static int chg_psy_changed(struct notifier_block *nb,
 	struct power_supply *psy = data;
 	struct chg_drv *chg_drv = container_of(nb, struct chg_drv, psy_nb);
 
-	dev_info_ratelimited(chg_drv->device, "%s name=%s evt=%lu\n", __func__,
-			     psy->desc->name, action);
+	pr_debug("%s name=%s evt=%lu\n", __func__, psy->desc->name, action);
 
 	if ((action != PSY_EVENT_PROP_CHANGED) ||
 	    (psy == NULL) || (psy->desc == NULL) || (psy->desc->name == NULL))
@@ -2526,8 +2525,7 @@ static void chg_work(struct work_struct *work)
 
 		gbms_logbuffer_devlog(bd_state->bd_log, chg_drv->device,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "online:%d->%d [USB:%d/WLC:%d/EXT:%d], "
-				      "present:%d->%d [USB:%d/WLC:%d/EXT:%d] (stop_charging:%d)",
+				      "online:%d->%d [%d/%d/%d], present:%d->%d [%d/%d/%d] (%d)",
 				      chg_drv->online, online, usb_online, wlc_online,  ext_online,
 				      chg_drv->present, present, usb_present, wlc_present,
 				      ext_present, chg_drv->stop_charging);
@@ -4842,7 +4840,12 @@ static bool chg_therm_override_fcc(struct chg_drv *chg_drv)
 		return false;
 
 	wlc_online = GPSY_GET_PROP(chg_drv->wlc_psy, POWER_SUPPLY_PROP_ONLINE);
-	override = wlc_online > 0;
+	if (wlc_online == PPS_PSY_PROG_ONLINE)
+		override = ctdev_wlcfcc->current_level != 0;
+	else if (wlc_online && override)
+		override = ctdev_dcin->current_level != 0;
+	else
+		override = 0;
 
 	pr_debug("%s: MSC_THERM_FCC wlc_online=%d override=%d, wlcfcc_lvl=%d, dcin_lvl=%d\n",
 		__func__,  wlc_online, override, ctdev_wlcfcc->current_level,
@@ -5468,9 +5471,6 @@ static int chg_thermal_device_init(struct chg_drv *chg_drv)
 {
 	struct chg_thermal_device *ctdev_fcc, *ctdev_dc, *ctdev_wlcfcc;
 	int rfcc, rdc, rwfcc;
-	bool no_wlc;
-
-	no_wlc = of_property_read_bool(chg_drv->device->of_node, "no-wlc");
 
 	ctdev_fcc = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_FCC];
 	rfcc = chg_tdev_init(ctdev_fcc, "google,thermal-mitigation", chg_drv);
@@ -5501,13 +5501,7 @@ static int chg_thermal_device_init(struct chg_drv *chg_drv)
 	}
 
 	ctdev_dc = &chg_drv->thermal_devices[CHG_TERMAL_DEVICE_DC_IN];
-
-	if (no_wlc) {
-		dev_err(chg_drv->device, "No cooling device for wlc\n");
-		rdc = -ENOENT;
-	} else {
-		rdc = chg_tdev_init(ctdev_dc, "google,wlc-thermal-mitigation", chg_drv);
-	}
+	rdc = chg_tdev_init(ctdev_dc, "google,wlc-thermal-mitigation", chg_drv);
 	if (rdc == 0) {
 		int ret;
 

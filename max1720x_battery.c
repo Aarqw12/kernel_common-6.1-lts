@@ -1355,7 +1355,7 @@ static int max1720x_restore_battery_cycle(struct max1720x_chip *chip)
 	u16 eeprom_cycle, reg_cycle;
 
 	if (chip->gauge_type != MAX_M5_GAUGE_TYPE)
-		return 0;
+		return -EINVAL;
 
 	ret = REGMAP_READ(&chip->regmap, MAX1720X_CYCLES, &reg_cycle);
 	if (ret < 0) {
@@ -2601,7 +2601,7 @@ static irqreturn_t max1720x_fg_irq_thread_fn(int irq, void *obj)
 	if (!chip->init_complete || !chip->resume_complete) {
 		dev_warn_ratelimited(chip->dev, "%s: irq skipped, irq%d\n", __func__, irq);
 		pm_runtime_put_sync(chip->dev);
-		return IRQ_NONE;
+		return IRQ_HANDLED;
 	}
 	pm_runtime_put_sync(chip->dev);
 
