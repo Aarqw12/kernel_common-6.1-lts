@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+load("//build/kernel/kleaf:kernel.bzl", "kernel_dtstree")
+
+kernel_dtstree(
+    name = "raviole.dt",
+    srcs = glob([
+        "google/*.dts",
+        "google/*.dtsi",
+        "google/*.h",
+    ]) + [
+        "Makefile",
+        "google/Makefile",
+        "//private/google-modules/soc/gs:gs.dt-bindings",
+    ],
+    visibility = [
+        "//private/devices/google/raviole:__pkg__",
+        "//private/google-modules/soc/gs:__pkg__",
+    ],
+)
