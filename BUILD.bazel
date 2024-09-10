@@ -38,17 +38,17 @@ config_setting(
     },
 )
 
-# Do not use this flag directly, use --config=pixel_kunit,
+# Do not use this flag directly, use --config=testing or --config=kunit,
 # which will enable this and any necessary dependencies.
 bool_flag(
-    name = "enable_kunit",
+    name = "kunit",
     build_setting_default = False,
 )
 
 config_setting(
     name = "kunit_enabled",
     flag_values = {
-        ":enable_kunit": "1",
+        ":kunit": "1",
     },
 )
 
