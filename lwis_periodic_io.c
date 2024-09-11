@@ -266,6 +266,8 @@ static int process_io_entries(struct lwis_client *client,
 				resp->error_code = ret;
 				goto event_push;
 			}
+		} else if (entry->type == LWIS_IO_ENTRY_IGNORE) {
+			ret = 0;
 		} else {
 			pr_err_ratelimited("Unrecognized io_entry command\n");
 			resp->error_code = -EINVAL;

@@ -135,6 +135,9 @@ static int lwis_test_register_io(struct lwis_device *lwis_dev, struct lwis_io_en
 		test_dev->scratch_mem[mod->offset] = reg_value;
 		break;
 	}
+	case LWIS_IO_ENTRY_IGNORE: {
+		break;
+	}
 	default:
 		dev_err(test_dev->base_dev.dev, "Invalid IO entry type: %d\n", entry->type);
 		return -EINVAL;

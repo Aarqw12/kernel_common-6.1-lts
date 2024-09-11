@@ -240,6 +240,9 @@ static int synchronous_process_io_entries(struct lwis_device *lwis_dev, int num_
 		case LWIS_IO_ENTRY_WRITE_TO_BUFFER:
 			ret = lwis_io_buffer_write(lwis_dev, &io_entries[i]);
 			break;
+		case LWIS_IO_ENTRY_IGNORE:
+			ret = 0;
+			break;
 		default:
 			dev_err(lwis_dev->dev, "Unknown io_entry operation\n");
 			ret = -EINVAL;

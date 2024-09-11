@@ -394,6 +394,8 @@ static int process_transaction(struct lwis_client *client, struct lwis_transacti
 				}
 				break;
 			}
+		} else if (entry->type == LWIS_IO_ENTRY_IGNORE) {
+			ret = 0;
 		} else {
 			dev_err(lwis_dev->dev, "Unrecognized io_entry command\n");
 			resp->error_code = -EINVAL;
