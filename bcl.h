@@ -46,6 +46,7 @@
 #define IRQ_ENABLE_DELAY_MS		50
 #define NOT_USED			9999
 #define TIMEOUT_5S			5000
+#define TIMEOUT_5000US			5000
 #define TIMEOUT_10MS			10
 #define TIMEOUT_5MS			5
 #define TIMEOUT_1MS			1
@@ -208,6 +209,11 @@ struct qos_throttle_limit {
 	int cpu2_limit;
 	int gpu_limit;
 	int tpu_limit;
+	int cpu0_freq;
+	int cpu1_freq;
+	int cpu2_freq;
+	int gpu_freq;
+	int tpu_freq;
 };
 
 struct zone_triggered_stats {
@@ -241,6 +247,7 @@ struct bcl_zone {
 	bool conf_qos;
 	const char *devname;
 	u32 current_state;
+	bool throttle;
 };
 
 struct bcl_core_conf {
@@ -345,8 +352,8 @@ struct bcl_device {
 #if IS_ENABLED(CONFIG_SOC_ZUMAPRO)
 	struct device *vimon_dev;
 #endif
-	struct mutex cpu_ratio_lock;
 	struct mutex qos_update_lock;
+	struct mutex cpu_ratio_lock;
 	struct bcl_core_conf core_conf[SUBSYSTEM_SOURCE_MAX];
 	struct bcl_cpu_buff_conf cpu_buff_conf[CPU_CLUSTER_MAX];
 	struct notifier_block cpu_nb;
@@ -446,6 +453,7 @@ struct bcl_device {
 	bool oilo1_vdrp2_en;
 	bool oilo2_vdrp1_en;
 	bool oilo2_vdrp2_en;
+	struct delayed_work qos_work;
 };
 
 extern void google_bcl_irq_update_lvl(struct bcl_device *bcl_dev, int index, unsigned int lvl);
