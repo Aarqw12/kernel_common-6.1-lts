@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Google LWIS Fence
  *
@@ -46,7 +47,8 @@ extern bool lwis_fence_debug;
 struct lwis_fence {
 	/* Most of the LWIS fence functionality is covered by the dma_fence structure.
 	 * This effectively "inherits" from dma_fence and means that LWIS fences can be
-	 * used as DMA fences too. */
+	 * used as DMA fences too.
+	 */
 	struct dma_fence dma_fence;
 
 	/* Lock to protect the whole structure. */
