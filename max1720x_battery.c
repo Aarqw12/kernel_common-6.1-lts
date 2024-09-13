@@ -4459,6 +4459,11 @@ static int max17x0x_init_sysfs(struct max1720x_chip *chip)
 	if (ret)
 		dev_err(&chip->psy->dev, "Failed to create registers_dump\n");
 
+	/* registers */
+	ret = device_create_file(&chip->psy->dev, &dev_attr_registers_dump);
+	if (ret)
+		dev_err(&chip->psy->dev, "Failed to create registers_dump\n");
+
 	de = debugfs_create_dir(chip->max1720x_psy_desc.name, 0);
 	if (IS_ERR_OR_NULL(de))
 		return -ENOENT;
