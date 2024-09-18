@@ -16,6 +16,9 @@
 #include "max77779.h"
 #include "max77779_vimon.h"
 
+#define MAX77779_VIMON_SMPL_CNT_MIN 4
+#define MAX77779_VIMON_SMPL_CNT_MAX 64
+
 static inline int max77779_vimon_reg_read(struct max77779_vimon_data *data, unsigned int reg,
 					  unsigned int *val)
 {
@@ -155,6 +158,78 @@ int max77779_external_vimon_enable(struct device *dev, bool enable)
 }
 EXPORT_SYMBOL_GPL(max77779_external_vimon_enable);
 
+int max77779_external_vimon_request_conv(struct device *dev, int vimon_client, int sample_count,
+					 void (*cb)(struct device *dev, uint16_t *buf,
+					 int rd_bytes))
+{
+	struct max77779_vimon_data *data = dev_get_drvdata(dev);
+
+	if (vimon_client >= MAX77779_VIMON_CLIENT_MAX)
+		return -EINVAL;
+
+	if (atomic_read(&data->clients[vimon_client].pending_request))
+		return -EBUSY;
+
+	data->clients[vimon_client].client_dev = dev;
+	data->clients[vimon_client].cb = cb;
+	data->clients[vimon_client].sample_count = sample_count;
+	atomic_set(&data->clients[vimon_client].pending_request, 1);
+
+	if (delayed_work_pending(&data->pending_conv_work))
+		return 0;
+
+	schedule_delayed_work(&data->pending_conv_work, 0);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(max77779_external_vimon_request_conv);
+
+static void max77779_vimon_process_pending_conv(struct work_struct *work)
+{
+	int i, ret;
+
+	struct max77779_vimon_data *data = container_of(work, struct max77779_vimon_data,
+							pending_conv_work.work);
+
+	pm_stay_awake(data->dev);
+
+	if (data->state != MAX77779_VIMON_IDLE) {
+		schedule_delayed_work(&data->pending_conv_work,
+				      msecs_to_jiffies(MAX77779_VIMON_DATA_RETRY_DELAY_MS));
+		pm_relax(data->dev);
+		return;
+	}
+
+	for (i = 0; i < MAX77779_VIMON_CLIENT_MAX; i++)
+		if (atomic_read(&data->clients[i].pending_request))
+			break;
+
+	if (i == MAX77779_VIMON_CLIENT_MAX) {
+		pm_relax(data->dev);
+		return;
+	}
+
+	atomic_set(&data->clients[i].active_request, 1);
+	data->state = MAX77779_VIMON_RUNNING;
+
+	ret = max77779_vimon_reg_update(data, MAX77779_BVIM_bvim_cfg,
+					MAX77779_BVIM_bvim_cfg_smpl_n_MASK,
+					data->clients[i].sample_count);
+	if (ret)
+		dev_err(data->dev, "Failed to configure bvim_cfg\n");
+
+	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_bvim_trig,
+				       MAX77779_BVIM_bvim_trig_trig_now_MASK);
+	if (ret)
+		dev_err(data->dev, "Failed to configure vimon trig\n");
+
+	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_CTRL,
+				       MAX77779_BVIM_CTRL_BVIMON_TRIG_MASK);
+	if (ret)
+		dev_err(data->dev, "Failed to rearm bvim_ctrl (%d).\n", ret);
+
+	pm_relax(data->dev);
+}
+
 static int max77779_vimon_start(struct max77779_vimon_data *data, uint16_t config)
 {
 	int ret;
@@ -279,8 +354,7 @@ static void max77779_vimon_handle_data(struct work_struct *work)
 	struct max77779_vimon_data *data = container_of(work, struct max77779_vimon_data,
 							read_data_work.work);
 	unsigned bvim_rfap, rsc, bvim_osc, smpl_start_add;
-	int ret;
-	int rd_bytes;
+	int ret, i, rd_bytes;
 
 	pm_stay_awake(data->dev);
 	mutex_lock(&data->vimon_lock);
@@ -340,7 +414,22 @@ vimon_handle_data_exit:
 		dev_err(data->dev, "Failed to clear INT_STS (%d).\n",
 				ret);
 
+	for (i = 0; i < MAX77779_VIMON_CLIENT_MAX; i++)
+		if (atomic_read(&data->clients[i].active_request))
+			break;
+
+	if (i == MAX77779_VIMON_CLIENT_MAX) {
+		pm_relax(data->dev);
+		mutex_unlock(&data->vimon_lock);
+		return;
+	}
+
+	data->clients[i].cb(data->clients[i].client_dev, data->buf, rd_bytes);
+	atomic_set(&data->clients[i].active_request, 0);
+	atomic_set(&data->clients[i].pending_request, 0);
+
 	mutex_unlock(&data->vimon_lock);
+	schedule_delayed_work(&data->pending_conv_work, 0);
 	pm_relax(data->dev);
 }
 
@@ -403,6 +492,63 @@ static int max77779_vimon_debug_start(void *d, u64 *val)
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_start_fops, max77779_vimon_debug_start, NULL, "%02llx\n");
+
+static void max77779_vimon_debug_callback(struct device *dev, uint16_t *buf, int rd_bytes)
+{
+	int i;
+	struct max77779_vimon_data *data = dev_get_drvdata(dev);
+
+	for (i = 0; i < rd_bytes; i++)
+		data->debug_buf[i] = buf[i];
+
+	data->debug_buf_len = rd_bytes;
+}
+
+static int max77779_vimon_debug_req_trig_now(void *d, u64 val)
+{
+	struct max77779_vimon_data *data = d;
+
+	if (val > MAX77779_VIMON_SMPL_CNT_MAX || val < MAX77779_VIMON_SMPL_CNT_MIN)
+		return -EINVAL;
+
+	return max77779_external_vimon_request_conv(data->dev, MAX77779_VIMON_DEBUGFS_CLIENT, val,
+						    &max77779_vimon_debug_callback);
+}
+DEFINE_SIMPLE_ATTRIBUTE(debug_req_trig_now_fops, NULL, max77779_vimon_debug_req_trig_now,
+			"%02llx\n");
+
+static ssize_t max77779_vimon_debug_req_rdback(struct file *filp, char __user *buf, size_t count,
+					       loff_t *ppos)
+{
+	struct max77779_vimon_data *data = filp->private_data;
+	char *tmp;
+	int i, ret, v_rdback, i_rdback, i_data;
+	int len = 0;
+
+	tmp = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	for (i = 0; i < data->debug_buf_len / MAX77779_VIMON_BYTES_PER_ENTRY;
+	     i += MAX77779_VIMON_ENTRIES_PER_VI_PAIR) {
+		v_rdback = ((int64_t) data->debug_buf[i] * MAX77779_VIMON_NV_PER_LSB) /
+			   MILLI_UNITS_TO_NANO_UNITS;
+		i_data = (int16_t)data->debug_buf[i + 1];
+		i_rdback = ((int64_t)i_data * MAX77779_VIMON_NA_PER_LSB) /
+			   MILLI_UNITS_TO_NANO_UNITS;
+		len += scnprintf(tmp + len, PAGE_SIZE - len, "%i: %i %i\n",
+				 i / MAX77779_VIMON_BYTES_PER_ENTRY, v_rdback, i_rdback);
+	}
+
+	if (len > 0)
+		len = simple_read_from_buffer(buf, count, ppos, tmp, strlen(tmp));
+
+	ret = len;
+	kfree(tmp);
+
+	return ret;
+}
+BATTERY_DEBUG_ATTRIBUTE(debug_req_rdback_fops, max77779_vimon_debug_req_rdback, NULL);
 
 static int max77779_vimon_debug_reg_read(void *d, u64 *val)
 {
@@ -524,7 +670,6 @@ vimon_show_buff_exit:
 
 	return ret;
 }
-
 BATTERY_DEBUG_ATTRIBUTE(debug_vimon_all_buff_fops, max77779_vimon_show_buff_all, NULL);
 
 static int max77779_vimon_debug_buff_page_read(void *d, u64 *val)
@@ -579,6 +724,9 @@ static int max77779_vimon_init_fs(struct max77779_vimon_data *data)
 	debugfs_create_file("buffer_page", 0600, data->de, data, &debug_buff_page_rw_fops);
 	debugfs_create_bool("run_in_offmode", 0644, data->de, &data->run_in_offmode);
 
+	debugfs_create_file("req_trig_now", 0600, data->de, data, &debug_req_trig_now_fops);
+	debugfs_create_file("req_rdback", 0444, data->de, data, &debug_req_rdback_fops);
+
 	return 0;
 }
 
@@ -614,7 +762,6 @@ static irqreturn_t max77779_vimon_irq(int irq, void *ptr)
 	struct max77779_vimon_data *data = ptr;
 	int ret;
 
-
 	if (data->state <= MAX77779_VIMON_DISABLED)
 		return IRQ_HANDLED;
 
@@ -627,6 +774,12 @@ static irqreturn_t max77779_vimon_irq(int irq, void *ptr)
 			      msecs_to_jiffies(MAX77779_VIMON_DATA_RETRIEVE_DELAY));
 
 vimon_rearm_interrupt:
+
+	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_bvim_trig, 0);
+	if (ret) {
+		dev_err(data->dev, "Failed to configure vimon trig\n");
+		return ret;
+	}
 
 	ret = regmap_write(data->regmap, MAX77779_BVIM_INT_STS,
 			   MAX77779_BVIM_INT_STS_BVIM_Samples_Rdy_MASK);
@@ -673,11 +826,7 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 		return ret;
 	}
 
-	cfg_mask = MAX77779_BVIM_bvim_trig_oilo_stop_source_MASK |
-		   MAX77779_BVIM_bvim_trig_batoilo1_tr_MASK |
-		   MAX77779_BVIM_bvim_trig_batoilo2_tr_MASK |
-		   MAX77779_BVIM_bvim_trig_sysuvlo1_tr_MASK |
-		   MAX77779_BVIM_bvim_trig_sysuvlo2_tr_MASK;
+	cfg_mask = MAX77779_BVIM_bvim_trig_trig_now_MASK;
 	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_bvim_trig, cfg_mask);
 	if (ret) {
 		dev_err(dev, "Failed to configure vimon trig\n");
@@ -709,7 +858,14 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 	if (!data->buf)
 		return -ENOMEM;
 
+	data->debug_buf = devm_kcalloc(dev, data->max_cnt * data->max_triggers * 2,
+				       sizeof(*data->debug_buf), GFP_KERNEL);
+	if (!data->debug_buf)
+		return -ENOMEM;
+
+
 	INIT_DELAYED_WORK(&data->read_data_work, max77779_vimon_handle_data);
+	INIT_DELAYED_WORK(&data->pending_conv_work, max77779_vimon_process_pending_conv);
 
 	if (data->irq){
 		ret = devm_request_threaded_irq(data->dev, data->irq, NULL,
@@ -758,6 +914,9 @@ void max77779_vimon_remove(struct max77779_vimon_data *data)
 		debugfs_remove(data->de);
 	if (data->irq)
 		free_irq(data->irq, data);
+
+	cancel_delayed_work_sync(&data->read_data_work);
+	cancel_delayed_work_sync(&data->pending_conv_work);
 }
 EXPORT_SYMBOL_GPL(max77779_vimon_remove);
 
