@@ -2330,12 +2330,15 @@ static int exynos_pcie_rc_parse_dt(struct device *dev, struct exynos_pcie *exyno
 		gpio_direction_output(exynos_pcie->ssd_gpio, 0);
 	}
 
-	if (of_property_read_u32(np, "de-emphasis-level", &exynos_pcie->de_emphasis_level)) {
-		dev_info(dev, "failed to parse the de-emphasis level, default 0\n");
-		exynos_pcie->de_emphasis_level = 0;
-	} else {
-		dev_dbg(dev, "parse de-emphasis level: %d\n", exynos_pcie->de_emphasis_level);
+	exynos_pcie->customized_de_emphasis = of_property_read_bool(np, "customized-de-emphasis");
+
+	if (of_property_read_u32(np, "de-emphasis-value", &exynos_pcie->de_emphasis_value)) {
+		exynos_pcie->de_emphasis_value = 0;
+		exynos_pcie->customized_de_emphasis = false;
 	}
+
+	dev_info(dev, "customized de-emphasis enable %d with value: %d\n",
+		 exynos_pcie->de_emphasis_value, exynos_pcie->de_emphasis_value);
 
 	return 0;
 }

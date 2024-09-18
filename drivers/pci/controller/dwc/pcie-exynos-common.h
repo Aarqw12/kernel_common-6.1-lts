@@ -288,7 +288,6 @@ struct exynos_pcie {
 	int			linkdown_cnt;
 	int			idle_ip_index;
 	int			separated_msi;
-	int			de_emphasis_level;
 	bool			use_msi;
 	bool			support_msi64_addressing;
 	bool			use_cache_coherency;
@@ -376,6 +375,9 @@ struct exynos_pcie {
 	bool skip_config;
 
 	struct delayed_work cfg_access_work;
+
+	bool			customized_de_emphasis;
+	int			de_emphasis_value;
 };
 
 #define PCIE_MAX_MSI_NUM	(8)
