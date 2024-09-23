@@ -13,7 +13,7 @@ load(
     "kernel_unstripped_modules_archive",
     "merged_kernel_uapi_headers",
 )
-load("//common:modules.bzl", "get_gki_modules_list")
+load("//private/devices/google/common:constants.bzl", "PIXEL_GKI_MODULES_LIST")
 load("//private/devices/google/common/kleaf:create_file.bzl", "create_file")
 load(":constants.bzl", "GS101_DTBS", "GS101_MODULE_OUTS")
 
@@ -285,13 +285,7 @@ create_file(
     name = "system_dlkm_modules_list",
     out = "system_dlkm.modules",
     # The list is used to filter modules with `grep -w`.
-    content = ["^kernel/" + m for m in get_gki_modules_list("arm64")],
-)
-
-create_file(
-    name = "system_dlkm_modules_blocklist",
-    srcs = ["system_dlkm.blocklist.gs101"],
-    out = "system_dlkm.blocklist",
+    content = ["^kernel/" + m for m in PIXEL_GKI_MODULES_LIST],
 )
 
 create_file(
@@ -329,7 +323,6 @@ kernel_images(
     kernel_modules_install = ":kernel_modules_install",
     modules_list = ":vendor_ramdisk_modules_list",
     ramdisk_compression = "lz4",
-    system_dlkm_modules_blocklist = ":system_dlkm_modules_blocklist",
     system_dlkm_modules_list = ":system_dlkm_modules_list",
     system_dlkm_props = ":system_dlkm_props",
     vendor_dlkm_archive = True,
@@ -362,8 +355,8 @@ copy_to_dist_dir(
         ":merged_kernel_uapi_headers",
         "//common:kernel_aarch64",
         "//common:kernel_aarch64_gki_boot_image",
-        "//common:kernel_aarch64_gki_modules",
         "//common:kernel_aarch64_headers",
+        "//private/devices/google/common:kernel_gki_modules",
     ],
     dist_dir = "out/gs101/dist",
     flat = True,
