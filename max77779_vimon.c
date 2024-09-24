@@ -37,12 +37,27 @@ static inline int max77779_vimon_reg_update(struct max77779_vimon_data *data, un
 /* 0 not running, !=0 running, <0 error */
 static int max77779_vimon_is_running(struct max77779_vimon_data *data)
 {
-	unsigned int running;
+	unsigned int running = 0;
 	int ret;
 
 	ret = max77779_vimon_reg_read(data, MAX77779_BVIM_CTRL, &running);
+
 	if (ret < 0)
 		return ret;
+
+	return !!(running & MAX77779_BVIM_CTRL_BVIMON_TRIG_MASK);
+}
+
+static int max77779_vimon_direct_is_running(struct max77779_vimon_data *data)
+{
+	unsigned int running = 0;
+	int ret;
+
+	ret = data->direct_reg_read(data, MAX77779_BVIM_CTRL, &running);
+
+	if (ret < 0)
+		return ret;
+
 	return !!(running & MAX77779_BVIM_CTRL_BVIMON_TRIG_MASK);
 }
 
@@ -164,6 +179,11 @@ vimon_start_exit:
 static int max77779_vimon_stop(struct max77779_vimon_data *data)
 {
 	return max77779_vimon_reg_write(data, MAX77779_BVIM_CTRL, 0);
+}
+
+static int max77779_vimon_direct_stop(struct max77779_vimon_data *data)
+{
+	return data->direct_reg_write(data, MAX77779_BVIM_CTRL, 0);
 }
 
 static int max77779_vimon_set_config(struct max77779_vimon_data *data, uint16_t mask)
@@ -414,6 +434,9 @@ static ssize_t max77779_vimon_show_reg_all(struct file *filp, char __user *buf, 
 	int ret = 0, len = 0;
 	int regread;
 
+	if (*ppos)
+		return 0;
+
 	if (!data->regmap)
 		return -EIO;
 
@@ -453,6 +476,9 @@ static ssize_t max77779_vimon_show_buff_all(struct file *filp, char __user *buf,
 					  MAX77779_VIMON_BYTES_PER_ENTRY;
 	const size_t readback_size = MAX77779_VIMON_PAGE_SIZE * MAX77779_VIMON_BYTES_PER_ENTRY;
 	int readback_cnt;
+
+	if (*ppos)
+		return 0;
 
 	if (!data->regmap)
 		return -EIO;
@@ -563,7 +589,7 @@ static int max77779_vimon_reboot_notifier(struct notifier_block *nb,
 		container_of(nb, struct max77779_vimon_data, reboot_notifier);
 	int running;
 
-	running = max77779_vimon_is_running(data);
+	running = max77779_vimon_direct_is_running(data);
 	if (running < 0)
 		dev_err(data->dev, "cannot read VIMON HW state (%d)\n", running);
 	if (running || vimon_is_running(data))
@@ -574,7 +600,7 @@ static int max77779_vimon_reboot_notifier(struct notifier_block *nb,
 	if (!data->run_in_offmode && running) {
 		int ret;
 
-		ret = max77779_vimon_stop(data);
+		ret = max77779_vimon_direct_stop(data);
 		if (ret < 0)
 			dev_err(data->dev, "cannot stop vimon acquisition\n");
 	}

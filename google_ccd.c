@@ -34,9 +34,13 @@
 #define PD_CURRENT_MAX_UA	3000000	/* 3A */
 
 #define GCCD_MAIN_CHARGE_CURRENT_MAX	4000000		/* 4A */
-#define GCCD_BUCK_CHARGE_CURRENT_MAX	900000		/* 0.9A */
+#define GCCD_BUCK_CHARGE_CURRENT_MAX	3150000		/* 3.15A */
 #define GCCD_BUCK_CHARGE_PWR_THRESHOLD	27000000	/* 27W */
 #define GCCD_MAIN_CHGIN_ILIM		2200000		/* 2.2A */
+#define GCCD_IEEE_1725_TOLERANCE	100000		/* 0.1A */
+
+#define GCCD_SPLIT_TABLE_STEP		500000		/* 0.5A */
+#define GCCD_SPLIT_TABLE_DATA_MAX	10
 
 struct gccd_drv {
 	struct device *device;
@@ -55,12 +59,15 @@ struct gccd_drv {
 	int buck_chg_en;
 	bool ftm_mode; /* factory test, force enable buck charger */
 
+	u32 split_9v[GCCD_SPLIT_TABLE_DATA_MAX];
+	u32 split_5v[GCCD_SPLIT_TABLE_DATA_MAX];
+	u32 split_count;
 };
 
 /* ------------------------------------------------------------------------- */
 
 static int gccd_get_charge_current_max(struct gccd_drv *gccd);
-static int gccd_set_charge_current_max(struct gccd_drv *gccd, int chg_current, bool pwr_changed);
+static int gccd_set_charge_current_max(struct gccd_drv *gccd, int chg_current);
 
 /* this function is only for debug */
 static int gccd_set_buck_active(struct gccd_drv *gccd, int enabled)
@@ -70,8 +77,8 @@ static int gccd_set_buck_active(struct gccd_drv *gccd, int enabled)
 	/* convert type to boolean */
 	gccd->ftm_mode = !!enabled;
 	cc_max = gccd_get_charge_current_max(gccd);
-	pr_info("%s: charge_current=%d (0)\n", __func__, cc_max);
-	ret = gccd_set_charge_current_max(gccd, cc_max, false);
+	dev_info(gccd->device, "%s: charge_current=%d (0)\n", __func__, cc_max);
+	ret = gccd_set_charge_current_max(gccd, cc_max);
 
 	return ret;
 }
@@ -94,7 +101,7 @@ static int debug_buck_active_set(void *data, u64 val)
 
 	ret = gccd_set_buck_active(gccd, val);
 	if (ret)
-		pr_info("%s: Failed to set buck active: %d\n", __func__, ret);
+		dev_info(gccd->device, "%s: Failed to set buck active: %d\n", __func__, ret);
 
 	return 0;
 }
@@ -191,85 +198,85 @@ static int gccd_get_charge_current_max(struct gccd_drv *gccd)
 	return cc_max;
 }
 
-static int gccd_get_charge_voltage_max(struct gccd_drv *gccd)
+static int gccd_interpolate(int x, int low_x, int high_x, int low_y, int high_y)
 {
-	int fv_uv = -1;
+	if (low_x == high_x)
+		return low_y;
 
-	if (!gccd_find_votable(gccd))
-		return fv_uv;
-
-	fv_uv = gvotable_get_current_int_vote(gccd->fv_votable);
-
-	return fv_uv;
+	return low_y + div_s64((s64)((x - low_x) * (high_y - low_y)), high_x - low_x);
 }
 
-static int gccd_set_charge_current_max(struct gccd_drv *gccd,
-				       int chg_current, bool pwr_changed)
+static int gccd_get_main_current(struct gccd_drv *gccd, int chg_current) {
+	int idx, low_x, low_y, high_x, high_y;
+	u32 *table = gccd->voltage_max == PD_VOLTAGE_MAX_MV ?	gccd->split_9v : gccd->split_5v;
+	int y, main_current;
+
+	if (gccd->split_count == 0)
+		return chg_current;
+
+	idx = chg_current / GCCD_SPLIT_TABLE_STEP ;
+	if (idx >= GCCD_SPLIT_TABLE_DATA_MAX) {
+		idx = GCCD_SPLIT_TABLE_DATA_MAX - 1;
+		chg_current = (idx + 1) * GCCD_SPLIT_TABLE_STEP;
+	} else if (idx > 0 && chg_current % GCCD_SPLIT_TABLE_STEP == 0) {
+		idx--;
+	}
+
+	low_x = (idx == 0) ? 0 : idx * GCCD_SPLIT_TABLE_STEP;
+	high_x = (idx + 1) * GCCD_SPLIT_TABLE_STEP;
+	low_y = (idx == 0) ? table[idx] : table[idx - 1];
+	high_y = table[idx];
+
+	y = gccd_interpolate(chg_current, low_x, high_x, low_y, high_y);
+	main_current = y * (chg_current / 1000);
+	dev_dbg(gccd->device, "%s: x: %d idx: %d low_x: %d, high_x: %d, low_y: %d, high_y: %d, y: %d, main_current: %d\n",
+			__func__, chg_current, idx, low_x, high_x, low_y, high_y, y, main_current);
+	return main_current;
+}
+
+static int gccd_set_charge_current_max(struct gccd_drv *gccd, int chg_current)
 {
 	int main_chg_current = chg_current, buck_chg_current = 0;
-	int watt = gccd->voltage_max * gccd->current_max;
-	int fv_uv = gccd_get_charge_voltage_max(gccd);
 	struct power_supply *main_psy = gccd->main_chg_psy;
-	bool pwr_ok = false;
-	int ret;
+	struct power_supply *buck_psy = gccd->buck_chg_psy;
+	int ret, buck_en;
 
-	if (gccd->ftm_mode) {
+	if (gccd->ftm_mode)
 		/* set CHGIN_ILIM (CHG_CNFG_09) to 2200mA in ftm_mode */
 		ret = PSY_SET_PROP(main_psy, POWER_SUPPLY_PROP_CURRENT_MAX,
 				   GCCD_MAIN_CHGIN_ILIM);
 
-		/* force enable buck_chg*/
-		if (ret == 0)
-			pwr_ok = true;
-
-		goto set_current_max;
-	}
-
-	pwr_ok = watt >= GCCD_BUCK_CHARGE_PWR_THRESHOLD &&
-		 main_chg_current > GCCD_MAIN_CHARGE_CURRENT_MAX;
-
-	if (pwr_changed)
-		pr_info("%s: pwr_ok=%d (%d, %d, %d)\n",
-			__func__, pwr_ok, watt, main_chg_current, fv_uv);
-
-	/* Don't enable buck charging */
-	if (pwr_changed && !pwr_ok)
-		return 0;
-
-set_current_max:
-	if (pwr_ok) {
-		/*
-		 * Sequoia has a solution for mechanical heat dissipation,
-		 * set SQ: 4A, buck: (fcc - 4A)
-		 */
+	if (gccd->split_count > 0) {
+		main_chg_current = gccd_get_main_current(gccd, chg_current);
+		buck_chg_current = chg_current - main_chg_current - GCCD_IEEE_1725_TOLERANCE;
+	} else if (chg_current > GCCD_MAIN_CHARGE_CURRENT_MAX) {
 		main_chg_current = GCCD_MAIN_CHARGE_CURRENT_MAX;
-		buck_chg_current = (chg_current - GCCD_MAIN_CHARGE_CURRENT_MAX);
-		if (buck_chg_current > GCCD_BUCK_CHARGE_CURRENT_MAX)
-			buck_chg_current = GCCD_BUCK_CHARGE_CURRENT_MAX;
+		buck_chg_current = chg_current - main_chg_current - GCCD_IEEE_1725_TOLERANCE;
 	}
 
-	pr_info("%s: charge_current=%d, main=%d, buck=%d, v_max=%d, c_max=%d\n",
+	if (buck_chg_current < 0)
+		buck_chg_current = 0;
+	else if (buck_chg_current > GCCD_BUCK_CHARGE_CURRENT_MAX)
+		buck_chg_current = GCCD_BUCK_CHARGE_CURRENT_MAX;
+
+	dev_info(gccd->device, "%s: charge_current=%d, main=%d, buck=%d, v_max=%d, c_max=%d\n",
 		__func__, chg_current, main_chg_current, buck_chg_current,
 		gccd->voltage_max, gccd->current_max);
 
 	ret = PSY_SET_PROP(main_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
 			   main_chg_current);
-
-	/*
-	 * enable buck charging by pull charging gpio high active when
-	 * buck_chg_current is non-zero
-	 */
-	if (ret == 0 && gccd->buck_chg_en >= 0) {
-		struct power_supply *buck_psy = gccd->buck_chg_psy;
-		int en = (buck_chg_current > 0);
-
-		pr_info("%s: buck_charger enable=%d\n", __func__, en);
-
-		ret = PSY_SET_PROP(buck_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
-				   buck_chg_current);
-		if (ret == 0)
-			gpio_direction_output(gccd->buck_chg_en, en);
+	if (ret) {
+		dev_err(gccd->device, "%s: error setting main charger current (%d)\n", __func__,ret);
+		return ret;
 	}
+
+	buck_en = (buck_chg_current > 0);
+	dev_info(gccd->device, "%s: buck_charger enable=%d\n", __func__, buck_en);
+
+	ret = PSY_SET_PROP(buck_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
+				buck_chg_current);
+	if (ret == 0)
+		gpio_direction_output(gccd->buck_chg_en, buck_en);
 
 	return ret;
 }
@@ -316,6 +323,7 @@ static enum power_supply_property gccd_psy_properties[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,		/* compat */
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
 };
 
 static int gccd_psy_get_property(struct power_supply *psy,
@@ -413,7 +421,7 @@ static int gccd_psy_set_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 		pr_debug("%s: charge_current=%d (0)\n", __func__, pval->intval);
-		ret = gccd_set_charge_current_max(gccd, pval->intval, false);
+		ret = gccd_set_charge_current_max(gccd, pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		pr_debug("%s: charge_voltage=%d \n", __func__, pval->intval);
@@ -434,8 +442,8 @@ static int gccd_psy_set_property(struct power_supply *psy,
 		int cc_max;
 
 		cc_max = gccd_get_charge_current_max(gccd);
-		pr_info("%s: charge_current=%d (1)\n", __func__, cc_max);
-		ret = gccd_set_charge_current_max(gccd, cc_max, true);
+		dev_info(gccd->device, "%s: charge_current=%d (1)\n", __func__, cc_max);
+		ret = gccd_set_charge_current_max(gccd, cc_max);
 	}
 
 	mutex_unlock(&gccd->gccd_lock);
@@ -638,6 +646,28 @@ static int google_ccd_probe(struct platform_device *pdev)
 	if (!gccd->buck_chg_psy_name) {
 		devm_kfree(&pdev->dev, gccd);
 		return -ENOMEM;
+	}
+
+	ret = of_property_count_elems_of_size(pdev->dev.of_node, "google,split-5v", sizeof(u32));
+	if (ret < 0 || ret > GCCD_SPLIT_TABLE_DATA_MAX) {
+		dev_info(gccd->device, "no valid split table found (%d)\n", ret);
+		gccd->split_count = 0;
+	} else {
+		gccd->split_count = ret;
+
+		dev_info(gccd->device, "using current split table with %d elems\n", ret);
+		ret = of_property_read_u32_array(pdev->dev.of_node, "google,split-5v",
+						 gccd->split_5v, gccd->split_count);
+		if (ret < 0) {
+			dev_info(gccd->device, "error reading split-5v table (%d)\n", ret);
+			gccd->split_count = 0;
+		}
+		ret = of_property_read_u32_array(pdev->dev.of_node, "google,split-9v",
+						 gccd->split_9v, gccd->split_count);
+		if (ret < 0) {
+			dev_info(gccd->device, "error reading split-9v table (%d)\n", ret);
+			gccd->split_count = 0;
+		}
 	}
 
 	mutex_init(&gccd->gccd_lock);
