@@ -999,11 +999,21 @@ static const struct file_operations dpu_event_fops = {
 static int dpu_debug_reg_dump_show(struct seq_file *s, void *unused)
 {
 	struct decon_device *decon = s->private;
+	struct dsim_device *dsim;
 	struct drm_printer p = drm_seq_file_printer(s);
 
 	if (decon->state == DECON_STATE_ON &&
 		pm_runtime_get_if_in_use(decon->dev) == 1) {
 		decon_dump(decon, &p);
+		dsim = decon_get_dsim(decon);
+		if (dsim) {
+			dsim_dump(dsim, &p);
+			if (dsim->dual_dsi == DSIM_DUAL_DSI_MAIN) {
+				dsim = exynos_get_dual_dsi(DSIM_DUAL_DSI_SEC);
+				if (dsim)
+					dsim_dump(dsim, &p);
+			}
+		}
 		pm_runtime_put(decon->dev);
 	} else {
 		drm_printf(&p, "%s[%u]: DECON disabled(%d)\n",
@@ -1808,6 +1818,8 @@ int dpu_init_debug(struct decon_device *decon)
 	debugfs_create_u32("crc_cnt", 0444, crtc->debugfs_entry, &decon->d.crc_cnt);
 	debugfs_create_u32("ecc_cnt", 0444, crtc->debugfs_entry, &decon->d.ecc_cnt);
 	debugfs_create_u32("idma_err_cnt", 0444, crtc->debugfs_entry, &decon->d.idma_err_cnt);
+	debugfs_create_u32("te_count", 0444, crtc->debugfs_entry, &decon->d.te_cnt);
+	debugfs_create_u32("frame_done_count", 0444, crtc->debugfs_entry, &decon->d.framedone_cnt);
 
 	urgent_dent = debugfs_create_dir("urgent", crtc->debugfs_entry);
 	if (!urgent_dent) {

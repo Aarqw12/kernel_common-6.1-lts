@@ -746,16 +746,15 @@ static void decon_calc_hist_roi(int w, int h, int d, int r, int *x, int *y, int 
 
 static int decon_update_lhbm_hist_roi(struct decon_device *decon, struct drm_atomic_state *state)
 {
-	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
+	struct drm_crtc_state *new_crtc_state;
 	struct gs_drm_connector_state *old_gs_connector_state, *new_gs_connector_state;
 
-	old_crtc_state = drm_atomic_get_old_crtc_state(state, &decon->crtc->base);
 	new_crtc_state = drm_atomic_get_new_crtc_state(state, &decon->crtc->base);
-	if (!old_crtc_state || !new_crtc_state)
+	if (!new_crtc_state)
 		return 0;
 
-	old_gs_connector_state = crtc_get_gs_connector_state(state, old_crtc_state);
-	new_gs_connector_state = crtc_get_gs_connector_state(state, new_crtc_state);
+	old_gs_connector_state = crtc_get_old_gs_connector_state(state, new_crtc_state);
+	new_gs_connector_state = crtc_get_new_gs_connector_state(state, new_crtc_state);
 	if (!old_gs_connector_state || !new_gs_connector_state)
 		return 0;
 
@@ -772,14 +771,32 @@ static int decon_update_lhbm_hist_roi(struct decon_device *decon, struct drm_ato
 	     new_gs_connector_state->lhbm_hist_data.enabled) ||
 	    gs_drm_connector_hist_data_needs_configure(old_gs_connector_state,
 						       new_gs_connector_state)) {
-		struct gs_drm_connector_lhbm_hist_data *hist_data;
-		int w, h, x, y, side_len;
+		struct gs_drm_connector_lhbm_hist_data *hist_data =
+			&new_gs_connector_state->lhbm_hist_data;
+		int w = new_crtc_state->mode.hdisplay;
+		int h = new_crtc_state->mode.vdisplay;
 
-		hist_data = &new_gs_connector_state->lhbm_hist_data;
-		w = new_crtc_state->mode.hdisplay;
-		h = new_crtc_state->mode.vdisplay;
-		decon_calc_hist_roi(w, h, hist_data->d, hist_data->r, &x, &y, &side_len);
-		return exynos_drm_drv_set_lhbm_hist_gs(decon, x, y, side_len, side_len);
+		if (hist_data->roi_type == GS_HIST_ROI_CIRCLE) {
+			int x, y, side_len;
+
+			decon_calc_hist_roi(w, h, hist_data->lhbm_circle_d,
+					    hist_data->lhbm_circle_r, &x, &y, &side_len);
+
+			struct histogram_roi roi = {
+				.start_x = x, .start_y = y, .hsize = side_len, .vsize = side_len
+			};
+
+			return exynos_drm_drv_set_lhbm_hist_gs(
+				decon, &roi, &lhbm_hist_weight[LHBM_CIRCLE_WEIGHT]);
+		} else if (hist_data->roi_type == GS_HIST_ROI_FULL_SCREEN) {
+			struct histogram_roi roi = {
+				.start_x = 0, .start_y = 0, .hsize = w, .vsize = h
+			};
+			return exynos_drm_drv_set_lhbm_hist_gs(
+				decon, &roi, &lhbm_hist_weight[LHBM_FSCREEN_WEIGHT]);
+		} else {
+			decon_warn(decon, "unsupported roi type: %d\n", hist_data->roi_type);
+		}
 	}
 
 	return 0;
@@ -1012,7 +1029,6 @@ static void decon_arm_event_locked(struct exynos_drm_crtc *exynos_crtc)
 	decon->event = event;
 }
 
-#define VSYNC_PERIOD_VARIANCE_NS		2000000
 static void decon_wait_earliest_process_time(
 		const struct exynos_drm_crtc_state *old_exynos_crtc_state,
 		const struct exynos_drm_crtc_state *new_exynos_crtc_state)
@@ -1020,7 +1036,7 @@ static void decon_wait_earliest_process_time(
 	const struct drm_crtc_state *old_crtc_state = &old_exynos_crtc_state->base;
 	const struct drm_crtc_state *new_crtc_state = &new_exynos_crtc_state->base;
 	int32_t te_freq, vsync_period_ns;
-	ktime_t earliest_process_time, now;
+	ktime_t earliest_process_time, expected_process_duration_ns, now;
 
 	te_freq = exynos_drm_mode_te_freq(&old_crtc_state->mode);
 	if (te_freq == 0) {
@@ -1028,20 +1044,23 @@ static void decon_wait_earliest_process_time(
 		te_freq = exynos_drm_mode_te_freq(&new_crtc_state->mode);
 	}
 	vsync_period_ns = mult_frac(1000, 1000 * 1000, te_freq);
+	/* set 1/4 of vsync period as variance */
+	expected_process_duration_ns = mult_frac(vsync_period_ns, 3, 4);
 	if (ktime_compare(new_exynos_crtc_state->expected_present_time,
-				vsync_period_ns - VSYNC_PERIOD_VARIANCE_NS) <= 0) {
+			  expected_process_duration_ns) <= 0) {
 		return;
 	}
 
 	earliest_process_time = ktime_sub_ns(new_exynos_crtc_state->expected_present_time,
-					vsync_period_ns - VSYNC_PERIOD_VARIANCE_NS);
+					     expected_process_duration_ns);
 	now = ktime_get();
 
 	if (ktime_after(earliest_process_time, now)) {
 		int32_t max_delay_us = (10 * vsync_period_ns) / 1000;
-		int32_t delay_until_process;
+		int32_t delay_until_process, diff;
+		const int32_t WARNING_THRESHOLD_US = 1000;
 
-		DPU_ATRACE_BEGIN("wait for earliest present time");
+		DPU_ATRACE_BEGIN("wait for earliest present time (vsync:%d)", te_freq);
 
 		delay_until_process = (int32_t)ktime_us_delta(earliest_process_time, now);
 		if (delay_until_process > max_delay_us) {
@@ -1050,8 +1069,19 @@ static void decon_wait_earliest_process_time(
 					now, earliest_process_time);
 		}
 		usleep_range(delay_until_process, delay_until_process + 10);
-
 		DPU_ATRACE_END("wait for earliest process time");
+
+		diff = abs(ktime_to_us(ktime_sub(ktime_get(), now)));
+		if (diff > WARNING_THRESHOLD_US) {
+			char trace_str[64];
+			static uint64_t failure_times = 0;
+
+			snprintf(trace_str, sizeof(trace_str),
+				 "waiting for expected present time: %d(%d)us failure:%llu\n",
+				 delay_until_process, diff, ++failure_times);
+			pr_warn("%s", trace_str);
+			DPU_ATRACE_INSTANT(trace_str);
+		}
 	}
 }
 
@@ -2011,6 +2041,7 @@ static irqreturn_t decon_irq_handler(int irq, void *dev_data)
 		DPU_ATRACE_INT_PID("frame_transfer", 0, decon->thread->pid);
 		atomic_set(&decon->frame_transfer_pending, 0);
 		DPU_EVENT_LOG(DPU_EVT_DECON_FRAMEDONE, decon->id, decon);
+		decon->d.framedone_cnt++;
 		exynos_dqe_save_lpd_data(decon->dqe);
 		atomic_dec_if_positive(&decon->frames_pending);
 		if (decon->dqe)
