@@ -17,7 +17,7 @@ kernel_module(
         "net/mcps802154/mcps802154_region_nfcc_coex.ko",
         "net/mcps802154/mcps802154_region_pctt.ko",
     ],
-    kernel_build = "//private/devices/google/common:kernel",
+    kernel_build = "//private/google-modules/soc/gs:gs_kernel_build",
     visibility = [
         "//private/devices/google:__subpackages__",
         "//private/google-modules/soc/gs:__pkg__",
