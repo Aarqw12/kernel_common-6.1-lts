@@ -2485,7 +2485,6 @@ void dp_hw_deinit(struct dp_hw_config *hw_config)
 	dp_reg_set_oscclk_qch_func_en(0);
 
 	/* USBDP PHY De-initialization */
-	dpphy_reg_reset_tx_lanes();
 	dwc3_exynos_phy_enable(1, 0);
 	atomic_dec(&hw_config->usbdp_phy_en_cnt);
 }
