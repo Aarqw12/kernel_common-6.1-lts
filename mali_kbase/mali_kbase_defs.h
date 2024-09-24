@@ -786,7 +786,6 @@ struct kbase_mem_migrate {
  * @reg_size:              Size of the region containing GPU registers
  * @reg:                   Kernel virtual address of the region containing GPU
  *                         registers, using which Driver will access the registers.
- * @uclamp_rt:             UClamp min and max values for RT threads spawned
  * @regmap:                Top level structure for hw_access regmaps, containing
  *                         the size of the regmap, pointers to Look-Up Tables (LUT).
  * @regmap.regs:           Pointer to regmap LUT of precomputed iomem pointers from
@@ -1125,10 +1124,6 @@ struct kbase_device {
 	u64 reg_start;
 	size_t reg_size;
 	void __iomem *reg;
-	struct {
-		int min;
-		int max;
-	} uclamp_rt;
 
 	struct {
 		void __iomem **regs;
