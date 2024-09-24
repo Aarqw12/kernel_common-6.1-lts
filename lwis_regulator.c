@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Google LWIS Regulator Interface
  *
@@ -20,14 +19,16 @@ struct lwis_regulator_list *lwis_regulator_list_alloc(int num_regs)
 {
 	struct lwis_regulator_list *list;
 
-	if (num_regs < 0)
+	if (num_regs < 0) {
 		return ERR_PTR(-EINVAL);
+	}
 
 	list = kmalloc(sizeof(struct lwis_regulator_list), GFP_KERNEL);
-	if (!list)
+	if (!list) {
 		return ERR_PTR(-ENOMEM);
+	}
 
-	list->reg = kcalloc(num_regs, sizeof(struct lwis_regulator), GFP_KERNEL);
+	list->reg = kzalloc(num_regs * sizeof(struct lwis_regulator), GFP_KERNEL);
 	if (!list->reg) {
 		kfree(list);
 		return ERR_PTR(-ENOMEM);
@@ -40,10 +41,14 @@ struct lwis_regulator_list *lwis_regulator_list_alloc(int num_regs)
 
 void lwis_regulator_list_free(struct lwis_regulator_list *list)
 {
-	if (!list)
+	if (!list) {
 		return;
+	}
 
-	kfree(list->reg);
+	if (list->reg) {
+		kfree(list->reg);
+	}
+
 	kfree(list);
 }
 
@@ -54,8 +59,9 @@ int lwis_regulator_get(struct lwis_regulator_list *list, char *name, int voltage
 	int i;
 	int index = -1;
 
-	if (!list || !dev)
+	if (!list || !dev) {
 		return -EINVAL;
+	}
 
 	/* Look for empty slot and duplicate entries */
 	for (i = 0; i < list->count; ++i) {
@@ -75,8 +81,9 @@ int lwis_regulator_get(struct lwis_regulator_list *list, char *name, int voltage
 
 	/* Make sure regulator exists */
 	reg = devm_regulator_get(dev, name);
-	if (IS_ERR_OR_NULL(reg))
+	if (IS_ERR_OR_NULL(reg)) {
 		return PTR_ERR(reg);
+	}
 
 	list->reg[index].reg = reg;
 	strscpy(list->reg[index].name, name, LWIS_MAX_NAME_STRING_LEN);
@@ -87,11 +94,13 @@ int lwis_regulator_get(struct lwis_regulator_list *list, char *name, int voltage
 
 int lwis_regulator_put_by_idx(struct lwis_regulator_list *list, int index)
 {
-	if (!list || index < 0 || index >= list->count)
+	if (!list || index < 0 || index >= list->count) {
 		return -EINVAL;
+	}
 
-	if (IS_ERR_OR_NULL(list->reg[index].reg))
+	if (IS_ERR_OR_NULL(list->reg[index].reg)) {
 		return -EINVAL;
+	}
 
 	devm_regulator_put(list->reg[index].reg);
 	memset(list->reg + index, 0, sizeof(struct lwis_regulator));
@@ -101,15 +110,18 @@ int lwis_regulator_put_by_idx(struct lwis_regulator_list *list, int index)
 
 int lwis_regulator_put_by_name(struct lwis_regulator_list *list, char *name)
 {
-	if (!list)
+	int i;
+
+	if (!list) {
 		return -EINVAL;
+	}
 
 	/* Find entry by name */
-	for (int i = 0; i < list->count; ++i) {
+	for (i = 0; i < list->count; ++i) {
 		if (!strcmp(list->reg[i].name, name)) {
-			if (IS_ERR_OR_NULL(list->reg[i].reg))
+			if (IS_ERR_OR_NULL(list->reg[i].reg)) {
 				return -EINVAL;
-
+			}
 			devm_regulator_put(list->reg[i].reg);
 			memset(list->reg + i, 0, sizeof(struct lwis_regulator));
 			return 0;
@@ -122,13 +134,16 @@ int lwis_regulator_put_by_name(struct lwis_regulator_list *list, char *name)
 
 int lwis_regulator_put_all(struct lwis_regulator_list *list)
 {
+	int i;
 	int ret = 0;
 
-	if (!list)
+	if (!list) {
 		return -EINVAL;
+	}
 
-	for (int i = 0; i < list->count; ++i)
+	for (i = 0; i < list->count; ++i) {
 		ret = lwis_regulator_put_by_idx(list, i);
+	}
 
 	return ret;
 }
@@ -138,8 +153,9 @@ int lwis_regulator_enable_by_idx(struct lwis_regulator_list *list, int index)
 	int ret = 0;
 	struct lwis_regulator *lwis_reg;
 
-	if (!list)
+	if (!list) {
 		return -EINVAL;
+	}
 
 	lwis_reg = &list->reg[index];
 	if (lwis_reg->voltage > 0) {
@@ -156,12 +172,16 @@ int lwis_regulator_enable_by_idx(struct lwis_regulator_list *list, int index)
 
 int lwis_regulator_enable_by_name(struct lwis_regulator_list *list, char *name)
 {
-	if (!list)
-		return -EINVAL;
+	int i;
 
-	for (int i = 0; i < list->count; ++i) {
-		if (!strcmp(list->reg[i].name, name))
+	if (!list) {
+		return -EINVAL;
+	}
+
+	for (i = 0; i < list->count; ++i) {
+		if (!strcmp(list->reg[i].name, name)) {
 			return lwis_regulator_enable_by_idx(list, i);
+		}
 	}
 
 	/* No entry found */
@@ -187,20 +207,25 @@ int lwis_regulator_enable_all(struct lwis_regulator_list *list)
 
 int lwis_regulator_disable_by_idx(struct lwis_regulator_list *list, int index)
 {
-	if (!list)
+	if (!list) {
 		return -EINVAL;
+	}
 
 	return regulator_disable(list->reg[index].reg);
 }
 
 int lwis_regulator_disable_by_name(struct lwis_regulator_list *list, char *name)
 {
-	if (!list)
-		return -EINVAL;
+	int i;
 
-	for (int i = 0; i < list->count; ++i) {
-		if (!strcmp(list->reg[i].name, name))
+	if (!list) {
+		return -EINVAL;
+	}
+
+	for (i = 0; i < list->count; ++i) {
+		if (!strcmp(list->reg[i].name, name)) {
 			return regulator_disable(list->reg[i].reg);
+		}
 	}
 
 	/* No entry found */
@@ -226,7 +251,10 @@ int lwis_regulator_disable_all(struct lwis_regulator_list *list)
 
 void lwis_regulator_print(struct lwis_regulator_list *list)
 {
-	for (int i = 0; i < list->count; ++i)
+	int i;
+
+	for (i = 0; i < list->count; ++i) {
 		pr_info("%s: reg: %s voltage: %d\n", __func__, list->reg[i].name,
 			list->reg[i].voltage);
+	}
 }

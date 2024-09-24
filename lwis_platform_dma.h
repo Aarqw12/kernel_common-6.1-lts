@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Google LWIS Declarations of Platform-specific DMA Functions
  *
