@@ -36,7 +36,6 @@ struct device_node;
 #define GBMS_CHG_ALG_BUF_SZ 500
 #define GBMS_CHG_TOPOFF_NB_LIMITS_MAX 6
 #define GBMS_AACR_DATA_MAX 10
-#define GBMS_AAFV_DATA_MAX 16
 
 struct gbms_chg_profile {
 	const char *owner_name;
@@ -68,15 +67,9 @@ struct gbms_chg_profile {
 	u32 cc_ua_resolution;
 
 	/* AACR feature */
-	u32 aacr_reference_cycles[GBMS_AACR_DATA_MAX];
-	u32 aacr_reference_fade10[GBMS_AACR_DATA_MAX];
+	u32 reference_cycles[GBMS_AACR_DATA_MAX];
+	u32 reference_fade10[GBMS_AACR_DATA_MAX];
 	u32 aacr_nb_limits;
-
-	/* AAFV feature */
-	u32 aafv_cycles[GBMS_AAFV_DATA_MAX];
-	u32 aafv_offsets[GBMS_AAFV_DATA_MAX];
-	u32 aafv_nb_limits;
-	u32 aafv_offset;
 
 	bool debug_chg_profile;
 	bool enable_switch_chg_profile;
@@ -612,12 +605,6 @@ int ttf_soc_cstr_combine(char *buff, int size, const struct ttf_soc_stats *soc_r
 int gbms_read_aacr_limits(struct gbms_chg_profile *profile,
 			  struct device_node *node);
 
-int gbms_read_aafv_limits(struct gbms_chg_profile *profile,
-			  struct device_node *node);
-int gbms_aafv_get_offset(const struct gbms_chg_profile *profile, const int cycles);
-bool gbms_aafv_offset_is_valid(const struct gbms_chg_profile *profile,
-			       const u32 offset, const u32 len);
-
 bool chg_state_is_disconnected(const union gbms_charger_state *chg_state);
 
 /* Voltage tier stats */
@@ -775,8 +762,6 @@ enum csi_status {
 #define CSI_STATUS_MASK_NOTCHARGING	(1 << 12)
 #define CSI_STATUS_MASK_CHARGING	(1 << 13)
 #define CSI_STATUS_MASK_DEFEND_LIMIT	(1 << 14)
-
-#define GET_BIT_POSITION(flag) (fls(flag) - 1)
 
 enum charging_state {
        BATTERY_STATUS_UNKNOWN = -1,
