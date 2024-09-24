@@ -28,7 +28,7 @@ kernel_module(
         "cpif_page.ko",
         "shm_ipc.ko",
     ],
-    kernel_build = "//private/devices/google/common:kernel",
+    kernel_build = "//private/google-modules/soc/gs:gs_kernel_build",
     visibility = [
         "//private/devices/google:__subpackages__",
         "//private/google-modules:__subpackages__",
@@ -58,7 +58,7 @@ kernel_module(
         "dit/exynos_dit.ko",
         "shm_ipc.ko",
     ],
-    kernel_build = "//private/devices/google/common:kernel",
+    kernel_build = "//private/google-modules/soc/gs:gs_kernel_build",
     visibility = [
         "//private/devices/google:__subpackages__",
         "//private/google-modules:__subpackages__",
