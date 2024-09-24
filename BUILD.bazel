@@ -69,7 +69,7 @@ filegroup(
 kernel_build(
     name = "kernel",
     srcs = [":kernel_sources"],
-    outs = GS101_DTBS,
+    outs = GS101_DTBS + [".config"],
     base_kernel = "//common:kernel_aarch64",
     build_config = ":build_config",
     collect_unstripped_modules = True,
