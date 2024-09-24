@@ -22,6 +22,7 @@
 #include <linux/io.h>
 #include <linux/time64.h>
 #include <linux/irqchip/arm-gic-v3.h>
+#include <linux/perf/arm_pmuv3.h>
 
 #include <soc/google/acpm_ipc_ctrl.h>
 #include <soc/google/exynos-cpupm.h>
@@ -112,6 +113,7 @@ struct exynos_ehld_ctrl {
 	int				ehld_cpupm;    /* CPUPM state */
 	raw_spinlock_t			lock;
 	bool				need_to_task;
+	u32				cntr_shift;
 };
 
 static DEFINE_PER_CPU(struct exynos_ehld_ctrl, ehld_ctrl) = {
@@ -221,9 +223,21 @@ void exynos_ehld_do_policy(void)
 	}
 }
 
+/*
+ * This implementation uses the code in `drivers/perf/arm_pmuv3.c` to access low-level ARMv8 PMU
+ * events. The `ARMV8_IDX_TO_COUNTER` is cloned to convert the `event->hw.idx` to the corresponding
+ * ARMv8 counter ID.
+ */
+#define ARMV8_IDX_COUNTER0 1
+#define ARMV8_IDX_TO_COUNTER(x) (((x) - ARMV8_IDX_COUNTER0) & ARMV8_PMU_COUNTER_MASK)
+
 static u32 exynos_ehld_read_pmu_counter(void)
 {
-	write_sysreg(0, pmselr_el0);
+	unsigned int cpu = raw_smp_processor_id();
+	struct exynos_ehld_ctrl *ctrl = per_cpu_ptr(&ehld_ctrl, cpu);
+	struct perf_event *event = ctrl->event;
+
+	write_sysreg(ARMV8_IDX_TO_COUNTER(event->hw.idx), pmselr_el0);
 	isb();
 	return read_sysreg(pmxevcntr_el0);
 }
@@ -231,10 +245,11 @@ static u32 exynos_ehld_read_pmu_counter(void)
 void exynos_ehld_value_raw_update(unsigned int cpu)
 {
 	u32 val;
+	struct exynos_ehld_ctrl *ctrl = per_cpu_ptr(&ehld_ctrl, cpu);
 
 	val = exynos_ehld_read_pmu_counter();
 
-	dbg_snapshot_set_core_pmu_val(val, cpu);
+	dbg_snapshot_set_core_pmu_val(val + ctrl->cntr_shift, cpu);
 
 	ehld_info(0, "%s: cpu%u: val:%x timer:%llx",
 			__func__, cpu, val, cpu_clock(cpu));
@@ -322,6 +337,8 @@ static int exynos_ehld_start_cpu(unsigned int cpu)
 		exynos_ehld_start_cpu(0);
 
 	if (!event) {
+		int ret;
+
 		event = perf_event_create_kernel_counter(&exynos_ehld_attr,
 							 cpu,
 							 NULL,
@@ -336,6 +353,15 @@ static int exynos_ehld_start_cpu(unsigned int cpu)
 		ehld_debug(1, "@%s: cpu%u event make success\n", __func__, cpu);
 		ctrl->event = event;
 		perf_event_enable(event);
+
+		ret = adv_tracer_ehld_set_pmu_cntr_id(cpu, 1, ARMV8_IDX_TO_COUNTER(event->hw.idx));
+		if (ret) {
+			ehld_err(1, "@%s: cpu%u set_pmu_cntr_id failed: %d\n", __func__, cpu, ret);
+			ctrl->event = NULL;
+			perf_event_disable(event);
+			perf_event_release_kernel(event);
+			return ret;
+		}
 	}
 
 	ctrl->ehld_running = 1;
@@ -372,6 +398,11 @@ static int exynos_ehld_stop_cpu(unsigned int cpu)
 	if (ehld_main.suspending && cpu == 1)
 		exynos_ehld_stop_cpu(0);
 
+	if (ehld_main.dbgc.support && !ehld_main.dbgc.use_tick_timer) {
+		ehld_debug(1, "@%s: cpu%u hrtimer cancel\n", __func__, cpu);
+		hrtimer_cancel(hrtimer);
+	}
+
 	ctrl->ehld_running = 0;
 	ctrl->ehld_cpupm = 1;
 
@@ -379,15 +410,10 @@ static int exynos_ehld_stop_cpu(unsigned int cpu)
 
 	event = ctrl->event;
 	if (event) {
+		adv_tracer_ehld_set_pmu_cntr_id(cpu, 0, 0);
 		ctrl->event = NULL;
 		perf_event_disable(event);
 		perf_event_release_kernel(event);
-	}
-
-	if (ehld_main.dbgc.support && !ehld_main.dbgc.use_tick_timer) {
-		ehld_debug(1, "@%s: cpu%u hrtimer cancel\n",
-						__func__, cpu);
-		hrtimer_cancel(hrtimer);
 	}
 
 	dbg_snapshot_set_core_pmu_val(EHLD_VAL_PM, cpu);
@@ -580,6 +606,7 @@ static int exynos_ehld_cpu_pm_exit(unsigned int cpu)
 	 * Thus, we will need to use CPU clock as the initial value.
 	 */
 	dbg_snapshot_set_core_pmu_val(cpu_clock(cpu), cpu);
+	ctrl->cntr_shift = cpu_clock(cpu);
 	ctrl->ehld_cpupm = 0;
 out:
 	raw_spin_unlock_irqrestore(&ctrl->lock, flags);

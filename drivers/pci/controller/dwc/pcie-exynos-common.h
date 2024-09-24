@@ -288,7 +288,6 @@ struct exynos_pcie {
 	int			linkdown_cnt;
 	int			idle_ip_index;
 	int			separated_msi;
-	int			de_emphasis_level;
 	bool			use_msi;
 	bool			support_msi64_addressing;
 	bool			use_cache_coherency;
@@ -315,6 +314,7 @@ struct exynos_pcie {
 	struct notifier_block   ss_dma_mon_nb;
 	struct delayed_work	dislink_work;
 	struct delayed_work	cpl_timeout_work;
+	struct delayed_work     link_recovery_fail_work;
 	struct exynos_pcie_register_event *event_reg;
 #if IS_ENABLED(CONFIG_PM_DEVFREQ)
 	unsigned int            int_min_lock;
@@ -340,6 +340,7 @@ struct exynos_pcie {
 	bool l1ss_force;
 	bool l11_enable;
 	bool l12_enable;
+	bool l1_enable;
 
 	struct pinctrl		*pcie_pinctrl;
 	struct pinctrl_state	*pin_state[MAX_PCIE_PIN_STATE];
@@ -374,6 +375,9 @@ struct exynos_pcie {
 	bool skip_config;
 
 	struct delayed_work cfg_access_work;
+
+	bool			customized_de_emphasis;
+	int			de_emphasis_value;
 };
 
 #define PCIE_MAX_MSI_NUM	(8)

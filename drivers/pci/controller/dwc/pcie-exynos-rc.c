@@ -1323,14 +1323,45 @@ static ssize_t l12_enable_store(struct device *dev,
 	return count;
 }
 
+static ssize_t l1_enable_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct exynos_pcie *pcie = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%d\n", pcie->l1_enable);
+}
+
+static ssize_t l1_enable_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct exynos_pcie *exynos_pcie = dev_get_drvdata(dev);
+	int val;
+
+	if (!buf)
+		return -EINVAL;
+
+	if (sscanf(buf, "%x", &val) <= 0)
+		return -EINVAL;
+
+	if (val < 0 || val > 1)
+		return -EINVAL;
+
+	exynos_pcie->l1_enable = val;
+
+	return count;
+}
+
 static DEVICE_ATTR_RW(l1ss_force);
 static DEVICE_ATTR_RW(l11_enable);
 static DEVICE_ATTR_RW(l12_enable);
+static DEVICE_ATTR_RW(l1_enable);
 
 static struct attribute *l1ss_attrs[] = {
 	&dev_attr_l1ss_force.attr,
 	&dev_attr_l11_enable.attr,
 	&dev_attr_l12_enable.attr,
+	&dev_attr_l1_enable.attr,
 	NULL,
 };
 
@@ -1793,7 +1824,7 @@ static int exynos_pcie_rc_rd_other_conf(struct dw_pcie_rp *pp, struct pci_bus *b
 				      &exynos_pcie->cfg_access_work,
 				      msecs_to_jiffies(EP_CONFIG_ACCESS_TIMEOUT_MS));
 		ret = dw_pcie_read(va_cfg_base + where, size, val);
-		cancel_delayed_work_sync(&exynos_pcie->cfg_access_work);
+		cancel_delayed_work(&exynos_pcie->cfg_access_work);
 	}
 	else
 		ret = dw_pcie_read(va_cfg_base + where, size, val);
@@ -2299,12 +2330,15 @@ static int exynos_pcie_rc_parse_dt(struct device *dev, struct exynos_pcie *exyno
 		gpio_direction_output(exynos_pcie->ssd_gpio, 0);
 	}
 
-	if (of_property_read_u32(np, "de-emphasis-level", &exynos_pcie->de_emphasis_level)) {
-		dev_info(dev, "failed to parse the de-emphasis level, default 0\n");
-		exynos_pcie->de_emphasis_level = 0;
-	} else {
-		dev_dbg(dev, "parse de-emphasis level: %d\n", exynos_pcie->de_emphasis_level);
+	exynos_pcie->customized_de_emphasis = of_property_read_bool(np, "customized-de-emphasis");
+
+	if (of_property_read_u32(np, "de-emphasis-value", &exynos_pcie->de_emphasis_value)) {
+		exynos_pcie->de_emphasis_value = 0;
+		exynos_pcie->customized_de_emphasis = false;
 	}
+
+	dev_info(dev, "customized de-emphasis enable %d with value: %d\n",
+		 exynos_pcie->de_emphasis_value, exynos_pcie->de_emphasis_value);
 
 	return 0;
 }
@@ -2896,6 +2930,18 @@ void exynos_pcie_rc_cpl_timeout_work(struct work_struct *work)
 	exynos_pcie_notify_callback(pp, EXYNOS_PCIE_EVENT_CPL_TIMEOUT);
 }
 
+void exynos_pcie_rc_link_recovery_fail_work(struct work_struct *work)
+{
+	struct exynos_pcie *exynos_pcie =
+		container_of(work, struct exynos_pcie, link_recovery_fail_work.work);
+	struct dw_pcie *pci = exynos_pcie->pci;
+	struct dw_pcie_rp *pp = &pci->pp;
+	struct device *dev = pci->dev;
+
+	dev_err(dev, "call PCIE_LINK_DOWN_RECOVERY_FAIL callback function\n");
+	exynos_pcie_notify_callback(pp, EXYNOS_PCIE_EVENT_LINKDOWN_RECOVERY_FAIL);
+}
+
 static void exynos_pcie_rc_use_ia(struct exynos_pcie *exynos_pcie)
 {
 	if (!exynos_pcie->use_ia) {
@@ -3303,7 +3349,7 @@ static irqreturn_t exynos_pcie_rc_irq_handler(int irq, void *arg)
 					      "in cpl recovery");
 			else {
 				logbuffer_log(exynos_pcie->log, "start cpl recovery");
-				cancel_delayed_work_sync(&exynos_pcie->cfg_access_work);
+				cancel_delayed_work(&exynos_pcie->cfg_access_work);
 				exynos_pcie->cpl_timeout_recovery = 1;
 				exynos_pcie->state = STATE_LINK_DOWN_TRY;
 				queue_work(exynos_pcie->pcie_wq,
@@ -3658,6 +3704,8 @@ retry:
 		} else {
 			//exynos_pcie_host_v1_print_link_history(pp);
 			exynos_pcie_rc_print_link_history(pp);
+			logbuffer_logk(exynos_pcie->log, LOGLEVEL_ERR,"Link recovery retry fail count: %d\n",
+				try_cnt);
 			exynos_pcie_rc_dump_link_down_status(exynos_pcie->ch_num);
 			exynos_pcie_rc_register_dump(exynos_pcie->ch_num);
 			exynos_pcie->link_stats.link_recovery_failure_count++;
@@ -3845,9 +3893,8 @@ int exynos_pcie_rc_poweron(int ch_num)
 
 		enable_irq(pp->irq);
 
-		if (exynos_pcie_rc_establish_link(pp)) {
+		if (exynos_pcie_rc_establish_link(pp) != 0) {
 			logbuffer_logk(exynos_pcie->log, LOGLEVEL_ERR, "pcie link up fail");
-
 			goto poweron_fail;
 		}
 
@@ -3924,6 +3971,12 @@ poweron_fail:
 	exynos_pcie->state = STATE_LINK_UP;
 	mutex_unlock(&exynos_pcie->power_onoff_lock);
 	exynos_pcie_rc_poweroff(exynos_pcie->ch_num);
+
+	if (exynos_pcie->sudden_linkdown || exynos_pcie->cpl_timeout_recovery) {
+		logbuffer_logk(exynos_pcie->log, LOGLEVEL_ERR, "pcie link up fail, force cp crash");
+		exynos_pcie->state = STATE_LINK_DOWN;
+		queue_work(exynos_pcie->pcie_wq, &exynos_pcie->link_recovery_fail_work.work);
+	}
 
 	return -EPIPE;
 }
@@ -4220,7 +4273,7 @@ static int exynos_pcie_rc_set_l1ss(int enable, struct dw_pcie_rp *pp, int id)
 	struct device *dev = pci->dev;
 	u32 val;
 	unsigned long flags;
-	int domain_num;
+	int domain_num, aspm_l1_enable = PCI_EXP_LNKCTL_ASPM_L1;
 	struct pci_bus *ep_pci_bus;
 	u32 exp_cap_off = PCIE_CAP_OFFSET;
 
@@ -4277,7 +4330,12 @@ static int exynos_pcie_rc_set_l1ss(int enable, struct dw_pcie_rp *pp, int id)
 			if (exynos_pcie->l12_enable)
 				enable |= LINK_L12_ENABLE;
 
-			dev_info(dev, "force l1ss_enable=0x%x\n", enable);
+			aspm_l1_enable &= ~PCI_EXP_LNKCTL_ASPM_L1;
+			if (exynos_pcie->l1_enable)
+				aspm_l1_enable |= PCI_EXP_LNKCTL_ASPM_L1;
+
+			dev_info(dev, "force l1ss_enable=0x%x aspm_l1_enable 0x%x\n", enable,
+				 aspm_l1_enable);
 		}
 
 		exynos_pcie->l1ss_ctrl_id_state &= ~(id);
@@ -4343,7 +4401,7 @@ static int exynos_pcie_rc_set_l1ss(int enable, struct dw_pcie_rp *pp, int id)
 				exynos_pcie_rc_rd_own_conf(pp, exp_cap_off +
 							   PCI_EXP_LNKCTL, 4, &val);
 				val &= ~PCI_EXP_LNKCTL_ASPMC;
-				val |= PCI_EXP_LNKCTL_CCC | PCI_EXP_LNKCTL_ASPM_L1;
+				val |= PCI_EXP_LNKCTL_CCC | aspm_l1_enable;
 				exynos_pcie_rc_wr_own_conf(pp, exp_cap_off +
 							   PCI_EXP_LNKCTL, 4, val);
 				dev_dbg(dev, "CPen:3RC:ASPM(0x70+16)=0x%x\n", val);
@@ -4351,8 +4409,9 @@ static int exynos_pcie_rc_set_l1ss(int enable, struct dw_pcie_rp *pp, int id)
 				/* 4) [EP] enable ASPM */
 				exynos_pcie_rc_rd_other_conf(pp, ep_pci_bus, 0,
 							     exynos_pcie->ep_link_ctrl_off, 4, &val);
+				val &= ~PCI_EXP_LNKCTL_ASPM_L1;
 				val |= PCI_EXP_LNKCTL_CCC | PCI_EXP_LNKCTL_CLKREQ_EN |
-					PCI_EXP_LNKCTL_ASPM_L1;
+				       aspm_l1_enable;
 				exynos_pcie_rc_wr_other_conf(pp, ep_pci_bus, 0,
 							     exynos_pcie->ep_link_ctrl_off, 4, val);
 				dev_dbg(dev, "CPen:4EP:ASPM(0x80)=0x%x\n", val);
@@ -4429,7 +4488,7 @@ static int exynos_pcie_rc_set_l1ss(int enable, struct dw_pcie_rp *pp, int id)
 							   4, &val);
 				val &= ~PCI_EXP_LNKCTL_ASPMC;
 				/* PCI_EXP_LNKCTL_CCC: Common Clock Configuration */
-				val |= PCI_EXP_LNKCTL_CCC | PCI_EXP_LNKCTL_ASPM_L1;
+				val |= PCI_EXP_LNKCTL_CCC | aspm_l1_enable;
 				exynos_pcie_rc_wr_own_conf(pp, exp_cap_off + PCI_EXP_LNKCTL,
 							   4, val);
 				dev_dbg(dev, "WIFIen:3RC:ASPM(0x70+16)=0x%x\n", val);
@@ -4438,8 +4497,7 @@ static int exynos_pcie_rc_set_l1ss(int enable, struct dw_pcie_rp *pp, int id)
 				exynos_pcie_rc_rd_other_conf(pp, ep_pci_bus, 0, WIFI_L1SS_LINKCTRL,
 							     4, &val);
 				val &= ~(WIFI_ASPM_CONTROL_MASK);
-				val |= WIFI_CLK_REQ_EN | WIFI_USE_SAME_REF_CLK |
-				       WIFI_ASPM_L1_ENTRY_EN;
+				val |= WIFI_CLK_REQ_EN | WIFI_USE_SAME_REF_CLK | aspm_l1_enable;
 				exynos_pcie_rc_wr_other_conf(pp, ep_pci_bus, 0, WIFI_L1SS_LINKCTRL,
 							     4, val);
 				dev_dbg(dev, "WIFIen:4EP:ASPM(0xBC)=0x%x\n", val);
@@ -5717,6 +5775,7 @@ static int exynos_pcie_rc_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&exynos_pcie->dislink_work, exynos_pcie_rc_dislink_work);
 	INIT_DELAYED_WORK(&exynos_pcie->cpl_timeout_work, exynos_pcie_rc_cpl_timeout_work);
 	INIT_DELAYED_WORK(&exynos_pcie->cfg_access_work, exynos_pcie_wait_cfg_access_work);
+	INIT_DELAYED_WORK(&exynos_pcie->link_recovery_fail_work, exynos_pcie_rc_link_recovery_fail_work);
 
 #if IS_ENABLED(CONFIG_EXYNOS_ITMON)
 	exynos_pcie->itmon_nb.notifier_call = exynos_pcie_rc_itmon_notifier;

@@ -37,6 +37,8 @@
 #define SSPHY_USB		0
 #define SSPHY_DP		1
 
+#define USBDP_PHY_TCA_EL	"USBDP_PHY_TCA"
+
 /* -------------------------------------------------------------------------- */
 static int dwc3_otg_reboot_notify(struct notifier_block *nb, unsigned long event, void *buf);
 static struct notifier_block dwc3_otg_reboot_notifier = {
@@ -216,86 +218,6 @@ static void dwc3_usb3_phy_restart(struct dwc3_otg *dotg)
 	mutex_unlock(&dotg->role_lock);
 }
 
-static struct device_node *exynos_dwusb_parse_dt(void)
-{
-	struct device_node *np = NULL;
-
-	np = of_find_compatible_node(NULL, NULL, "samsung,exynos9-dwusb");
-	if (!np) {
-		pr_err("%s: failed to get the usbdrd node\n", __func__);
-		goto err;
-	}
-	return np;
-err:
-	return NULL;
-}
-
-static struct dwc3_exynos *exynos_dwusb_get_struct(void)
-{
-	struct device_node *np = NULL;
-	struct platform_device *pdev = NULL;
-	struct device *dev;
-	struct dwc3_exynos *exynos;
-
-	np = exynos_dwusb_parse_dt();
-	if (np) {
-		pdev = of_find_device_by_node(np);
-		dev = &pdev->dev;
-		of_node_put(np);
-		if (pdev) {
-			exynos = dev->driver_data;
-			return exynos;
-		}
-	}
-
-	pr_err("%s: failed to get the platform_device\n", __func__);
-	return NULL;
-}
-
-int usb_power_notify_control(int on)
-{
-	struct dwc3_exynos *exynos;
-	struct dwc3_otg	*dotg;
-	struct dwc3	*dwc;
-	struct device	*dev;
-
-	exynos = exynos_dwusb_get_struct();
-	if (!exynos) {
-		pr_err("%s: error\n", __func__);
-		return -ENODEV;
-	}
-
-	dwc = exynos->dwc;
-
-	if (dwc && exynos->dotg && dwc->dev) {
-		dotg = exynos->dotg;
-		dev = dwc->dev;
-	} else {
-		pr_err("%s: dwc or dotg or dev NULL\n", __func__);
-		return -ENODEV;
-	}
-
-	// Don't let xhci control power state if dp is active
-	if (exynos->phy_owner_bits & DWC3_EXYNOS_PHY_OWNER_DP) {
-		pr_warn("%s: DP active, ignoring phy control\n", __func__);
-		return -EINVAL;
-	}
-
-	if (dwc->maximum_speed == USB_SPEED_HIGH) {
-		dev_dbg(dev, "%s: Ignore USB3.0 phy control.\n", __func__);
-		return -EINVAL;
-	}
-
-	dev_dbg(dev, "%s: on=%d\n", __func__, on);
-
-	mutex_lock(&dotg->lock);
-	usb3_phy_control(dotg, SSPHY_USB, on);
-	mutex_unlock(&dotg->lock);
-
-	return 0;
-}
-EXPORT_SYMBOL(usb_power_notify_control);
-
 void dwc3_otg_phy_tune(struct dwc3 *dwc, bool is_host)
 {
 	int phy_state;
@@ -405,6 +327,7 @@ int dwc3_otg_start_host(struct dwc3_otg *dotg, int on)
 		dwc3_otg_phy_tune(dwc, 1);
 
 		dwc3_exynos_core_init(dwc, exynos);
+		dwc3_core_susphy_set(dwc, 1);
 		dwc3_otg_set_host_mode(dotg);
 
 		ret = platform_device_add(dwc->xhci);
@@ -434,6 +357,7 @@ int dwc3_otg_start_host(struct dwc3_otg *dotg, int on)
 				dwc->gadget_driver = temp_gadget_driver;
 		}
 
+		dwc3_core_susphy_set(dwc, 0);
 		dwc3_exynos_host_exit(exynos);
 		dwc->xhci = NULL;
 err1:
@@ -545,6 +469,42 @@ int dwc3_otg_start_gadget(struct dwc3_otg *dotg, int on)
 }
 
 /* -------------------------------------------------------------------------- */
+static struct device_node *exynos_dwusb_parse_dt(void)
+{
+	struct device_node *np = NULL;
+
+	np = of_find_compatible_node(NULL, NULL, "samsung,exynos9-dwusb");
+	if (!np) {
+		pr_err("%s: failed to get the usbdrd node\n", __func__);
+		goto err;
+	}
+	return np;
+err:
+	return NULL;
+}
+
+static struct dwc3_exynos *exynos_dwusb_get_struct(void)
+{
+	struct device_node *np = NULL;
+	struct platform_device *pdev = NULL;
+	struct device *dev;
+	struct dwc3_exynos *exynos;
+
+	np = exynos_dwusb_parse_dt();
+	if (np) {
+		pdev = of_find_device_by_node(np);
+		dev = &pdev->dev;
+		of_node_put(np);
+		if (pdev) {
+			exynos = dev->driver_data;
+			return exynos;
+		}
+	}
+
+	pr_err("%s: failed to get the platform_device\n", __func__);
+	return NULL;
+}
+
 int dwc3_otg_host_ready(bool ready)
 {
 	struct dwc3_exynos *exynos;
@@ -645,6 +605,12 @@ int dwc3_otg_get_idle_ip_index(void)
 }
 EXPORT_SYMBOL_GPL(dwc3_otg_get_idle_ip_index);
 
+/*
+ * dwc3_otg_ssphy_restart_cb - POGO SSPHY restart callback
+ *
+ * Previous products cannot use dwc3_otg_usbdp_tca_cb, so this
+ * callback is still used.
+ */
 static int dwc3_otg_ssphy_restart_cb(struct gvotable_election *el, const char *reason, void *value)
 {
 	struct dwc3_otg *dotg = gvotable_get_data(el);
@@ -653,6 +619,41 @@ static int dwc3_otg_ssphy_restart_cb(struct gvotable_election *el, const char *r
 	if (restart_phy)
 		dwc3_usb3_phy_restart(dotg);
 
+	return 0;
+}
+
+/*
+ * dwc3_otg_usbdp_tca_cb - POGO TCA mux set callback
+ *
+ * On Type-C plug, set Type-C mux to USB ONLY. Do not make write if
+ * DP is active.
+ */
+static int dwc3_otg_usbdp_tca_cb(struct gvotable_election *el, const char *reason, void *value)
+{
+	struct dwc3_otg *dotg = gvotable_get_data(el);
+	struct dwc3_exynos *exynos = dotg->exynos;
+	struct dwc3 *dwc = dotg->dwc;
+	bool plugged = (bool)value;
+
+	if (!plugged)
+		return 0;
+
+	mutex_lock(&dotg->lock);
+	mutex_lock(&dotg->role_lock);
+	if (dotg->current_role != USB_ROLE_HOST)
+		goto done;
+
+	if (exynos->phy_owner_bits & DWC3_EXYNOS_PHY_OWNER_DP) {
+		dev_warn(dotg->dwc->dev, "%s: ignoring TCA call, DP is active", __func__);
+		goto done;
+	}
+
+	exynos_usbdrd_usbdp_tca_set(dwc->usb3_generic_phy, DWC_PHY_TCA_USB_ONLY,
+				    DWC_PHY_TCA_LOW_PWR_DISABLE);
+
+done:
+	mutex_unlock(&dotg->role_lock);
+	mutex_unlock(&dotg->lock);
 	return 0;
 }
 
@@ -781,6 +782,16 @@ int dwc3_exynos_otg_init(struct dwc3 *dwc, struct dwc3_exynos *exynos)
 	}
 	gvotable_set_vote2str(dotg->ssphy_restart_votable, gvotable_v2s_int);
 
+	dotg->usbdp_tca_votable = gvotable_create_bool_election(USBDP_PHY_TCA_EL,
+								dwc3_otg_usbdp_tca_cb,
+								dotg);
+	if (IS_ERR_OR_NULL(dotg->usbdp_tca_votable)) {
+		ret = PTR_ERR(dotg->usbdp_tca_votable);
+		dev_err(dwc->dev, "failed to create usbdp_tca_votable votable (%d)\n", ret);
+		return ret;
+	}
+	gvotable_set_vote2str(dotg->usbdp_tca_votable, gvotable_v2s_int);
+
 	dev_dbg(dwc->dev, "otg_init done\n");
 
 	return 0;
@@ -792,6 +803,7 @@ void dwc3_exynos_otg_exit(struct dwc3 *dwc, struct dwc3_exynos *exynos)
 
 	power_supply_unreg_notifier(&dotg->psy_notifier);
 	gvotable_destroy_election(dotg->ssphy_restart_votable);
+	gvotable_destroy_election(dotg->usbdp_tca_votable);
 	sysfs_put(dotg->desired_role_kn);
 	unregister_pm_notifier(&dotg->pm_nb);
 	cancel_work_sync(&dotg->work);

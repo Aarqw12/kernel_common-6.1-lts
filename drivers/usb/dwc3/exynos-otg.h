@@ -55,6 +55,7 @@ struct dwc3_otg {
 	struct mutex		role_lock;
 
 	struct gvotable_election *ssphy_restart_votable;
+	struct gvotable_election *usbdp_tca_votable;
 };
 
 int dwc3_exynos_otg_init(struct dwc3 *dwc, struct dwc3_exynos *exynos);
@@ -64,7 +65,6 @@ int dwc3_otg_start_host(struct dwc3_otg *dotg, int on);
 int dwc3_otg_start_gadget(struct dwc3_otg *dotg, int on);
 enum usb_role dwc3_exynos_wait_role(struct dwc3_otg *dotg);
 void dwc3_exynos_set_role(struct dwc3_otg *dotg);
-int usb_power_notify_control(int on);
 
 extern void __iomem *phycon_base_addr;
 extern int exynos_usbdrd_pipe3_enable(struct phy *phy);

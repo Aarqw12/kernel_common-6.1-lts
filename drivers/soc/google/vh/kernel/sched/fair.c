@@ -58,10 +58,10 @@ unsigned int sched_dvfs_headroom[CONFIG_VH_SCHED_MAX_CPU_NR] =
 	{ [0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1] = DEF_UTIL_THRESHOLD };
 
 unsigned int sched_auto_uclamp_max[CONFIG_VH_SCHED_MAX_CPU_NR] =
-	{ [0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1] = 1024 };
+	{ [0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1] = SCHED_CAPACITY_SCALE };
 
 struct thermal_cap thermal_cap[CONFIG_VH_SCHED_MAX_CPU_NR] = {
-	[0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1].uclamp_max = 1024,
+	[0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1].uclamp_max = SCHED_CAPACITY_SCALE,
 	[0 ... CONFIG_VH_SCHED_MAX_CPU_NR - 1].freq = UINT_MAX};
 
 unsigned int __read_mostly sched_per_task_iowait_boost_max_value = 0;
@@ -94,7 +94,6 @@ extern void rvh_uclamp_eff_get_pixel_mod(void *data, struct task_struct *p, enum
  * Any change for these functions in upstream GKI would require extensive review
  * to make proper adjustment in vendor hook.
  */
-#define UTIL_EST_MARGIN (SCHED_CAPACITY_SCALE / 100)
 
 #define for_each_clamp_id(clamp_id) \
 	for ((clamp_id) = 0; (clamp_id) < UCLAMP_CNT; (clamp_id)++)
@@ -555,6 +554,11 @@ inline void set_prefer_high_cap(struct task_struct *p, bool val)
 static inline bool get_task_spreading(struct task_struct *p)
 {
 	return vg[get_vendor_group(p)].task_spreading;
+}
+
+static inline bool get_auto_prefer_fit(struct task_struct *p)
+{
+	return vg[get_vendor_group(p)].auto_prefer_fit && p->prio <= THREAD_PRIORITY_TOP_APP_BOOST;
 }
 
 #if IS_ENABLED(CONFIG_USE_GROUP_THROTTLE)
@@ -1584,7 +1588,7 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 	struct cpuidle_state *idle_state;
 	unsigned long unimportant_max_spare_cap = 0, idle_max_cap = 0;
 	unsigned long cfs_load, min_load = ULONG_MAX;
-	bool prefer_fit = get_uclamp_fork_reset(p, true);
+	bool prefer_fit;
 	const cpumask_t *preferred_idle_mask;
 
 	rd = cpu_rq(this_cpu)->rd;
@@ -1595,6 +1599,9 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 		goto out;
 
 	p_util_min = max(p_util_min, get_vendor_task_struct(p)->iowait_boost);
+
+	if (get_uclamp_fork_reset(p, true) || get_auto_prefer_fit(p))
+		prefer_fit = true;
 
 	for (; pd; pd = pd->next) {
 		unsigned long util_min = p_util_min, util_max = p_util_max;
@@ -2217,6 +2224,7 @@ void initialize_vendor_group_property(void)
 		vg[i].prefer_idle = false;
 		vg[i].prefer_high_cap = false;
 		vg[i].task_spreading = false;
+		vg[i].auto_prefer_fit = false;
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 		vg[i].group_throttle = max_val;
 #endif
@@ -2251,6 +2259,7 @@ void initialize_vendor_group_property(void)
 		vg[i].ug = UG_AUTO;
 #endif
 		vg[i].rampup_multiplier = 1;
+		vg[i].disable_util_est = false;
 	}
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
@@ -2318,13 +2327,13 @@ void rvh_util_est_update_pixel_mod(void *data, struct cfs_rq *cfs_rq, struct tas
 		else
 			rampup_multiplier = vg[get_vendor_group(p)].rampup_multiplier;
 
-		if (!rampup_multiplier) {
+		if (vg[get_vendor_group(p)].disable_util_est) {
 			p->se.avg.util_est.enqueued = 0;
 			p->se.avg.util_est.ewma = 0;
 			return;
 		}
 
-		if (vp->ignore_util_est_update)
+		if (vp->ignore_util_est_update && rampup_multiplier)
 			return;
 	}
 
@@ -3041,15 +3050,19 @@ static int find_target_cap(unsigned int freq, unsigned int cpu)
 
 	em_cluster = profile->cpu_to_cluster[cpu];
 
-	for (i = 0; i < em_cluster->num_opps; i++) {
-		struct pixel_em_opp *opp = &em_cluster->opps[i];
-		if (opp->freq >= freq) {
-			/* use -3 to make sure the various conversion logic
-			 * which can end up rounding up or down by 1
-			 * doesn't lead to wrong results.
-			 */
-			target_cap =  opp->capacity - 3;
-			break;
+	if (freq >= em_cluster->opps[em_cluster->num_opps - 1].freq)
+		target_cap = SCHED_CAPACITY_SCALE;
+	else {
+		for (i = 0; i < em_cluster->num_opps; i++) {
+			struct pixel_em_opp *opp = &em_cluster->opps[i];
+			if (opp->freq >= freq) {
+				/* use -3 to make sure the various conversion logic
+				* which can end up rounding up or down by 1
+				* doesn't lead to wrong results.
+				*/
+				target_cap =  opp->capacity - 3;
+				break;
+			}
 		}
 	}
 
