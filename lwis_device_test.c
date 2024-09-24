@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Google LWIS Test Device Driver
  *
  * Copyright (c) 2022 Google, LLC
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME "-test-dev: " fmt
@@ -64,7 +68,6 @@ static int lwis_test_register_io(struct lwis_device *lwis_dev, struct lwis_io_en
 	case LWIS_IO_ENTRY_READ:
 	case LWIS_IO_ENTRY_READ_V2: {
 		struct lwis_io_entry_rw *rw;
-
 		rw = &entry->rw;
 		if (rw->offset >= SCRATCH_TEST_DEV_MEMORY_SIZE) {
 			dev_err(test_dev->base_dev.dev, "Offset (%llu) must be < %d\n", rw->offset,
@@ -77,7 +80,6 @@ static int lwis_test_register_io(struct lwis_device *lwis_dev, struct lwis_io_en
 	case LWIS_IO_ENTRY_READ_BATCH:
 	case LWIS_IO_ENTRY_READ_BATCH_V2: {
 		struct lwis_io_entry_rw_batch *rw_batch;
-
 		rw_batch = &entry->rw_batch;
 		if (rw_batch->offset + rw_batch->size_in_bytes >= SCRATCH_TEST_DEV_MEMORY_SIZE) {
 			dev_err(test_dev->base_dev.dev,
@@ -93,7 +95,6 @@ static int lwis_test_register_io(struct lwis_device *lwis_dev, struct lwis_io_en
 	case LWIS_IO_ENTRY_WRITE:
 	case LWIS_IO_ENTRY_WRITE_V2: {
 		struct lwis_io_entry_rw *rw;
-
 		rw = &entry->rw;
 		if (rw->offset >= SCRATCH_TEST_DEV_MEMORY_SIZE) {
 			dev_err(test_dev->base_dev.dev, "Offset (%llu) must be < %d\n", rw->offset,
@@ -106,7 +107,6 @@ static int lwis_test_register_io(struct lwis_device *lwis_dev, struct lwis_io_en
 	case LWIS_IO_ENTRY_WRITE_BATCH:
 	case LWIS_IO_ENTRY_WRITE_BATCH_V2: {
 		struct lwis_io_entry_rw_batch *rw_batch;
-
 		rw_batch = &entry->rw_batch;
 		if (rw_batch->offset + rw_batch->size_in_bytes >= SCRATCH_TEST_DEV_MEMORY_SIZE) {
 			dev_err(test_dev->base_dev.dev,
@@ -122,7 +122,6 @@ static int lwis_test_register_io(struct lwis_device *lwis_dev, struct lwis_io_en
 	case LWIS_IO_ENTRY_MODIFY: {
 		struct lwis_io_entry_modify *mod;
 		uint64_t reg_value;
-
 		mod = &entry->mod;
 		if (mod->offset >= SCRATCH_TEST_DEV_MEMORY_SIZE) {
 			dev_err(test_dev->base_dev.dev, "Offset (%llu) must be < %d\n", mod->offset,
@@ -150,11 +149,12 @@ static int test_device_setup(struct lwis_test_device *test_dev)
 #ifdef CONFIG_OF
 	/* Parse device tree for device configurations */
 	ret = lwis_test_device_parse_dt(test_dev);
-	if (ret)
+	if (ret) {
 		dev_err(test_dev->base_dev.dev, "Failed to parse device tree\n");
+	}
 #else
 	/* Non-device-tree init: Save for future implementation */
-	ret = -EINVAL;
+	ret = -ENOSYS;
 #endif
 
 	return ret;
@@ -168,8 +168,9 @@ static int lwis_test_device_probe(struct platform_device *plat_dev)
 
 	/* Allocate test device specific data construct */
 	test_dev = devm_kzalloc(dev, sizeof(struct lwis_test_device), GFP_KERNEL);
-	if (!test_dev)
+	if (!test_dev) {
 		return -ENOMEM;
+	}
 
 	test_dev->base_dev.type = DEVICE_TYPE_TEST;
 	test_dev->base_dev.vops = test_vops;

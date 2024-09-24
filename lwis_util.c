@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Google LWIS Misc Utility Functions and Wrappers
  *
  * Copyright (c) 2018 Google, LLC
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME "-util: " fmt
@@ -19,11 +22,13 @@ int lwis_device_single_register_write(struct lwis_device *lwis_dev, int bid, uin
 	int ret = 0;
 	struct lwis_io_entry entry = {};
 
-	if (!lwis_dev)
+	if (!lwis_dev) {
+		pr_err("lwis_device_single_register_write: lwis_dev is NULL\n");
 		return -ENODEV;
-
+	}
 	if (lwis_dev->vops.register_io == NULL) {
-		dev_err(lwis_dev->dev, "%s: register_io undefined\n", __func__);
+		dev_err(lwis_dev->dev,
+			"lwis_device_single_register_write: register_io undefined\n");
 		return -EINVAL;
 	}
 
@@ -51,11 +56,12 @@ int lwis_device_single_register_read(struct lwis_device *lwis_dev, int bid, uint
 	int ret = -EINVAL;
 	struct lwis_io_entry entry = {};
 
-	if (!lwis_dev)
+	if (!lwis_dev) {
+		pr_err("lwis_device_single_register_read: lwis_dev is NULL\n");
 		return -ENODEV;
-
+	}
 	if (lwis_dev->vops.register_io == NULL) {
-		dev_err(lwis_dev->dev, "%s: register_io undefined\n", __func__);
+		dev_err(lwis_dev->dev, "lwis_device_single_register_read: register_io undefined\n");
 		return -EINVAL;
 	}
 
@@ -68,9 +74,9 @@ int lwis_device_single_register_read(struct lwis_device *lwis_dev, int bid, uint
 		lwis_dev->vops.register_io_barrier(lwis_dev, /*use_read_barrier=*/true,
 						   /*use_write_barrier=*/false);
 	}
-	if (!ret && value)
+	if (!ret && value) {
 		*value = entry.rw.val;
-
+	}
 	return ret;
 }
 
@@ -112,8 +118,10 @@ int lwis_create_kthread_workers(struct lwis_device *lwis_dev)
 {
 	char t_name[LWIS_MAX_NAME_STRING_LEN];
 
-	if (!lwis_dev)
+	if (!lwis_dev) {
+		pr_err("lwis_create_kthread_workers: lwis_dev is NULL\n");
 		return -ENODEV;
+	}
 
 	scnprintf(t_name, LWIS_MAX_NAME_STRING_LEN, "lwis_t_%s", lwis_dev->name);
 
@@ -182,14 +190,15 @@ void lwis_value_to_be_buf(uint64_t value, uint8_t *buf, int buf_size)
 
 uint64_t lwis_be_buf_to_value(uint8_t *buf, int buf_size)
 {
-	if (buf_size == 1)
+	if (buf_size == 1) {
 		return buf[0];
-
-	if (buf_size == 2)
+	}
+	if (buf_size == 2) {
 		return be16_to_cpup((const uint16_t *)buf);
-
-	if (buf_size == 4)
+	}
+	if (buf_size == 4) {
 		return be32_to_cpup((const uint32_t *)buf);
+	}
 
 	pr_err("Unsupported buffer size %d used for buf_to_value\n", buf_size);
 	return 0;
