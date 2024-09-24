@@ -1,11 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Google LWIS Transaction Processor
  *
  * Copyright (c) 2019 Google, LLC
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef LWIS_TRANSACTION_H_
@@ -101,7 +98,8 @@ struct lwis_pending_transaction_id {
 	struct dma_fence *fence;
 	struct lwis_client *owner;
 	/* List node for `transaction->trigger_fences`. Used to know what callbacks need
-	 * freeing when the transactions is being freed. */
+	 * freeing when the transactions is being freed.
+	 */
 	struct list_head node;
 	/* Make sure not to remove the callback from the fence if it is being triggered. */
 	bool triggered;
@@ -126,7 +124,8 @@ void lwis_transaction_free(struct lwis_device *lwis_dev, struct lwis_transaction
 
 /*
  * Expects lwis_client->transaction_lock to be acquired before calling
- * the following functions. */
+ * the following functions.
+ */
 int lwis_transaction_submit_locked(struct lwis_client *client,
 				   struct lwis_transaction *transaction);
 int lwis_transaction_replace_locked(struct lwis_client *client,
