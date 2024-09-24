@@ -6,4 +6,4 @@
  *		https://www.google.com
  *
 */
-#include "gs101/gs101-whitefin-nfc.dtsi"
+#include "gs101-whitefin-nfc.dtsi"

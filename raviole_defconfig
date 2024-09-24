@@ -20,7 +20,7 @@ CONFIG_TOUCHSCREEN_TBN=m
 CONFIG_TOUCHSCREEN_OFFLOAD=m
 CONFIG_GOOG_TOUCH_INTERFACE=m
 
-# private/google-modules/touch/fts/ftm5_legacy/Kconfig
+# private/google-modules/touch/fts/ftm5/Kconfig
 CONFIG_TOUCHSCREEN_FTS=m
 
 # private/google-modules/touch/sec/Kconfig

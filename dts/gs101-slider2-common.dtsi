@@ -15,4 +15,4 @@
 #include "gs101-slider2-audio.dtsi"
 #include "gs101-slider2-battery.dtsi"
 #include "gs101-slider2-cp-s5200-sit.dtsi"
-#include "gs101/gs101-slider2-gps.dtsi"
+#include "gs101-slider2-gps.dtsi"

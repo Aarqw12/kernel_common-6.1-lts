@@ -7,7 +7,7 @@
  *
 */
 
-#include "gs101/gs101-raviole-audio.dtsi"
+#include "gs101-raviole-audio.dtsi"
 
 &aoc {
 	aoc-board-cfg = "r4";
