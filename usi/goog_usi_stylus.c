@@ -1935,18 +1935,6 @@ static u8 g_usi_color24_to_color8(u8 r, u8 g, u8 b)
 	return color8_idx;
 }
 
-static bool g_usi_color8_to_color24(int color8_idx, u8 *r, u8 *g, u8 *b)
-{
-	if (color8_idx < 0 || color8_idx >= ARRAY_SIZE(true_colors))
-		return false;
-
-	*r = true_colors[color8_idx].r;
-	*g = true_colors[color8_idx].g;
-	*b = true_colors[color8_idx].b;
-
-	return true;
-}
-
 /*
  * convert button info: USI button value to HID button value
  *
@@ -2167,9 +2155,10 @@ static int g_usi_hid_get_feature_report(struct g_usi_context *usi_ctx, u8 *buf, 
 		} else {
 			color8 = usi_ctx->stylus_capability[4];
 
-			/* convert color8 to color24 - buf[2]:blue, buf[3]:green, buf[4]:red */
-			if (g_usi_color8_to_color24(color8, buf + 4, buf + 3, buf + 2) == false)
-				return -ENODATA;
+			/* color8 to color24 */
+			buf[2] = true_colors[color8].b; /* Blue Value */
+			buf[3] = true_colors[color8].g; /* Green Value */
+			buf[4] = true_colors[color8].r; /* Red Value */
 		}
 
 		break;
@@ -2223,7 +2212,7 @@ static int g_usi_hid_set_feature_report(struct g_usi_context *usi_ctx, u8 *buf, 
 	int i;
 	u16 cmd_data = 0;
 	u8 stylus_has_button = 0x20;		/* refer to C.GetCapability() in USI 2.0 spec */
-	u8 color8 = 0, r, g, b;
+	u8 color8 = 0;
 
 	if (!usi_ctx->cbs->g_usi_send_uplink) {
 		G_USI_ERR("Set Feature Request is not supported");
@@ -2239,15 +2228,14 @@ static int g_usi_hid_set_feature_report(struct g_usi_context *usi_ctx, u8 *buf, 
 			return -EINVAL;
 
 		color8 = buf[2];
-		if (is_true_color_supported(usi_ctx) &&
-		    g_usi_color8_to_color24(color8, &r, &g, &b)) {
-			cmd_data = 0x0100 | b;
+		if (is_true_color_supported(usi_ctx)) {
+			cmd_data = 0x0100 | true_colors[color8].b;
 			g_usi_send_write_cmd(usi_ctx, 1, G_USI_SET_COLOR, cmd_data);
 
-			cmd_data = 0x0200 | g;
+			cmd_data = 0x0200 | true_colors[color8].g;
 			g_usi_send_write_cmd(usi_ctx, 1, G_USI_SET_COLOR, cmd_data);
 
-			cmd_data = 0x0400 | r;
+			cmd_data = 0x0400 | true_colors[color8].r;
 			g_usi_send_write_cmd(usi_ctx, 1, G_USI_SET_COLOR, cmd_data);
 		}
 
