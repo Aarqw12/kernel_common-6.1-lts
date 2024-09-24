@@ -4153,33 +4153,28 @@ static ssize_t trigger_br_stats_store(struct device *dev, struct device_attribut
 {
 	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
 	struct bcl_device *bcl_dev = platform_get_drvdata(pdev);
-	unsigned int value;
+	int value;
 
 	if (!bcl_dev->data_logging_initialized)
 		return -EINVAL;
 
-	if (kstrtouint(buf, 16, &value) != 0 || value >= TRIGGERED_SOURCE_MAX)
+	if (kstrtouint(buf, 16, &value) < 0)
 		return -EINVAL;
 
-	dev_dbg(bcl_dev->device, "Triggered: %d\n", value);
-	google_bcl_start_data_logging(bcl_dev, value);
+	if (value > -1 && value < TRIGGERED_SOURCE_MAX) {
+		dev_info(bcl_dev->device, "Triggered: %d\n", value);
+		google_bcl_start_data_logging(bcl_dev, value);
+	}
 
 	return size;
 }
 
 static DEVICE_ATTR_RW(trigger_br_stats);
 
-static ssize_t meter_channels_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	return sysfs_emit(buf, "%d\n", METER_CHANNEL_MAX);
-}
-static DEVICE_ATTR_RO(meter_channels);
-
 static struct attribute *br_stats_attrs[] = {
 	&dev_attr_triggered_idx.attr,
 	&dev_attr_enable_br_stats.attr,
 	&dev_attr_trigger_br_stats.attr,
-	&dev_attr_meter_channels.attr,
 	NULL,
 };
 

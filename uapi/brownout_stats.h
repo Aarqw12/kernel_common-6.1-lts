@@ -9,11 +9,6 @@
 #define METER_CHANNEL_MAX	8
 #endif
 
-/* Using a constant size for all the platforms.
- */
-#define COMPATIBLE_METER_CHANNEL_MAX	16
-static_assert(METER_CHANNEL_MAX <= COMPATIBLE_METER_CHANNEL_MAX);
-
 /* Brownout triggered source need to be sync with the dt-bindings.
  * google-modules/soc/gs/include/dt-bindings/soc/google/zumapro-bcl.h
  */
@@ -67,7 +62,7 @@ static_assert(METER_CHANNEL_MAX <= COMPATIBLE_METER_CHANNEL_MAX);
 
 struct odpm_lpf {
 	struct timespec64 time;
-	u32 value[COMPATIBLE_METER_CHANNEL_MAX];
+	u32 value[METER_CHANNEL_MAX];
 };
 
 struct vimon_data {
