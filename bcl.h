@@ -37,14 +37,16 @@
 #define bcl_cb_clr_irq(bcl, v) (((bcl)->ifpmic == MAX77759) ? \
         max77759_clr_irq(bcl, v) : max77779_clr_irq(bcl, v))
 #define bcl_vimon_read(bcl) (((bcl)->ifpmic == MAX77759) ? \
-	max77759_vimon_read(bcl) : max77779_vimon_read(bcl))
+       max77759_vimon_read(bcl) : max77779_vimon_read(bcl))
 
 #define DELTA_5MS			(5 * NSEC_PER_MSEC)
 #define DELTA_10MS			(10 * NSEC_PER_MSEC)
 #define VSHUNT_MULTIPLIER		10000
 #define MILLI_TO_MICRO			1000
 #define IRQ_ENABLE_DELAY_MS		50
-#define NOT_USED 			9999
+#define NOT_USED			9999
+#define TIMEOUT_5S			5000
+#define TIMEOUT_5000US			5000
 #define TIMEOUT_10MS			10
 #define TIMEOUT_5MS			5
 #define TIMEOUT_1MS			1
@@ -87,6 +89,18 @@
 #define SUB_OFFSRC2 S2MPG15_PM_OFFSRC2
 #define MAIN_PWRONSRC S2MPG14_PM_PWRONSRC
 #endif
+
+/* SMPL zone name changed after gs201 */
+#if IS_ENABLED(CONFIG_SOC_GS101) || IS_ENABLED(CONFIG_SOC_GS201)
+#define SMPL_ZONE_NAME "smpl_gm"
+#else
+#define SMPL_ZONE_NAME "smpl_warn"
+#endif
+
+#if !IS_ENABLED(CONFIG_SOC_ZUMAPRO)
+#define BATOILO_DET_SHIFT 2
+#endif
+
 /* This driver determines if HW was throttled due to SMPL/OCP */
 
 enum CPU_CLUSTER {
@@ -117,7 +131,9 @@ enum BCL_BATT_IRQ {
 	UVLO1_IRQ_BIN,
 	UVLO2_IRQ_BIN,
 	BATOILO_IRQ_BIN,
+#if IS_ENABLED(CONFIG_SOC_ZUMAPRO)
 	BATOILO2_IRQ_BIN,
+#endif
 	MAX_BCL_BATT_IRQ,
 };
 
@@ -193,6 +209,11 @@ struct qos_throttle_limit {
 	int cpu2_limit;
 	int gpu_limit;
 	int tpu_limit;
+	int cpu0_freq;
+	int cpu1_freq;
+	int cpu2_freq;
+	int gpu_freq;
+	int tpu_freq;
 };
 
 struct zone_triggered_stats {
@@ -226,6 +247,7 @@ struct bcl_zone {
 	bool conf_qos;
 	const char *devname;
 	u32 current_state;
+	bool throttle;
 };
 
 struct bcl_core_conf {
@@ -274,6 +296,7 @@ struct bcl_batt_irq_conf {
 	u8 uvlo_det;
 };
 
+#if IS_ENABLED(CONFIG_SOC_ZUMAPRO)
 struct bcl_evt_count {
 	unsigned int uvlo1;
 	unsigned int uvlo2;
@@ -282,16 +305,19 @@ struct bcl_evt_count {
 	u8 enable;
 	u8 rate;
 };
+#endif
 
 struct bcl_mitigation_conf {
 	u32 module_id;
 	u32 threshold;
 };
 
+#if IS_ENABLED(CONFIG_SOC_ZUMAPRO)
 struct bcl_vimon_intf {
 	uint16_t data[VIMON_BUF_SIZE];
 	size_t count;
 };
+#endif
 
 struct bcl_device {
 	struct device *device;
@@ -323,10 +349,11 @@ struct bcl_device {
 	struct device *intf_pmic_dev;
 	struct device *irq_pmic_dev;
 	struct device *fg_pmic_dev;
+#if IS_ENABLED(CONFIG_SOC_ZUMAPRO)
 	struct device *vimon_dev;
-
-	struct mutex cpu_ratio_lock;
+#endif
 	struct mutex qos_update_lock;
+	struct mutex cpu_ratio_lock;
 	struct bcl_core_conf core_conf[SUBSYSTEM_SOURCE_MAX];
 	struct bcl_cpu_buff_conf cpu_buff_conf[CPU_CLUSTER_MAX];
 	struct notifier_block cpu_nb;
@@ -369,6 +396,8 @@ struct bcl_device {
 	bool sub_pwr_warn_triggered[METER_CHANNEL_MAX];
 	struct delayed_work main_pwr_irq_work;
 	struct delayed_work sub_pwr_irq_work;
+	struct delayed_work setup_main_odpm_work;
+	struct delayed_work setup_sub_odpm_work;
 	struct irq_duration_stats ifpmic_irq_bins[MAX_BCL_BATT_IRQ][MAX_CONCURRENT_PWRWARN_IRQ];
 	struct irq_duration_stats pwrwarn_main_irq_bins[METER_CHANNEL_MAX];
 	struct irq_duration_stats pwrwarn_sub_irq_bins[METER_CHANNEL_MAX];
@@ -389,12 +418,6 @@ struct bcl_device {
 
 	enum IFPMIC ifpmic;
 
-	struct gvotable_election *toggle_wlc;
-	struct gvotable_election *toggle_usb;
-
-	struct bcl_evt_count evt_cnt;
-	struct bcl_evt_count evt_cnt_latest;
-
 	bool enabled_br_stats;
 	bool data_logging_initialized;
 	unsigned int triggered_idx;
@@ -406,11 +429,16 @@ struct bcl_device {
 	u32 *non_monitored_module_ids;
 	u32 non_monitored_mitigation_module_ids;
 	atomic_t mitigation_module_ids;
-
-	bool config_modem;
-	bool rffe_mitigation_enable;
+#if IS_ENABLED(CONFIG_SOC_ZUMAPRO)
+	struct gvotable_election *toggle_wlc;
+	struct gvotable_election *toggle_usb;
+	struct bcl_evt_count evt_cnt;
+	struct bcl_evt_count evt_cnt_latest;
 
 	struct bcl_vimon_intf vimon_intf;
+#endif
+	bool config_modem;
+	bool rffe_mitigation_enable;
 
 	u8 vdroop_int_mask;
 	u8 intb_int_mask;
@@ -425,6 +453,7 @@ struct bcl_device {
 	bool oilo1_vdrp2_en;
 	bool oilo2_vdrp1_en;
 	bool oilo2_vdrp2_en;
+	struct delayed_work qos_work;
 };
 
 extern void google_bcl_irq_update_lvl(struct bcl_device *bcl_dev, int index, unsigned int lvl);
@@ -455,18 +484,20 @@ int uvlo_reg_read(struct device *dev, enum IFPMIC ifpmic, int triggered, unsigne
 int batoilo_reg_read(struct device *dev, enum IFPMIC ifpmic, int oilo, unsigned int *val);
 int max77759_get_irq(struct bcl_device *bcl_dev, u8 *irq_val);
 int max77759_clr_irq(struct bcl_device *bcl_dev, int idx);
-int max77759_vimon_read(struct bcl_device *bcl_dev);
 int max77779_get_irq(struct bcl_device *bcl_dev, u8 *irq_val);
 int max77779_clr_irq(struct bcl_device *bcl_dev, int idx);
-int max77779_adjust_batoilo_lvl(struct bcl_device *bcl_dev, u8 lower_enable, u8 set_batoilo1_lvl,
-                                u8 set_batoilo2_lvl);
-int max77779_vimon_read(struct bcl_device *bcl_dev);
-int google_bcl_setup_votable(struct bcl_device *bcl_dev);
-void google_bcl_remove_votable(struct bcl_device *bcl_dev);
-int google_bcl_init_data_logging(struct bcl_device *bcl_dev);
 int google_bcl_init_notifier(struct bcl_device *bcl_dev);
+int google_bcl_init_data_logging(struct bcl_device *bcl_dev);
 void google_bcl_start_data_logging(struct bcl_device *bcl_dev, int idx);
 void google_bcl_remove_data_logging(struct bcl_device *bcl_dev);
 void google_bcl_upstream_state(struct bcl_zone *zone, enum MITIGATION_MODE state);
+int max77759_vimon_read(struct bcl_device *bcl_dev);
+int max77779_vimon_read(struct bcl_device *bcl_dev);
+#if IS_ENABLED(CONFIG_SOC_ZUMAPRO)
+int max77779_adjust_batoilo_lvl(struct bcl_device *bcl_dev, u8 lower_enable, u8 set_batoilo1_lvl,
+                                u8 set_batoilo2_lvl);
+int google_bcl_setup_votable(struct bcl_device *bcl_dev);
+void google_bcl_remove_votable(struct bcl_device *bcl_dev);
+#endif
 
 #endif /* __BCL_H */
