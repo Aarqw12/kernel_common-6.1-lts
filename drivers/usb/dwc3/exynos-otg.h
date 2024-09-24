@@ -55,6 +55,7 @@ struct dwc3_otg {
 	struct mutex		role_lock;
 
 	struct gvotable_election *ssphy_restart_votable;
+	struct gvotable_election *usbdp_tca_votable;
 };
 
 int dwc3_exynos_otg_init(struct dwc3 *dwc, struct dwc3_exynos *exynos);

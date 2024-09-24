@@ -2927,6 +2927,18 @@ void exynos_pcie_rc_cpl_timeout_work(struct work_struct *work)
 	exynos_pcie_notify_callback(pp, EXYNOS_PCIE_EVENT_CPL_TIMEOUT);
 }
 
+void exynos_pcie_rc_link_recovery_fail_work(struct work_struct *work)
+{
+	struct exynos_pcie *exynos_pcie =
+		container_of(work, struct exynos_pcie, link_recovery_fail_work.work);
+	struct dw_pcie *pci = exynos_pcie->pci;
+	struct dw_pcie_rp *pp = &pci->pp;
+	struct device *dev = pci->dev;
+
+	dev_err(dev, "call PCIE_LINK_DOWN_RECOVERY_FAIL callback function\n");
+	exynos_pcie_notify_callback(pp, EXYNOS_PCIE_EVENT_LINKDOWN_RECOVERY_FAIL);
+}
+
 static void exynos_pcie_rc_use_ia(struct exynos_pcie *exynos_pcie)
 {
 	if (!exynos_pcie->use_ia) {
@@ -3689,6 +3701,8 @@ retry:
 		} else {
 			//exynos_pcie_host_v1_print_link_history(pp);
 			exynos_pcie_rc_print_link_history(pp);
+			logbuffer_logk(exynos_pcie->log, LOGLEVEL_ERR,"Link recovery retry fail count: %d\n",
+				try_cnt);
 			exynos_pcie_rc_dump_link_down_status(exynos_pcie->ch_num);
 			exynos_pcie_rc_register_dump(exynos_pcie->ch_num);
 			exynos_pcie->link_stats.link_recovery_failure_count++;
@@ -3876,9 +3890,8 @@ int exynos_pcie_rc_poweron(int ch_num)
 
 		enable_irq(pp->irq);
 
-		if (exynos_pcie_rc_establish_link(pp)) {
+		if (exynos_pcie_rc_establish_link(pp) != 0) {
 			logbuffer_logk(exynos_pcie->log, LOGLEVEL_ERR, "pcie link up fail");
-
 			goto poweron_fail;
 		}
 
@@ -3955,6 +3968,12 @@ poweron_fail:
 	exynos_pcie->state = STATE_LINK_UP;
 	mutex_unlock(&exynos_pcie->power_onoff_lock);
 	exynos_pcie_rc_poweroff(exynos_pcie->ch_num);
+
+	if (exynos_pcie->sudden_linkdown || exynos_pcie->cpl_timeout_recovery) {
+		logbuffer_logk(exynos_pcie->log, LOGLEVEL_ERR, "pcie link up fail, force cp crash");
+		exynos_pcie->state = STATE_LINK_DOWN;
+		queue_work(exynos_pcie->pcie_wq, &exynos_pcie->link_recovery_fail_work.work);
+	}
 
 	return -EPIPE;
 }
@@ -5753,6 +5772,7 @@ static int exynos_pcie_rc_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&exynos_pcie->dislink_work, exynos_pcie_rc_dislink_work);
 	INIT_DELAYED_WORK(&exynos_pcie->cpl_timeout_work, exynos_pcie_rc_cpl_timeout_work);
 	INIT_DELAYED_WORK(&exynos_pcie->cfg_access_work, exynos_pcie_wait_cfg_access_work);
+	INIT_DELAYED_WORK(&exynos_pcie->link_recovery_fail_work, exynos_pcie_rc_link_recovery_fail_work);
 
 #if IS_ENABLED(CONFIG_EXYNOS_ITMON)
 	exynos_pcie->itmon_nb.notifier_call = exynos_pcie_rc_itmon_notifier;
