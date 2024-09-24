@@ -1,7 +1,7 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-2.0-only
 
 """
-Defines helper functions or rules for devices.
+Extract GKI modules from GKI system_dlkm archive.
 """
 
 load("@bazel_skylib//lib:paths.bzl", "paths")
