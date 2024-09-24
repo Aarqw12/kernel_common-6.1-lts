@@ -68,6 +68,8 @@ kernel_build(
     name = "kernel",
     srcs = [":kernel_sources"],
     outs = [
+        ".config",
+    ] + [
         "gs101/{}".format(dtb)
         for dtb in GS101_DTBS
     ] + RAVIOLE_DTBOS,
