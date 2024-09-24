@@ -59,7 +59,7 @@ filegroup(
         "//private/devices/google/gs101:kernel_sources",
         "//private/google-modules/radio/samsung/s5300:cpif.kconfig",
         "//private/google-modules/touch/common:touch.common.kconfig",
-        "//private/google-modules/touch/fts/ftm5:ftm5.kconfig",
+        "//private/google-modules/touch/fts/ftm5_legacy:ftm5.kconfig",
         "//private/google-modules/touch/sec:sec.kconfig",
     ],
 )
@@ -88,25 +88,28 @@ kernel_build(
 
 kernel_module_group(
     name = "kernel_ext_modules",
-    # FIXME: Do not sort here because of the fragile module load ordering, which needs to be fixed.
     srcs = [
-        # do not sort
+        # FIXME: SoC modules need to be loaded first or the device will crash.
+        #        Module dependencies should not rely on the order. This needs be fixed.
         "//private/devices/google/gs101:kernel_ext_modules",
-        "//private/devices/google/raviole/display:drm_panel.google",
-        "//private/google-modules/wlan/bcm4389:bcmdhd4389",
-        "//private/google-modules/gps/broadcom/bcm47765",
-        "//private/google-modules/amplifiers/drv2624",
+    ] + [
+        # keep sorted
+        # TODO: b/358264236 - Remove bluejay panel.
+        "//private/devices/google/bluejay/display:drm_panel.google",
+        "//private/google-modules/amplifiers/cs35l41",
         "//private/google-modules/amplifiers/cs40l25",
         "//private/google-modules/amplifiers/cs40l26",
-        "//private/google-modules/amplifiers/cs35l41",
+        "//private/google-modules/amplifiers/drv2624",
         "//private/google-modules/amplifiers/snd_soc_wm_adsp:snd-soc-wm-adsp",
+        "//private/google-modules/bluetooth/broadcom:bluetooth.broadcom",
+        "//private/google-modules/gps/broadcom/bcm47765",
+        "//private/google-modules/nfc",
+        "//private/google-modules/radio/samsung/s5300:cpif.dit",
         "//private/google-modules/touch/common:touch.common",
         "//private/google-modules/touch/fts/ftm5_legacy:ftm5",
         "//private/google-modules/touch/sec",
-        "//private/google-modules/radio/samsung/s5300:cpif.dit",
-        "//private/google-modules/bluetooth/broadcom:bluetooth.broadcom",
-        "//private/google-modules/nfc",
         "//private/google-modules/uwb/qorvo/dw3000/kernel:uwb.dw3000",
+        "//private/google-modules/wlan/bcm4389:bcmdhd4389",
     ],
 )
 
