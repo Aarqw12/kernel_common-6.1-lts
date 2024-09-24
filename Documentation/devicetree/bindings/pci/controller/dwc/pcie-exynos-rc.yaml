@@ -13,12 +13,7 @@ description: |
   PCIe controller with Samsung provided PHY interface.
 
 properties:
-  customized-de-emphasis:
-    description: Configuartion for using customized de-emphasis value.
-    type: boolean
-    default: false
-
-  de-emphasis-value:
-    description: The setting for de-emphasis value if customsized de-emphasis is enabled.
+  de-emphasis-level:
+    description: The setting for de-emphasis level, 1b'1 = -3.5 dB, 1b'0 = -6 dB
     type: int
     default: 0

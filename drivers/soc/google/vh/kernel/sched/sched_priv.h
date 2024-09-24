@@ -146,7 +146,6 @@ struct vendor_group_property {
 	bool prefer_high_cap;
 	bool task_spreading;
 	bool auto_uclamp_max;
-	bool auto_prefer_fit;
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 	unsigned int group_throttle;
 #endif
@@ -271,8 +270,6 @@ DECLARE_PER_CPU(u64, dvfs_update_delay);
  * Any change for these functions in upstream GKI would require extensive review
  * to make proper adjustment in vendor hook.
  */
-#define UTIL_EST_MARGIN (SCHED_CAPACITY_SCALE / 100)
-
 extern struct uclamp_se uclamp_default[UCLAMP_CNT];
 
 void set_next_buddy(struct sched_entity *se);
@@ -541,31 +538,6 @@ static inline bool is_binder_task(struct task_struct *p)
 	return get_vendor_task_struct(p)->is_binder_task;
 }
 
-static inline bool should_auto_prefer_idle(struct task_struct *p, int group)
-{
-	if (group == VG_TOPAPP) {
-		/*
-		 * Binder Task
-		 */
-		if (is_binder_task(p))
-			return true;
-		/*
-		 * Task of prio <= 120 and with possitive wake_q_count
-		 */
-		if (p->prio <= DEFAULT_PRIO && p->wake_q_count)
-			return true;
-		/*
-		 * Task of prio <= 120 and waked up by another process
-		 */
-		if (current) {
-			if (p->prio <= DEFAULT_PRIO && current->tgid != p->tgid)
-				return true;
-		}
-	}
-
-	return false;
-}
-
 static inline bool get_prefer_idle(struct task_struct *p)
 {
 	struct vendor_task_struct *vp = get_vendor_task_struct(p);
@@ -577,7 +549,8 @@ static inline bool get_prefer_idle(struct task_struct *p)
 	if (get_uclamp_fork_reset(p, true) || vp->prefer_idle || vi->prefer_idle)
 		return true;
 	else if (vendor_sched_auto_prefer_idle)
-		return should_auto_prefer_idle(p, vp->group);
+		return vp->group == VG_TOPAPP && ((p->prio <= DEFAULT_PRIO && p->wake_q_count) ||
+			is_binder_task(p));
 	else if (vendor_sched_reduce_prefer_idle)
 		return (vg[vp->group].prefer_idle && p->prio <= DEFAULT_PRIO &&
 			uclamp_eff_value_pixel_mod(p, UCLAMP_MAX) == SCHED_CAPACITY_SCALE);
@@ -977,7 +950,7 @@ static inline void __update_util_est_invariance(struct rq *rq,
 	vp->prev_sum_exec_runtime = se->sum_exec_runtime;
 
 	/* Is the task util increasing? */
-	if (task_util(p) < vp->util_enqueued + UTIL_EST_MARGIN)
+	if (task_util(p) < vp->util_enqueued)
 		return;
 
 	new_util_est = approximate_util_avg(vp->util_enqueued, vp->delta_exec);
