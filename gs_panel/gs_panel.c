@@ -1420,7 +1420,9 @@ static void gs_panel_normal_mode_work(struct work_struct *work)
 }
 
 void gs_panel_update_lhbm_hist_data_helper(struct gs_panel *ctx, struct drm_atomic_state *state,
-					   bool enabled, int d, int r)
+					   bool enabled,
+					   enum gs_drm_connector_lhbm_hist_roi_type roi_type,
+					   int circle_d, int circle_r)
 {
 	struct gs_drm_connector *gs_connector = ctx->gs_connector;
 	struct drm_connector_state *new_conn_state;
@@ -1438,8 +1440,12 @@ void gs_panel_update_lhbm_hist_data_helper(struct gs_panel *ctx, struct drm_atom
 	hist_data = &new_gs_connector_state->lhbm_hist_data;
 
 	hist_data->enabled = enabled;
-	hist_data->d = d;
-	hist_data->r = r;
+	hist_data->roi_type = roi_type;
+
+	if (roi_type == GS_HIST_ROI_CIRCLE) {
+		hist_data->lhbm_circle_d = circle_d;
+		hist_data->lhbm_circle_r = circle_r;
+	}
 }
 EXPORT_SYMBOL_GPL(gs_panel_update_lhbm_hist_data_helper);
 

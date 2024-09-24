@@ -316,6 +316,16 @@ struct gs_panel_funcs {
 	void (*set_dimming)(struct gs_panel *gs_panel, bool dimming_on);
 
 	/**
+	 * @get_local_hbm_mode_effective_delay_frames:
+	 *
+	 * This callback is used to implement panel specific logic for gs_panel to
+	 * get local hbm mode effective delay frames. If this is not defined, it uses
+	 * gs_panel_lhbm_desc.effective_delay_frames directly.
+	 *
+	 */
+	u32 (*get_local_hbm_mode_effective_delay_frames)(struct gs_panel *gs_panel);
+
+	/**
 	 * @set_local_hbm_mode:
 	 *
 	 * This callback is used to implement panel specific logic for local high
@@ -1577,15 +1587,18 @@ void gs_panel_update_te2(struct gs_panel *ctx);
  * gs_panel_update_lhbm_hist_data_helper() - Update lhbm_hist_data on panel connector
  * @ctx: Reference to panel data
  * @enabled: whether to enable or disable updating lhbm histogram roi data
- * @d: Depth of ROI center point off center, in pixels
- * @r: Radius of ROI circle, in pixels
+ * @roi_type: Config different type of roi shape.
+ * @circle_d: Depth of ROI center point off center, in pixels
+ * @circle_r: Radius of ROI circle, in pixels
  *
  * Note that this will update d and r regardless of the enable value
  *
  * This is meant to be called by panel drivers during the `atomic_check` operation
  */
 void gs_panel_update_lhbm_hist_data_helper(struct gs_panel *ctx, struct drm_atomic_state *state,
-					   bool enabled, int d, int r);
+					   bool enabled,
+					   enum gs_drm_connector_lhbm_hist_roi_type roi_type, int d,
+					   int r);
 
 /* Helper Utilities */
 
@@ -1629,6 +1642,19 @@ u32 panel_calc_linear_luminance(const u32 value, const u32 coef_x_1k, const int 
  * This function can be used if following sending DSI cmds would trigger panel self-scan behavior.
  */
 void gs_dsi_cmd_align(struct gs_panel *ctx);
+
+/**
+ * gs_panel_disable_normal_feat_locked() - disable normal mode features
+ * @ctx: pointer to gs_panel
+ *
+ * This function disabled features required panel in power on state.
+ * Disabled features:
+ * 1. lhbm
+ * 2. hbm
+ *
+ * Context: Expects ctx->mode_lock to be locked
+ */
+void gs_panel_disable_normal_feat_locked(struct gs_panel *ctx);
 
 /* HBM */
 
