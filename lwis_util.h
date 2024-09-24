@@ -1,11 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Google LWIS Misc Utility Functions and Wrappers
  *
  * Copyright (c) 2018 Google, LLC
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef LWIS_UTIL_H_
@@ -17,7 +14,8 @@
 #include "lwis_commands.h"
 
 /* Forward declaration for lwis_device. This is needed for the function
- * prototypes below that take a pointer to lwis_device */
+ * prototypes below that take a pointer to lwis_device
+ */
 struct lwis_device;
 
 /*
