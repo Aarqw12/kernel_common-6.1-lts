@@ -295,7 +295,7 @@ static void google_warn_work(struct work_struct *work)
 		zone->bcl_cur_lvl = zone->bcl_lvl + THERMAL_HYST_LEVEL;
 		/* ODPM Read to kick off LIGHT module throttling */
 		mod_delayed_work(bcl_dev->qos_update_wq, &zone->warn_work,
-				 msecs_to_jiffies(TIMEOUT_10MS));
+				 msecs_to_jiffies(TIMEOUT_5MS));
 	}
 	if (zone->tz)
 		thermal_zone_device_update(zone->tz, THERMAL_EVENT_UNSPECIFIED);
@@ -653,7 +653,7 @@ static void google_irq_triggered_work(struct work_struct *work)
 	if (zone->bcl_qos)
 		google_bcl_qos_update(zone, true);
 
-	mod_delayed_work(bcl_dev->qos_update_wq, &zone->warn_work, msecs_to_jiffies(TIMEOUT_10MS));
+	mod_delayed_work(bcl_dev->qos_update_wq, &zone->warn_work, msecs_to_jiffies(TIMEOUT_5MS));
 
 	idx = zone->idx;
 	bcl_dev = zone->parent;

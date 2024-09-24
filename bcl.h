@@ -47,6 +47,7 @@
 #define NOT_USED			9999
 #define TIMEOUT_5S			5000
 #define TIMEOUT_5000US			5000
+#define TIMEOUT_10000US			10000
 #define TIMEOUT_10MS			10
 #define TIMEOUT_5MS			5
 #define TIMEOUT_1MS			1

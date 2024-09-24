@@ -75,9 +75,11 @@ static void process_qos_request(struct work_struct *work)
 		if (bcl_dev->cpu2_cluster_on)
 			freq_qos_update_request(&qos->cpu2_max_qos_req, qos->cpu2_freq);
 
-		exynos_pm_qos_update_request_async(&qos->tpu_qos_max, qos->tpu_freq);
-		exynos_pm_qos_update_request_async(&qos->gpu_qos_max, qos->gpu_freq);
-		usleep_range(TIMEOUT_5000US, TIMEOUT_5000US + 100);
+		if (exynos_pm_qos_request_active(&qos->tpu_qos_max))
+			exynos_pm_qos_update_request_async(&qos->tpu_qos_max, qos->tpu_freq);
+		if (exynos_pm_qos_request_active(&qos->gpu_qos_max))
+			exynos_pm_qos_update_request_async(&qos->gpu_qos_max, qos->gpu_freq);
+		usleep_range(TIMEOUT_10000US, TIMEOUT_10000US + 100);
 		if (mutex_lock_interruptible(&bcl_dev->qos_update_lock))
 			continue;
 		list_del(&data->list);
@@ -98,7 +100,7 @@ void google_bcl_qos_update(struct bcl_zone *zone, bool throttle)
 		return;
 	bcl_dev = zone->parent;
 
-	if (zone->throttle == throttle)
+	if (zone->throttle && (zone->throttle == throttle))
 		return;
 	zone->throttle = throttle;
 
