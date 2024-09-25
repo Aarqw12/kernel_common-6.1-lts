@@ -7642,6 +7642,12 @@ static int p9221_parse_dt(struct device *dev,
 	if (ret < 0)
 		pdata->phone_type = 0;
 
+	ret = of_property_read_u32(node, "google,gpp_dcicl_default_ua", &data);
+	if (ret < 0)
+		pdata->dc_icl_gpp = 0;
+	else
+		pdata->dc_icl_gpp = data;
+
 	ret = of_property_read_u32(node, "google,epp_dcicl_default_ma", &data);
 	if (ret < 0)
 		pdata->epp_icl = 0;

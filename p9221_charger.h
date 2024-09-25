@@ -793,6 +793,7 @@ struct p9221_charger_platform_data {
 	u32				bpp_lv_icl;		/* BPP ICL with lower Vout */
 	u32				bpp_icl_ramp_ua;	/* BPP ramp ICL */
 	u32				bpp_lv_icl_ramp_ua;	/* BPP ramp ICL with lower Vout */
+	u32				dc_icl_gpp;		/* DC_ICL for GPP */
 	/* calibrate light load */
 	bool				light_load;
 	int				nb_hpp_fod_vol;
