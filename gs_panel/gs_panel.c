@@ -1319,6 +1319,7 @@ static int _gs_panel_reg_ctrl(struct gs_panel *ctx, const struct panel_reg_ctrl 
 				regulator_set_voltage(reg, avdd_uV, avdd_uV);
 			else if (id == PANEL_REG_ID_AVEE)
 				regulator_set_voltage(reg, avee_uV, avee_uV);
+			regulator_sync_voltage(reg);
 		}
 
 		if (delay_ms)
