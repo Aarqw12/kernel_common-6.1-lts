@@ -846,9 +846,15 @@ void kbase_gpuprops_free_user_buffer(struct kbase_device *kbdev)
 
 int kbase_device_populate_max_freq(struct kbase_device *kbdev)
 {
-	/* obtain max configured gpu frequency, if devfreq is enabled then
-	 * this will be overridden by the highest operating point found
-	 */
-	kbdev->gpu_props.gpu_freq_khz_max = DEFAULT_GPU_FREQ_KHZ_MAX;
+	/* Check if maximum frequency hasn't already been initialized during DVFS init */
+	if (kbdev->gpu_props.gpu_freq_khz_max == 0) {
+		/* obtain max configured gpu frequency, if devfreq is enabled then
+		 * this will be overridden by the highest operating point found
+		 */
+		kbdev->gpu_props.gpu_freq_khz_max = DEFAULT_GPU_FREQ_KHZ_MAX;
+		dev_info(kbdev->dev, "GPU max frequency initialized to %u KHz",
+			kbdev->gpu_props.gpu_freq_khz_max);
+	}
+
 	return 0;
 }
