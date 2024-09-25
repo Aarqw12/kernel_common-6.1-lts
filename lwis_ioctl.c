@@ -582,7 +582,8 @@ static int cmd_get_device_info(struct lwis_device *lwis_dev, struct lwis_cmd_pkt
 		}
 	}
 
-	/* Send kworker thread pid to userspace so that they can be added to the camera vendor
+	/*
+	 * Send kworker thread pid to userspace so that they can be added to the camera vendor
 	 * group for correct performance settings.
 	 */
 	if (lwis_dev->type == DEVICE_TYPE_I2C) {
@@ -593,12 +594,20 @@ static int cmd_get_device_info(struct lwis_device *lwis_dev, struct lwis_cmd_pkt
 		k_info->info.transaction_worker_thread_pid =
 			i2c_dev->i2c_bus_manager->bus_worker_thread->pid;
 	} else if (lwis_dev->type == DEVICE_TYPE_IOREG) {
-		/* For IOREG devices, transactions are being run in the IOREG bus manager thread */
+		/*
+		 * For IOREG devices, default behaviour is to run on their own transaction threads.
+		 * Devices that are grouped will run transactions in the IOREG bus manager thread.
+		 */
 		struct lwis_ioreg_device *ioreg_dev;
 
 		ioreg_dev = container_of(lwis_dev, struct lwis_ioreg_device, base_dev);
-		k_info->info.transaction_worker_thread_pid =
-			ioreg_dev->ioreg_bus_manager->bus_worker_thread->pid;
+		if (ioreg_dev->ioreg_bus_manager) {
+			k_info->info.transaction_worker_thread_pid =
+				ioreg_dev->ioreg_bus_manager->bus_worker_thread->pid;
+		} else {
+			k_info->info.transaction_worker_thread_pid =
+				lwis_dev->transaction_worker_thread->pid;
+		}
 	} else if (lwis_dev->type == DEVICE_TYPE_TOP) {
 		/* For top device, the event subscription thread is the main worker thread */
 		struct lwis_top_device *top_dev;
@@ -640,9 +649,7 @@ static int cmd_device_enable(struct lwis_client *lwis_client, struct lwis_cmd_pk
 		goto exit_locked;
 	}
 
-	/* Clear event queues to make sure there is no stale event from
-	 * previous session
-	 */
+	/* Clear event queues to make sure there is no stale event from previous session. */
 	lwis_client_event_queue_clear(lwis_client);
 	lwis_client_error_event_queue_clear(lwis_client);
 
