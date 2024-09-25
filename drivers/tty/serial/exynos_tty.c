@@ -189,6 +189,7 @@ struct exynos_uart_port {
 	unsigned int ioctl_support;
 	unsigned int skip_suspend;
 	bool show_uart_logging_packets;
+	unsigned char suspending;
 };
 
 /* conversion functions */
@@ -2570,6 +2571,9 @@ static int exynos_serial_sicd_notifier(struct notifier_block *self,
 			if (port->state->pm_state == UART_PM_STATE_OFF)
 				continue;
 
+			if (ourport->suspending)
+				continue;
+
 			if (ourport->rts_alive_control)
 				disable_auto_flow_control(ourport);
 
@@ -2585,6 +2589,9 @@ static int exynos_serial_sicd_notifier(struct notifier_block *self,
 			port = &ourport->port;
 
 			if (port->state->pm_state == UART_PM_STATE_OFF)
+				continue;
+
+			if (ourport->suspending)
 				continue;
 
 			if (ourport->rts_alive_control)
@@ -2842,6 +2849,7 @@ static int exynos_serial_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "failed to create sysfs file.\n");
 
 	ourport->dbg_mode = 0;
+	ourport->suspending = 0;
 
 	if (ourport->uart_logging == 1) {
 		/* Allocate memory for UART logging */
@@ -2902,6 +2910,7 @@ static int exynos_serial_suspend(struct device *dev)
 		if (ourport->skip_suspend) {
 			return 0;
 		}
+		ourport->suspending = 1;
 		/*
 		 * If rts line must be protected while suspending
 		 * we change the gpio pad as output high
@@ -2937,6 +2946,7 @@ static int exynos_serial_suspend(struct device *dev)
 		}
 		if (ourport->dbg_mode & UART_DBG_MODE)
 			dev_err(dev, "UART suspend notification for tty framework.\n");
+		ourport->suspending = 0;
 	}
 
 	return 0;
