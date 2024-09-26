@@ -156,6 +156,11 @@ create_file(
     out = "vendor_dlkm.props",
 )
 
+filegroup(
+    name = "insmod_cfgs",
+    srcs = glob(["insmod_cfg/*.cfg"]),
+)
+
 kernel_images(
     name = "kernel_images",
     base_kernel_images = "//common:kernel_aarch64_images",
@@ -168,6 +173,7 @@ kernel_images(
     modules_list = ":vendor_ramdisk_modules_list",
     ramdisk_compression = "lz4",
     vendor_dlkm_archive = True,
+    vendor_dlkm_etc_files = [":insmod_cfgs"],
     vendor_dlkm_modules_blocklist = ":vendor_dlkm_modules_blocklist",
     vendor_dlkm_modules_list = ":vendor_dlkm_modules_list",
     vendor_dlkm_props = ":vendor_dlkm_props",
@@ -190,6 +196,7 @@ copy_to_dist_dir(
     name = "dist",
     data = [
         # keep sorted
+        ":insmod_cfgs",
         ":kernel",
         ":kernel_images",
         ":kernel_modules_install",
