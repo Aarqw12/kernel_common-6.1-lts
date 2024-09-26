@@ -5,12 +5,10 @@ Defines kernel targets which are aliases of real kernel targets from the kernel
 package selected by --kernel_package=<package>.
 """
 
-load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@bazel_skylib//rules:select_file.bzl", "select_file")
 load("//common:modules.bzl", "get_gki_modules_list")
-load("//private/devices/google/common/kleaf:extracted_system_dlkm.bzl", "extracted_system_dlkm")
 load("//private/devices/google/common/kleaf:kernel_aliases.bzl", "kernel_aliases")
 
 package(
@@ -107,10 +105,4 @@ copy_file(
     name = "kernel_aarch64_gki_boot_image",
     src = ":kernel_aarch64_gki_boot_image_selection",
     out = "boot.img",
-)
-
-extracted_system_dlkm(
-    name = "kernel_aarch64_gki_modules",
-    gki_modules = [paths.basename(m) for m in get_gki_modules_list("arm64")],
-    images = ":kernel_aarch64_images",
 )
