@@ -143,7 +143,6 @@ create_file(
     name = "vendor_dlkm_modules_blocklist",
     srcs = [
         # do not sort
-        "//private/devices/google/gs101:system_dlkm_modules_blocklist",
         "//private/devices/google/gs101:vendor_dlkm_modules_blocklist",
         "vendor_dlkm.blocklist.raviole",
     ],
@@ -199,8 +198,8 @@ copy_to_dist_dir(
         "//common:android/abi_gki_aarch64_pixel",
         "//common:kernel_aarch64",
         "//common:kernel_aarch64_gki_boot_image",
-        "//common:kernel_aarch64_gki_modules",
         "//common:kernel_aarch64_headers",
+        "//private/devices/google/common:kernel_gki_modules",
         "//private/devices/google/common:sepolicy/vendor_dlkm_file_contexts",
     ] + select({
         "//private/devices/google/common:enable_download_fips140": ["@gki_prebuilt_fips140//fips140.ko"],
