@@ -308,4 +308,11 @@ config KERNEL_TOP
 	  This module exposes kernel function for modules to debugging
 	  processes statistic.
 
+config GOOGLE_MODEMCTL
+	tristate "Common modem control interfaces"
+	default n
+	help
+	  This module provides common helpers and control interfaces for modems
+	  and clients that may want to interact with them.
+
 endmenu
