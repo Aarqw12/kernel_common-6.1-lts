@@ -51,6 +51,7 @@
 #define PANEL_REV_GE(rev)       (~((rev) - 1))
 #define PANEL_REV_LT(rev)       ((rev) - 1)
 #define PANEL_REV_ALL_BUT(rev)  (PANEL_REV_ALL & ~(rev))
+#define PANEL_REV_RANGE(rev_min, rev_max) (PANEL_REV_GE(rev_min) & PANEL_REV_LT(rev_max))
 
 /** Command Set data structures **/
 
