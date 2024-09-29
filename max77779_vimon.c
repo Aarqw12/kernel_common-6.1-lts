@@ -281,31 +281,35 @@ static int max77779_vimon_clear_config(struct max77779_vimon_data *data, uint16_
  *   page3: [0x180:0x1EF]
  */
 static ssize_t max77779_vimon_access_buffer(struct max77779_vimon_data *data, size_t offset,
-					    size_t len, uint16_t *buffer, bool toread)
+					    size_t addr_len, uint16_t *buffer, bool toread)
 {
 	unsigned int target_addr;
 	int ret = -1;
-	size_t sz;
+	size_t addr_sz;
+	size_t rw_sz;
 	unsigned int page;
 	size_t start = offset;
 	const char* type = toread ? "read" : "write";
 
 	/* valid range: 0 - (1024-32) */
-	if (offset + len > 992) {
+	if (offset + addr_len > 992) {
 		dev_err(data->dev, "Failed to %s BVIM's buffer: out of range\n", type);
 		return -EINVAL;
 	}
 
-	while (len > 0) {
+	while (addr_len > 0) {
 		/*
 		 * page = offset / 128
-		 * sz   = 256 - (offset % 256)
+		 * addr_sz   = 256 - (offset % 256)
 		 * target_addr = 0x80 + (offset % 256)
 		 */
 		page = offset >> 7;
-		sz = MAX77779_VIMON_BUFFER_SIZE - (offset & 0x7F);
-		if (sz > len)
-			sz = len;
+		addr_sz = MAX77779_VIMON_BUFFER_SIZE - (offset & 0x7F);
+		if (page == MAX77779_VIMON_PAGE_CNT - 1 && addr_sz > MAX77779_VIMON_LAST_PAGE_SIZE)
+			addr_sz = MAX77779_VIMON_LAST_PAGE_SIZE - (offset & 0x7F);
+		if (addr_sz > addr_len)
+			addr_sz = addr_len;
+
 		target_addr = MAX77779_VIMON_OFFSET_BASE + (offset & 0x7F);
 
 		ret = regmap_write(data->regmap, MAX77779_BVIM_PAGE_CTRL, page);
@@ -314,19 +318,20 @@ static ssize_t max77779_vimon_access_buffer(struct max77779_vimon_data *data, si
 			break;
 		}
 
+		rw_sz = addr_sz * MAX77779_VIMON_BYTES_PER_ENTRY;
 		if (toread)
-			ret = regmap_raw_read(data->regmap, target_addr, buffer, sz);
+			ret = regmap_raw_read(data->regmap, target_addr, buffer, rw_sz);
 		else
-			ret = regmap_raw_write(data->regmap, target_addr, buffer, sz);
+			ret = regmap_raw_write(data->regmap, target_addr, buffer, rw_sz);
 
 		if (ret < 0) {
 			dev_err(data->dev, "regmap_raw_read or write failed: %d\n", ret);
 			break;
 		}
 
-		offset += sz;
-		buffer += sz / MAX77779_VIMON_BYTES_PER_ENTRY;
-		len -= sz;
+		offset += addr_sz;
+		buffer += addr_sz;
+		addr_len -= addr_sz;
 	}
 
 	if (ret < 0)
@@ -354,10 +359,19 @@ static void max77779_vimon_handle_data(struct work_struct *work)
 	struct max77779_vimon_data *data = container_of(work, struct max77779_vimon_data,
 							read_data_work.work);
 	unsigned bvim_rfap, rsc, bvim_osc, smpl_start_add;
-	int ret, i, rd_bytes;
+	int ret, rd_vi_pairs, client_ind, rd_addr_cnt;
 
 	pm_stay_awake(data->dev);
 	mutex_lock(&data->vimon_lock);
+
+	for (client_ind = 0; client_ind < MAX77779_VIMON_CLIENT_MAX; client_ind++)
+		if (atomic_read(&data->clients[client_ind].active_request))
+			break;
+
+	if (client_ind == MAX77779_VIMON_CLIENT_MAX) {
+		ret = -EINVAL;
+		goto vimon_handle_data_exit;
+	}
 
 	if (data->state != MAX77779_VIMON_DATA_AVAILABLE) {
 		ret = -ENODATA;
@@ -373,13 +387,14 @@ static void max77779_vimon_handle_data(struct work_struct *work)
 		goto vimon_handle_data_exit;
 
 	rsc = _max77779_bvim_bvim_rs_rsc_get(rsc);
-	rd_bytes = rsc * MAX77779_VIMON_BYTES_PER_ENTRY * MAX77779_VIMON_ENTRIES_PER_VI_PAIR;
+	rd_vi_pairs = umin(rsc, data->clients[client_ind].sample_count);
+	rd_addr_cnt = rd_vi_pairs * MAX77779_VIMON_ENTRIES_PER_VI_PAIR;
 
 	ret = max77779_vimon_stop(data);
 	if (ret)
 		goto vimon_handle_data_exit;
 
-	ret = max77779_vimon_access_buffer(data, bvim_rfap, rd_bytes, data->buf, true);
+	ret = max77779_vimon_access_buffer(data, bvim_rfap, rd_addr_cnt, data->buf, true);
 	if (ret < 0)
 		goto vimon_handle_data_exit;
 
@@ -396,6 +411,8 @@ static void max77779_vimon_handle_data(struct work_struct *work)
 		goto vimon_handle_data_exit;
 
 	smpl_start_add = _max77779_bvim_smpl_math_smpl_start_add_get(smpl_start_add);
+
+	data->clients[client_ind].cb(data->clients[client_ind].client_dev, data->buf, rd_addr_cnt);
 
 vimon_handle_data_exit:
 
@@ -414,19 +431,10 @@ vimon_handle_data_exit:
 		dev_err(data->dev, "Failed to clear INT_STS (%d).\n",
 				ret);
 
-	for (i = 0; i < MAX77779_VIMON_CLIENT_MAX; i++)
-		if (atomic_read(&data->clients[i].active_request))
-			break;
-
-	if (i == MAX77779_VIMON_CLIENT_MAX) {
-		pm_relax(data->dev);
-		mutex_unlock(&data->vimon_lock);
-		return;
+	if (client_ind != MAX77779_VIMON_CLIENT_MAX) {
+		atomic_set(&data->clients[client_ind].active_request, 0);
+		atomic_set(&data->clients[client_ind].pending_request, 0);
 	}
-
-	data->clients[i].cb(data->clients[i].client_dev, data->buf, rd_bytes);
-	atomic_set(&data->clients[i].active_request, 0);
-	atomic_set(&data->clients[i].pending_request, 0);
 
 	mutex_unlock(&data->vimon_lock);
 	schedule_delayed_work(&data->pending_conv_work, 0);
