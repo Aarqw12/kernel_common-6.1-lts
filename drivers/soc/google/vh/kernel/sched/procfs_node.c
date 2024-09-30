@@ -3170,6 +3170,8 @@ static struct pentry entries[] = {
 	PROC_SCHED_QOS_ENTRY(boost_prio_clear),
 	PROC_SCHED_QOS_ENTRY(prefer_fit_set),
 	PROC_SCHED_QOS_ENTRY(prefer_fit_clear),
+	PROC_SCHED_QOS_ENTRY(prefer_idle_set),
+	PROC_SCHED_QOS_ENTRY(prefer_idle_clear),
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 	// FG util group attributes
 #if IS_ENABLED(CONFIG_USE_GROUP_THROTTLE)
@@ -3204,8 +3206,6 @@ static struct pentry entries[] = {
 	PROC_ENTRY(pmu_poll_time),
 	PROC_ENTRY(pmu_poll_enable),
 	// per-task attribute
-	PROC_ENTRY(prefer_idle_set),
-	PROC_ENTRY(prefer_idle_clear),
 	PROC_ENTRY(uclamp_fork_reset_set),
 	PROC_ENTRY(uclamp_fork_reset_clear),
 #if IS_ENABLED(CONFIG_RVH_SCHED_LIB)
