@@ -305,7 +305,7 @@ static ssize_t max77779_vimon_access_buffer(struct max77779_vimon_data *data, si
 		 */
 		page = offset >> 7;
 		addr_sz = MAX77779_VIMON_BUFFER_SIZE - (offset & 0x7F);
-		if (page == MAX77779_VIMON_PAGE_CNT - 1 && addr_sz > MAX77779_VIMON_LAST_PAGE_SIZE)
+		if (page == MAX77779_VIMON_PAGE_CNT - 1)
 			addr_sz = MAX77779_VIMON_LAST_PAGE_SIZE - (offset & 0x7F);
 		if (addr_sz > addr_len)
 			addr_sz = addr_len;
@@ -501,15 +501,15 @@ static int max77779_vimon_debug_start(void *d, u64 *val)
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_start_fops, max77779_vimon_debug_start, NULL, "%02llx\n");
 
-static void max77779_vimon_debug_callback(struct device *dev, uint16_t *buf, int rd_bytes)
+static void max77779_vimon_debug_callback(struct device *dev, uint16_t *buf, int rd_addr)
 {
 	int i;
 	struct max77779_vimon_data *data = dev_get_drvdata(dev);
 
-	for (i = 0; i < rd_bytes; i++)
+	for (i = 0; i < rd_addr; i++)
 		data->debug_buf[i] = buf[i];
 
-	data->debug_buf_len = rd_bytes;
+	data->debug_buf_len = rd_addr;
 }
 
 static int max77779_vimon_debug_req_trig_now(void *d, u64 val)
@@ -537,8 +537,7 @@ static ssize_t max77779_vimon_debug_req_rdback(struct file *filp, char __user *b
 	if (!tmp)
 		return -ENOMEM;
 
-	for (i = 0; i < data->debug_buf_len / MAX77779_VIMON_BYTES_PER_ENTRY;
-	     i += MAX77779_VIMON_ENTRIES_PER_VI_PAIR) {
+	for (i = 0; i < data->debug_buf_len; i += MAX77779_VIMON_ENTRIES_PER_VI_PAIR) {
 		v_rdback = ((int64_t) data->debug_buf[i] * MAX77779_VIMON_NV_PER_LSB) /
 			   MILLI_UNITS_TO_NANO_UNITS;
 		i_data = (int16_t)data->debug_buf[i + 1];
