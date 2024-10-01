@@ -164,6 +164,10 @@ enum vendor_procfs_type {
 		__PROC_GROUP_ENTRY(uclamp_max_on_nice_high_prio, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(rampup_multiplier, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(disable_util_est, __group_name, __vg),	\
+		__PROC_GROUP_ENTRY(qos_adpf_enable, __group_name, __vg),	\
+		__PROC_GROUP_ENTRY(qos_prefer_idle_enable, __group_name, __vg),	\
+		__PROC_GROUP_ENTRY(qos_prefer_fit_enable, __group_name, __vg),	\
+		__PROC_GROUP_ENTRY(qos_boost_prio_enable, __group_name, __vg),	\
 		__PROC_SET_GROUP_ENTRY(set_task_group, __group_name, __vg),	\
 		__PROC_SET_GROUP_ENTRY(set_proc_group, __group_name, __vg)
 
@@ -509,6 +513,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(ta, disable_util_est, VG_TOPAPP);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ta, ug, VG_TOPAPP, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(ta, qos_adpf_enable, VG_TOPAPP);
+VENDOR_GROUP_BOOL_ATTRIBUTE(ta, qos_prefer_idle_enable, VG_TOPAPP);
+VENDOR_GROUP_BOOL_ATTRIBUTE(ta, qos_prefer_fit_enable, VG_TOPAPP);
+VENDOR_GROUP_BOOL_ATTRIBUTE(ta, qos_boost_prio_enable, VG_TOPAPP);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(fg, prefer_idle, VG_FOREGROUND);
 VENDOR_GROUP_BOOL_ATTRIBUTE(fg, prefer_high_cap, VG_FOREGROUND);
@@ -549,6 +557,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(fg, disable_util_est, VG_FOREGROUND);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg, ug, VG_FOREGROUND, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg, qos_adpf_enable, VG_FOREGROUND);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg, qos_prefer_idle_enable, VG_FOREGROUND);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg, qos_prefer_fit_enable, VG_FOREGROUND);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg, qos_boost_prio_enable, VG_FOREGROUND);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(sys, prefer_idle, VG_SYSTEM);
 VENDOR_GROUP_BOOL_ATTRIBUTE(sys, prefer_high_cap, VG_SYSTEM);
@@ -589,6 +601,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(sys, disable_util_est, VG_SYSTEM);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sys, ug, VG_SYSTEM, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(sys, qos_adpf_enable, VG_SYSTEM);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sys, qos_prefer_idle_enable, VG_SYSTEM);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sys, qos_prefer_fit_enable, VG_SYSTEM);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sys, qos_boost_prio_enable, VG_SYSTEM);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(cam, prefer_idle, VG_CAMERA);
 VENDOR_GROUP_BOOL_ATTRIBUTE(cam, prefer_high_cap, VG_CAMERA);
@@ -629,6 +645,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(cam, disable_util_est, VG_CAMERA);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam, ug, VG_CAMERA, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(cam, qos_adpf_enable, VG_CAMERA);
+VENDOR_GROUP_BOOL_ATTRIBUTE(cam, qos_prefer_idle_enable, VG_CAMERA);
+VENDOR_GROUP_BOOL_ATTRIBUTE(cam, qos_prefer_fit_enable, VG_CAMERA);
+VENDOR_GROUP_BOOL_ATTRIBUTE(cam, qos_boost_prio_enable, VG_CAMERA);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, prefer_idle, VG_CAMERA_POWER);
 VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, prefer_high_cap, VG_CAMERA_POWER);
@@ -669,6 +689,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, disable_util_est, VG_CAMERA_POWER);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(cam_power, ug, VG_CAMERA_POWER, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, qos_adpf_enable, VG_CAMERA_POWER);
+VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, qos_prefer_idle_enable, VG_CAMERA_POWER);
+VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, qos_prefer_fit_enable, VG_CAMERA_POWER);
+VENDOR_GROUP_BOOL_ATTRIBUTE(cam_power, qos_boost_prio_enable, VG_CAMERA_POWER);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(bg, prefer_idle, VG_BACKGROUND);
 VENDOR_GROUP_BOOL_ATTRIBUTE(bg, prefer_high_cap, VG_BACKGROUND);
@@ -709,6 +733,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(bg, disable_util_est, VG_BACKGROUND);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(bg, ug, VG_BACKGROUND, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(bg, qos_adpf_enable, VG_BACKGROUND);
+VENDOR_GROUP_BOOL_ATTRIBUTE(bg, qos_prefer_idle_enable, VG_BACKGROUND);
+VENDOR_GROUP_BOOL_ATTRIBUTE(bg, qos_prefer_fit_enable, VG_BACKGROUND);
+VENDOR_GROUP_BOOL_ATTRIBUTE(bg, qos_boost_prio_enable, VG_BACKGROUND);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, prefer_idle, VG_SYSTEM_BACKGROUND);
 VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, prefer_high_cap, VG_SYSTEM_BACKGROUND);
@@ -749,6 +777,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, disable_util_est, VG_SYSTEM_BACKGROUND);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sysbg, ug, VG_SYSTEM_BACKGROUND, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, qos_adpf_enable, VG_SYSTEM_BACKGROUND);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, qos_prefer_idle_enable, VG_SYSTEM_BACKGROUND);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, qos_prefer_fit_enable, VG_SYSTEM_BACKGROUND);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sysbg, qos_boost_prio_enable, VG_SYSTEM_BACKGROUND);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, prefer_idle, VG_NNAPI_HAL);
 VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, prefer_high_cap, VG_NNAPI_HAL);
@@ -789,6 +821,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, disable_util_est, VG_NNAPI_HAL);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(nnapi, ug, VG_NNAPI_HAL, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, qos_adpf_enable, VG_NNAPI_HAL);
+VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, qos_prefer_idle_enable, VG_NNAPI_HAL);
+VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, qos_prefer_fit_enable, VG_NNAPI_HAL);
+VENDOR_GROUP_BOOL_ATTRIBUTE(nnapi, qos_boost_prio_enable, VG_NNAPI_HAL);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(rt, prefer_idle, VG_RT);
 VENDOR_GROUP_BOOL_ATTRIBUTE(rt, prefer_high_cap, VG_RT);
@@ -829,6 +865,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(rt, disable_util_est, VG_RT);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(rt, ug, VG_RT, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(rt, qos_adpf_enable, VG_RT);
+VENDOR_GROUP_BOOL_ATTRIBUTE(rt, qos_prefer_idle_enable, VG_RT);
+VENDOR_GROUP_BOOL_ATTRIBUTE(rt, qos_prefer_fit_enable, VG_RT);
+VENDOR_GROUP_BOOL_ATTRIBUTE(rt, qos_boost_prio_enable, VG_RT);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, prefer_idle, VG_DEX2OAT);
 VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, prefer_high_cap, VG_DEX2OAT);
@@ -869,6 +909,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, disable_util_est, VG_DEX2OAT);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(dex2oat, ug, VG_DEX2OAT, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, qos_adpf_enable, VG_DEX2OAT);
+VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, qos_prefer_idle_enable, VG_DEX2OAT);
+VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, qos_prefer_fit_enable, VG_DEX2OAT);
+VENDOR_GROUP_BOOL_ATTRIBUTE(dex2oat, qos_boost_prio_enable, VG_DEX2OAT);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(ota, prefer_idle, VG_OTA);
 VENDOR_GROUP_BOOL_ATTRIBUTE(ota, prefer_high_cap, VG_OTA);
@@ -909,6 +953,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(ota, disable_util_est, VG_OTA);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(ota, ug, VG_OTA, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(ota, qos_adpf_enable, VG_OTA);
+VENDOR_GROUP_BOOL_ATTRIBUTE(ota, qos_prefer_idle_enable, VG_OTA);
+VENDOR_GROUP_BOOL_ATTRIBUTE(ota, qos_prefer_fit_enable, VG_OTA);
+VENDOR_GROUP_BOOL_ATTRIBUTE(ota, qos_boost_prio_enable, VG_OTA);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(sf, prefer_idle, VG_SF);
 VENDOR_GROUP_BOOL_ATTRIBUTE(sf, prefer_high_cap, VG_SF);
@@ -949,6 +997,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(sf, disable_util_est, VG_SF);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(sf, ug, VG_SF, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(sf, qos_adpf_enable, VG_SF);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sf, qos_prefer_idle_enable, VG_SF);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sf, qos_prefer_fit_enable, VG_SF);
+VENDOR_GROUP_BOOL_ATTRIBUTE(sf, qos_boost_prio_enable, VG_SF);
 
 VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, prefer_idle, VG_FOREGROUND_WINDOW);
 VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, prefer_high_cap, VG_FOREGROUND_WINDOW);
@@ -989,6 +1041,10 @@ VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, disable_util_est, VG_FOREGROUND_WINDOW);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(fg_wi, ug, VG_FOREGROUND_WINDOW, check_ug);
 #endif
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, qos_adpf_enable, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, qos_prefer_idle_enable, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, qos_prefer_fit_enable, VG_FOREGROUND_WINDOW);
+VENDOR_GROUP_BOOL_ATTRIBUTE(fg_wi, qos_boost_prio_enable, VG_FOREGROUND_WINDOW);
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 #if IS_ENABLED(CONFIG_USE_GROUP_THROTTLE)
@@ -1348,9 +1404,12 @@ static int update_boost_prio(const char *buf, bool val)
 
 	if (vp->boost_prio != val) {
 		vp->boost_prio = val;
-		rq = task_rq_lock(p, &rf);
-		update_task_prio(p, vp, val);
-		task_rq_unlock(rq, p, &rf);
+		/* Only allow update_task_prio when group qos_boost_prio_enable is true. */
+		if (vg[vp->group].qos_boost_prio_enable) {
+			rq = task_rq_lock(p, &rf);
+			update_task_prio(p, vp, val);
+			task_rq_unlock(rq, p, &rf);
+		}
 	}
 
 	put_task_struct(p);
@@ -1425,6 +1484,27 @@ static int update_adpf(const char *buf, bool val)
 	return 0;
 }
 
+static inline void migrate_boost_prio(struct task_struct *p, unsigned int old, unsigned int new)
+{
+	struct rq_flags rf;
+	struct rq *rq;
+	struct vendor_task_struct *vp = get_vendor_task_struct(p);
+
+	if (vp->boost_prio && vg[old].qos_boost_prio_enable != vg[new].qos_boost_prio_enable) {
+		/* Boost prio to 100. */
+		if (vg[new].qos_boost_prio_enable) {
+			rq = task_rq_lock(p, &rf);
+			update_task_prio(p, vp, true);
+			task_rq_unlock(rq, p, &rf);
+		/* Restore to original prio. */
+		} else {
+			rq = task_rq_lock(p, &rf);
+			update_task_prio(p, vp, false);
+			task_rq_unlock(rq, p, &rf);
+		}
+	}
+}
+
 static int update_vendor_group_attribute(const char *buf, enum vendor_group_attribute vta,
 					 unsigned int new)
 {
@@ -1463,17 +1543,18 @@ static int update_vendor_group_attribute(const char *buf, enum vendor_group_attr
 			raw_spin_unlock_irqrestore(&vp->lock, flags);
 			break;
 		}
-
-#if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
-		if (p->prio >= MAX_RT_PRIO)
-			migrate_vendor_group_util(p, old, new);
-#endif
 		if (vp->queued_to_list == LIST_QUEUED) {
 			remove_from_vendor_group_list(&vp->node, old);
 			add_to_vendor_group_list(&vp->node, new);
 		}
 		vp->group = new;
 		raw_spin_unlock_irqrestore(&vp->lock, flags);
+		if (p->prio >= MAX_RT_PRIO) {
+			migrate_boost_prio(p, old, new);
+#if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
+			migrate_vendor_group_util(p, old, new);
+#endif
+		}
 		for (clamp_id = 0; clamp_id < UCLAMP_CNT; clamp_id++)
 			uclamp_update_active(p, clamp_id);
 		break;
@@ -1495,10 +1576,12 @@ static int update_vendor_group_attribute(const char *buf, enum vendor_group_attr
 			}
 			vp->group = new;
 			raw_spin_unlock_irqrestore(&vp->lock, flags);
+			if (p->prio >= MAX_RT_PRIO) {
+				migrate_boost_prio(t, old, new);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
-			if (p->prio >= MAX_RT_PRIO)
 				migrate_vendor_group_util(t, old, new);
 #endif
+			}
 			for (clamp_id = 0; clamp_id < UCLAMP_CNT; clamp_id++)
 				uclamp_update_active(t, clamp_id);
 			put_task_struct(t);
