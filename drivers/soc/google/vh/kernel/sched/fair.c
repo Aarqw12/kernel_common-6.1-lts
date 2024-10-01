@@ -1588,7 +1588,7 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 	struct cpuidle_state *idle_state;
 	unsigned long unimportant_max_spare_cap = 0, idle_max_cap = 0;
 	unsigned long cfs_load, min_load = ULONG_MAX;
-	bool prefer_fit;
+	bool prefer_fit = false;
 	const cpumask_t *preferred_idle_mask;
 
 	rd = cpu_rq(this_cpu)->rd;
@@ -2019,7 +2019,7 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 
 out:
 	rcu_read_unlock();
-	trace_sched_find_energy_efficient_cpu(p, prefer_idle, get_prefer_high_cap(p),
+	trace_sched_find_energy_efficient_cpu(p, prefer_idle, prefer_fit,
 					 task_importance, &idle_fit, &idle_unfit, &unimportant_fit,
 					 &unimportant_unfit, &packing, &max_spare_cap, &idle_unpreferred,
 					 best_energy_cpu);
@@ -2588,6 +2588,7 @@ out:
 	if (trace_sched_select_task_rq_fair_enabled())
 		trace_sched_select_task_rq_fair(p, task_util_est(p),
 						sync_wakeup, prefer_prev,
+						get_uclamp_fork_reset(p, true),
 						get_prefer_high_cap(p),
 						get_vendor_group(p),
 						uclamp_eff_value_pixel_mod(p, UCLAMP_MIN),
