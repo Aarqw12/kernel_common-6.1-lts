@@ -9,13 +9,11 @@
  * published by the Free Software Foundation.
  */
 
+#include <soc/google/modem_notifier.h>
+
 #include "aoc_alsa.h"
 #include "aoc_alsa_drv.h"
 #include "aoc_alsa_path.h"
-
-#if IS_ENABLED(CONFIG_EXYNOS_MODEM_IF)
-#include "modem_notifier.h"
-#endif
 
 #ifndef ALSA_AOC_CMD_LOG_DISABLE
 static int cmd_count;
