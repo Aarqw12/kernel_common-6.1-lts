@@ -158,7 +158,8 @@ int max77779_external_vimon_enable(struct device *dev, bool enable)
 }
 EXPORT_SYMBOL_GPL(max77779_external_vimon_enable);
 
-int max77779_external_vimon_request_conv(struct device *dev, int vimon_client, int sample_count,
+int max77779_external_vimon_request_conv(struct device *dev, struct device *client_dev,
+					 int vimon_client, int sample_count,
 					 void (*cb)(struct device *dev, uint16_t *buf,
 					 int rd_bytes))
 {
@@ -170,7 +171,7 @@ int max77779_external_vimon_request_conv(struct device *dev, int vimon_client, i
 	if (atomic_read(&data->clients[vimon_client].pending_request))
 		return -EBUSY;
 
-	data->clients[vimon_client].client_dev = dev;
+	data->clients[vimon_client].client_dev = client_dev;
 	data->clients[vimon_client].cb = cb;
 	data->clients[vimon_client].sample_count = sample_count;
 	atomic_set(&data->clients[vimon_client].pending_request, 1);
@@ -519,7 +520,8 @@ static int max77779_vimon_debug_req_trig_now(void *d, u64 val)
 	if (val > MAX77779_VIMON_SMPL_CNT_MAX || val < MAX77779_VIMON_SMPL_CNT_MIN)
 		return -EINVAL;
 
-	return max77779_external_vimon_request_conv(data->dev, MAX77779_VIMON_DEBUGFS_CLIENT, val,
+	return max77779_external_vimon_request_conv(data->dev, data->dev,
+						    MAX77779_VIMON_DEBUGFS_CLIENT, val,
 						    &max77779_vimon_debug_callback);
 }
 DEFINE_SIMPLE_ATTRIBUTE(debug_req_trig_now_fops, NULL, max77779_vimon_debug_req_trig_now,
@@ -869,7 +871,6 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 				       sizeof(*data->debug_buf), GFP_KERNEL);
 	if (!data->debug_buf)
 		return -ENOMEM;
-
 
 	INIT_DELAYED_WORK(&data->read_data_work, max77779_vimon_handle_data);
 	INIT_DELAYED_WORK(&data->pending_conv_work, max77779_vimon_process_pending_conv);
