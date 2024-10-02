@@ -72,8 +72,6 @@
 /* Vote value doesn't matter. Only status matters. */
 #define MAX77759_DISABLE_TOGGLE_VOTE			1
 
-/* Longer delay to accommodate additional Rp update latency during boot. */
-#define MAX77759_FIRST_RP_MISSING_TIMEOUT_MS           5000
 #define MAX77759_RP_MISSING_TIMEOUT_MS                 2000
 
 #define AICL_CHECK_MS				       10000
@@ -188,6 +186,9 @@ static unsigned int sink_discovery_delay_ms;
 /* Callback for data_active changes */
 void (*data_active_callback)(void *data_active_payload);
 void *data_active_payload;
+
+static void max77759_get_cc(struct max77759_plat *chip, enum typec_cc_status *cc1,
+			    enum typec_cc_status *cc2);
 
 static bool hooks_installed;
 
@@ -1253,7 +1254,19 @@ static void check_missing_rp_work(struct kthread_work *work)
 			     struct max77759_plat, check_missing_rp_work);
 	union power_supply_propval val;
 	unsigned int pwr_status;
+	enum typec_cc_status cc1, cc2;
+	ktime_t now = ktime_get_boottime();
 	int ret;
+	bool first_toggle_debounce = now - chip->first_toggle_time_since_boot >=
+				     ms_to_ktime(MAX77759_RP_MISSING_TIMEOUT_MS);
+
+	if (chip->first_toggle || !first_toggle_debounce) {
+		kthread_mod_delayed_work(chip->wq, &chip->check_missing_rp_work,
+					 msecs_to_jiffies(MAX77759_RP_MISSING_TIMEOUT_MS));
+		LOG(LOG_LVL_DEBUG, chip->log, "Delaying Missing Rp Work. Initial port reset is not"
+		    " complete yet and port hasn't started to toggle");
+		return;
+	}
 
 	ret = regmap_read(chip->data.regmap, TCPC_POWER_STATUS, &pwr_status);
 	if (ret < 0) {
@@ -1261,9 +1274,11 @@ static void check_missing_rp_work(struct kthread_work *work)
 		return;
 	}
 
+	max77759_get_cc(chip, &cc1, &cc2);
+
 	if (!!(pwr_status & TCPC_POWER_STATUS_VBUS_PRES) &&
-	    (cc_open_or_toggling(chip->cc1, chip->cc2) ||
-	     (chip->cc1 == TYPEC_CC_RP_DEF && chip->cc2 == TYPEC_CC_RP_DEF)) &&
+	    (cc_open_or_toggling(cc1, cc2) ||
+	    (cc1 == TYPEC_CC_RP_DEF && cc2 == TYPEC_CC_RP_DEF)) &&
 	    !chip->compliance_warnings->missing_rp) {
 		LOG(LOG_LVL_DEBUG, chip->log,
 		    "%s: Missing or incorrect Rp partner detected. Enable WAR", __func__);
@@ -1300,10 +1315,7 @@ static void check_missing_rp(struct max77759_plat *chip, bool vbus_present,
 
 	if (!!(pwr_status & TCPC_POWER_STATUS_VBUS_PRES) && cc_open_or_toggling(cc1, cc2)) {
 		kthread_mod_delayed_work(chip->wq, &chip->check_missing_rp_work,
-					 msecs_to_jiffies(chip->first_rp_missing_timeout ?
-					 MAX77759_FIRST_RP_MISSING_TIMEOUT_MS :
-					 MAX77759_RP_MISSING_TIMEOUT_MS));
-		chip->first_rp_missing_timeout = false;
+					 msecs_to_jiffies(MAX77759_RP_MISSING_TIMEOUT_MS));
 	} else if (chip->compliance_warnings->missing_rp) {
 		kthread_cancel_delayed_work_sync(&chip->check_missing_rp_work);
 		if (!(pwr_status & TCPC_POWER_STATUS_VBUS_PRES))
@@ -1607,39 +1619,37 @@ static void max77759_get_cc(struct max77759_plat *chip, enum typec_cc_status *cc
 		return;
 
 	*cc1 = tcpci_to_typec_cc((reg >> TCPC_CC_STATUS_CC1_SHIFT) &
-				TCPC_CC_STATUS_CC1_MASK,
-				reg & TCPC_CC_STATUS_TERM ||
-				tcpc_presenting_rd(role_control, CC1));
+				 TCPC_CC_STATUS_CC1_MASK,
+				 reg & TCPC_CC_STATUS_TERM ||
+				 tcpc_presenting_rd(role_control, CC1));
 	*cc2 = tcpci_to_typec_cc((reg >> TCPC_CC_STATUS_CC2_SHIFT) &
-				TCPC_CC_STATUS_CC2_MASK,
-				reg & TCPC_CC_STATUS_TERM ||
-				tcpc_presenting_rd(role_control, CC2));
+				 TCPC_CC_STATUS_CC2_MASK,
+				 reg & TCPC_CC_STATUS_TERM ||
+				 tcpc_presenting_rd(role_control, CC2));
 }
 
-static void max77759_cache_cc(struct max77759_plat *chip)
+static void max77759_cache_cc(struct max77759_plat *chip, enum typec_cc_status new_cc1,
+			      enum typec_cc_status new_cc2)
 {
-	enum typec_cc_status cc1, cc2;
-
-	max77759_get_cc(chip, &cc1, &cc2);
 	/*
 	 * If the Vbus OVP is restricted to quick ramp-up time for incoming Vbus to work properly,
 	 * queue a delayed work to check the Vbus status later. Cancel the delayed work once the CC
 	 * is back to Open as we won't expect that Vbus is coming.
 	 */
 	if (chip->quick_ramp_vbus_ovp) {
-		if (cc_open_or_toggling(chip->cc1, chip->cc2) && port_is_sink(cc1, cc2)) {
+		if (cc_open_or_toggling(chip->cc1, chip->cc2) && port_is_sink(new_cc1, new_cc2)) {
 			kthread_mod_delayed_work(chip->wq, &chip->reset_ovp_work,
 						 msecs_to_jiffies(VBUS_RAMPUP_TIMEOUT_MS));
-		} else if (cc_open_or_toggling(cc1, cc2)) {
+		} else if (cc_open_or_toggling(new_cc1, new_cc2)) {
 			kthread_cancel_delayed_work_sync(&chip->reset_ovp_work);
 			chip->reset_ovp_retry = 0;
 		}
 	}
 
 	LOG(LOG_LVL_DEBUG, chip->log,
-	    "cc1: %u -> %u cc2: %u -> %u", chip->cc1, cc1, chip->cc2, cc2);
-	chip->cc1 = cc1;
-	chip->cc2 = cc2;
+	    "cc1: %u -> %u cc2: %u -> %u", chip->cc1, new_cc1, chip->cc2, new_cc2);
+	chip->cc1 = new_cc1;
+	chip->cc2 = new_cc2;
 }
 
 /* hold irq_status_lock before calling */
@@ -1808,9 +1818,12 @@ static irqreturn_t _max77759_irq_locked(struct max77759_plat *chip, u16 status,
 		}
 
 		if (invoke_tcpm_for_cc_update) {
+			enum typec_cc_status new_cc1, new_cc2;
+
 			LOG(LOG_LVL_DEBUG, chip->log, "invoke_tcpm_for_cc_update");
 			tcpm_cc_change(tcpci->port);
-			max77759_cache_cc(chip);
+			max77759_get_cc(chip, &new_cc1, &new_cc2);
+			max77759_cache_cc(chip, new_cc1, new_cc2);
 			/* Check for missing-rp non compliant power source */
 			if (!regmap_read(tcpci->regmap, TCPC_POWER_STATUS, &pwr_status) &&
 			    !chip->usb_throttled)
@@ -2113,6 +2126,7 @@ static int max77759_start_toggling(struct tcpci *tcpci,
 			LOG(LOG_LVL_DEBUG, chip->log, "[%s]: Kick Debug accessory FSM", __func__);
 			ovp_operation(chip, OVP_RESET);
 		}
+		chip->first_toggle_time_since_boot = ktime_get_boottime();
 		chip->first_toggle = false;
 	}
 
@@ -3138,7 +3152,6 @@ static int max77759_probe(struct i2c_client *client,
 	mutex_init(&chip->ovp_lock);
 	spin_lock_init(&g_caps_lock);
 	chip->first_toggle = true;
-	chip->first_rp_missing_timeout = true;
 
 	ret = max77759_read8(chip->data.regmap, TCPC_POWER_STATUS,
 			     &power_status);
