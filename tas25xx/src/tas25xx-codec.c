@@ -398,6 +398,9 @@ static int tas25xx_mute_stream(struct snd_soc_dai *dai, int mute, int stream)
 	if (mute)
 		ret = tas25xx_set_power_state(p_tas25xx, TAS_POWER_MUTE,
 			(0xf & tas25xx_get_drv_channel_opmode()));
+	else if (p_tas25xx->m_power_state == TAS_POWER_MUTE)
+		ret = tas25xx_set_power_state(p_tas25xx, TAS_POWER_ACTIVE,
+			(0xf & tas25xx_get_drv_channel_opmode()));
 	mutex_unlock(&p_tas25xx->codec_lock);
 
 	if (mute) {
