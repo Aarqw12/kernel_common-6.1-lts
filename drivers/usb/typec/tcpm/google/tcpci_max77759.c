@@ -354,6 +354,9 @@ static ssize_t cc_toggle_enable_store(struct device *dev, struct device_attribut
 	if (kstrtoint(buf, 10, &val) < 0)
 		return -EINVAL;
 
+	logbuffer_logk(chip->log, LOGLEVEL_INFO, "Requesting CC toggle, cc state: curr=%s next=%s",
+		       !chip->toggle_disable_status ? "on" : "off", val ? "on" : "off");
+
 	ret = gvotable_cast_vote(chip->toggle_disable_votable, "USER_VOTE",
 				 (void *)MAX77759_DISABLE_TOGGLE_VOTE, val ?
 				 MAX77759_ENABLE_TOGGLE : MAX77759_DISABLE_TOGGLE);
