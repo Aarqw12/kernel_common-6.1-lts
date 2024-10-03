@@ -37,7 +37,6 @@
 #define GCCD_BUCK_CHARGE_CURRENT_MAX	3150000		/* 3.15A */
 #define GCCD_BUCK_CHARGE_PWR_THRESHOLD	27000000	/* 27W */
 #define GCCD_MAIN_CHGIN_ILIM		2200000		/* 2.2A */
-#define GCCD_BUCK_CHGIN_ILIM		800000		/* 0.8A, should align aicr = <800000>; */
 #define GCCD_IEEE_1725_TOLERANCE	100000		/* 0.1A */
 
 #define GCCD_SPLIT_TABLE_STEP		500000		/* 0.5A */
@@ -68,7 +67,7 @@ struct gccd_drv {
 /* ------------------------------------------------------------------------- */
 
 static int gccd_get_charge_current_max(struct gccd_drv *gccd);
-static int gccd_set_charge_current_max(struct gccd_drv *gccd, int charging_current);
+static int gccd_set_charge_current_max(struct gccd_drv *gccd, int chg_current);
 
 /* this function is only for debug */
 static int gccd_set_buck_active(struct gccd_drv *gccd, int enabled)
@@ -235,12 +234,8 @@ static int gccd_get_main_current(struct gccd_drv *gccd, int chg_current) {
 	return main_current;
 }
 
-static int gccd_set_charge_current_max(struct gccd_drv *gccd, int charging_current)
+static int gccd_set_charge_current_max(struct gccd_drv *gccd, int chg_current)
 {
-	const int watt = gccd->voltage_max * gccd->current_max;
-	const int chg_current = watt < GCCD_BUCK_CHARGE_PWR_THRESHOLD &&
-				charging_current > GCCD_MAIN_CHARGE_CURRENT_MAX ?
-				GCCD_MAIN_CHARGE_CURRENT_MAX : charging_current;
 	int main_chg_current = chg_current, buck_chg_current = 0;
 	struct power_supply *main_psy = gccd->main_chg_psy;
 	struct power_supply *buck_psy = gccd->buck_chg_psy;
@@ -396,20 +391,11 @@ static int gccd_psy_set_property(struct power_supply *psy,
 		bool is_adapter_9v3a = gccd->voltage_max == PD_VOLTAGE_MAX_MV &&
 				       pval->intval == PD_CURRENT_MAX_UA;
 
-		if (gccd->ftm_mode)
+		/* set CHGIN_ILIM (CHG_CNFG_09) to 2200mA for 9V/3A adapter */
+		if (is_adapter_9v3a || gccd->ftm_mode)
 			ret = PSY_SET_PROP(gccd->main_chg_psy, psp, GCCD_MAIN_CHGIN_ILIM);
-		else if (gccd->split_count > 0)
-			/*
-			 * set CHGIN_ILIM (CHG_CNFG_09) to 2200mA for 9V/3A adapter
-			 * and 1200mA for 9V/2A
-			 */
-			ret = PSY_SET_PROP(gccd->main_chg_psy, psp,
-					   gccd->voltage_max == PD_VOLTAGE_MAX_MV ?
-					   pval->intval - GCCD_BUCK_CHGIN_ILIM : pval->intval);
 		else
-			/* set CHGIN_ILIM (CHG_CNFG_09) to 2200mA for 9V/3A adapter */
-			ret = PSY_SET_PROP(gccd->main_chg_psy, psp, is_adapter_9v3a ?
-						GCCD_MAIN_CHGIN_ILIM : pval->intval);
+			ret = PSY_SET_PROP(gccd->main_chg_psy, psp, pval->intval);
 		if (ret)
 			break;
 
