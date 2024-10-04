@@ -188,6 +188,7 @@ obj-$(CONFIG_CHARGER_RT9471) += rt9471_charger.o
 # Standalone for hl7132
 obj-$(CONFIG_HL7132)		+= hl7132.o
 hl7132-objs += hl7132_charger.o
+hl7132-objs += hl7132_gbms_pps.o
 hl7132-objs += google_dc_pps.o
 
 # prevent warnings

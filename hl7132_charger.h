@@ -32,6 +32,9 @@ struct hl7132_platform_data {
 	/* Switching frequency: 0 - 500khz, ... , 11 - 1600kHz */
 	unsigned int	fsw_cfg;
 
+	/* NTC voltage threshold : 0~2.4V - uV unit */
+	unsigned int	ntc_th;
+
 	unsigned int max_init_retry;
 
 	/* Temperature threshold, used as an enable / disable */
@@ -44,21 +47,14 @@ struct hl7132_platform_data {
 	unsigned int	ta_max_vol;
 	unsigned int	ta_max_vol_cp;
 
-	/* Spread Spectrum settings */
-	unsigned int	sc_clk_dither_rate;
-	unsigned int	sc_clk_dither_limit;
-	bool		sc_clk_dither_en;
-	int		ta_max_cur_mult;
-
 #if IS_ENABLED(CONFIG_THERMAL)
 	const char *usb_tz_name;
 #endif
 
 	/* Adjustable TA voltage offset as per HW integration guide section 5.4.1 */
 	int ta_vol_offset;
+	unsigned int init_sleep;
 };
-
-#define HL7132_MAX_INIT_RETRY_DFT 3
 
 /* - PPS Integration Shared definitions ---------------------------------- */
 
@@ -138,7 +134,8 @@ static inline void hl7132_chg_stats_inc_ovcf(struct hl7132_chg_stats *chg_data,
 	}
 }
 
-/** TODO update docstring
+// TODO update docstring
+/**
  * struct hl7132_charger - hl7132 charger instance
  * @monitor_wake_lock: lock to enter the suspend mode
  * @lock: protects concurrent access to online variables
@@ -221,7 +218,7 @@ struct hl7132_charger {
 	unsigned int		prev_inc;
 
 	unsigned int		new_iin;
-	int			new_vbat_reg;
+	int			new_vfloat;
 
 	int			adc_comp_gain;
 
@@ -316,7 +313,6 @@ enum {
 enum {
 	CHG_NO_DC_MODE,
 	CHG_2TO1_DC_MODE,
-	CHG_4TO1_DC_MODE,
 };
 
 /* PPS timers */
@@ -327,7 +323,7 @@ enum {
 
 /* - Core driver  ---------------------------- */
 
-int hl7132_read_adc(const struct hl7132_charger *hl7132, u8 adc_ch);
+int hl7132_read_adc(struct hl7132_charger *hl7132, u8 adc_ch);
 int hl7132_input_current_limit(struct hl7132_charger *hl7132);
 
 /* - PPS Integration (move to a separate file) ---------------------------- */
@@ -361,9 +357,12 @@ int hl7132_is_present(struct hl7132_charger *hl7132);
 int hl7132_get_status(struct hl7132_charger *hl7132);
 int hl7132_get_charge_type(struct hl7132_charger *hl7132);
 
-#define logbuffer_prlog(p, level, fmt, ...) \
+extern int debug_printk_prlog;
+extern int debug_no_logbuffer;
+
+#define logbuffer_prlog(p, level, fmt, ...)	\
 	gbms_logbuffer_prlog(p->log, level, debug_no_logbuffer, debug_printk_prlog, \
-						fmt, ##__VA_ARGS__)
+				fmt, ##__VA_ARGS__)
 
 /* charge stats */
 void hl7132_chg_stats_init(struct hl7132_chg_stats *chg_data);
