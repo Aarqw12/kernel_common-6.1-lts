@@ -11,6 +11,24 @@
 #include <max777x9_bcl.h>
 #include "bcl.h"
 
+int max77779_adjust_bat_open_to(struct bcl_device *bcl_dev, bool enable)
+{
+	int ret;
+	u8 val;
+
+	ret = max77779_external_chg_reg_read(bcl_dev->intf_pmic_dev,
+					     MAX77779_BAT_OILO1_CNFG_3, &val);
+	if (enable)
+		val = _max77779_bat_oilo1_cnfg_3_bat_open_to_1_set(
+				val, bcl_dev->batt_irq_conf1.batoilo_bat_otg_open_to);
+	else
+		val = _max77779_bat_oilo1_cnfg_3_bat_open_to_1_set(
+				val, bcl_dev->batt_irq_conf1.batoilo_bat_open_to);
+	ret = max77779_external_chg_reg_write(bcl_dev->intf_pmic_dev,
+					      MAX77779_BAT_OILO1_CNFG_3, val);
+	return ret;
+}
+
 int max77779_adjust_batoilo_lvl(struct bcl_device *bcl_dev, u8 lower_enable, u8 set_batoilo1_lvl,
                                 u8 set_batoilo2_lvl)
 {

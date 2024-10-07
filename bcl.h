@@ -98,6 +98,9 @@
 #define SMPL_ZONE_NAME "smpl_warn"
 #endif
 
+#define PSY_NAME "google,power-supply"
+#define PSY_OTG_NAME "google,plc"
+
 #if !IS_ENABLED(CONFIG_SOC_ZUMAPRO)
 #define BATOILO_DET_SHIFT 2
 #endif
@@ -288,7 +291,9 @@ struct bcl_batt_irq_conf {
 	u8 batoilo_trig_lvl;
 	u8 batoilo_wlc_trig_lvl;
 	u8 batoilo_usb_trig_lvl;
+	u8 batoilo_otg_trig_lvl;
 	u8 batoilo_bat_open_to;
+	u8 batoilo_bat_otg_open_to;
 	u8 batoilo_rel;
 	u8 batoilo_det;
 	u8 batoilo_int_rel;
@@ -329,6 +334,7 @@ struct bcl_device {
 	struct odpm_info *sub_odpm;
 	void __iomem *sysreg_cpucl0;
 	struct power_supply *batt_psy;
+	struct power_supply *otg_psy;
 
 	struct notifier_block psy_nb;
 	struct bcl_zone *zone[TRIGGERED_SOURCE_MAX];
@@ -433,6 +439,7 @@ struct bcl_device {
 #if IS_ENABLED(CONFIG_SOC_ZUMAPRO)
 	struct gvotable_election *toggle_wlc;
 	struct gvotable_election *toggle_usb;
+	struct gvotable_election *toggle_otg;
 	struct bcl_evt_count evt_cnt;
 	struct bcl_evt_count evt_cnt_latest;
 
@@ -455,6 +462,8 @@ struct bcl_device {
 	bool oilo2_vdrp1_en;
 	bool oilo2_vdrp2_en;
 	struct delayed_work qos_work;
+
+	bool usb_otg_conf;
 };
 
 extern void google_bcl_irq_update_lvl(struct bcl_device *bcl_dev, int index, unsigned int lvl);
@@ -495,6 +504,7 @@ void google_bcl_upstream_state(struct bcl_zone *zone, enum MITIGATION_MODE state
 int max77759_vimon_read(struct bcl_device *bcl_dev);
 int max77779_vimon_read(struct bcl_device *bcl_dev);
 #if IS_ENABLED(CONFIG_SOC_ZUMAPRO)
+int max77779_adjust_bat_open_to(struct bcl_device *bcl_dev, bool enable);
 int max77779_adjust_batoilo_lvl(struct bcl_device *bcl_dev, u8 lower_enable, u8 set_batoilo1_lvl,
                                 u8 set_batoilo2_lvl);
 int google_bcl_setup_votable(struct bcl_device *bcl_dev);
