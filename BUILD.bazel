@@ -258,7 +258,7 @@ kernel_module_group(
         "//private/google-modules/display/common/gs_panel",
         "//private/google-modules/display/samsung:display.samsung",
         "//private/google-modules/edgetpu/abrolhos/drivers/edgetpu:edgetpu.abrolhos",
-        "//private/google-modules/gpu/mali_kbase",
+        "//private/google-modules/gpu/borr_mali_kbase:mali_kbase",
         "//private/google-modules/gpu/mali_pixel",
         "//private/google-modules/lwis",
         "//private/google-modules/misc/sscoredump",
