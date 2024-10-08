@@ -54,8 +54,8 @@ struct touch_event {
 };
 
 struct finger_detect_touch {
-	struct fth_touch_config_v4 config;
-	struct fth_touch_config_v4 up_config;
+	struct fth_touch_config_v5 config;
+	struct fth_touch_config_v5 up_config;
 	struct work_struct work;
 	struct touch_event current_events[MT_MAX_FINGERS];
 	struct touch_event last_events[MT_MAX_FINGERS];
@@ -78,14 +78,14 @@ struct fth_drvdata {
 	struct mutex	fd_events_mutex;
 	struct finger_detect_touch fd_touch;
 	uint32_t current_slot_state[MT_MAX_FINGERS];
-	DECLARE_KFIFO(fd_events, struct fth_touch_event, FTH_MAX_FD_EVENTS);
+	DECLARE_KFIFO(fd_events, struct fth_touch_event_v5, FTH_MAX_FD_EVENTS);
 	wait_queue_head_t read_wait_queue_fd;
 	struct fth_fd_buf scrath_buf;
 	atomic_t wakelock_acquired;
 };
 
 static void fth_fd_report_event(struct fth_drvdata *drvdata,
-		struct fth_touch_event *event)
+		struct fth_touch_event_v5 *event)
 {
 	if (!drvdata || !event) {
 		pr_err("NULL ptr passed\n");
@@ -96,7 +96,7 @@ static void fth_fd_report_event(struct fth_drvdata *drvdata,
 		pr_err("FD events fifo: error adding item\n");
 	} else {
 		pr_debug("FD event %d at slot %d queued at time %lu uS\n",
-				event->state, event->id,
+				event->state, event->slot,
 				(unsigned long)ktime_to_us(ktime_get()));
 		pr_debug("FD event: x:%d, y:%d, major:%d, minor:%d, "
 				"orientation:%d, time_us:%lld\n",
@@ -267,7 +267,7 @@ static struct input_handler fth_touch_handler = {
 };
 
 static bool fth_touch_filter_aoi_region(struct touch_event *event,
-		struct fth_touch_config_v4 *config)
+		struct fth_touch_config_v5 *config)
 {
 	if ((event == NULL) || (config == NULL)) {
 		return false;
@@ -288,7 +288,7 @@ static bool fth_touch_filter_by_radius(
 		int slot)
 {
 	unsigned int del_X = 0, del_Y = 0;
-	struct fth_touch_config_v4 *config = &drvdata->fd_touch.config;
+	struct fth_touch_config_v5 *config = &drvdata->fd_touch.config;
 	drvdata->fd_touch.delta_X[slot] +=
 			current_event->X - last_event->X;
 	drvdata->fd_touch.delta_Y[slot] +=
@@ -308,14 +308,15 @@ static bool fth_touch_filter_by_radius(
 static void fth_touch_work_func(struct work_struct *work)
 {
 	struct fth_drvdata *drvdata = NULL;
-	struct fth_touch_config_v4 *config = NULL;
-	struct fth_touch_config_v4 *large_config = NULL;
+	struct fth_touch_config_v5 *config = NULL;
+	struct fth_touch_config_v5 *large_config = NULL;
 	struct finger_detect_touch *fd_touch = NULL;
 	struct touch_event current_event, last_event;
-	struct fth_touch_event finger_event;
+	struct fth_touch_event_v5 finger_event;
 	bool in_small_aoi = false;
 	bool in_large_aoi = false;
 	int slot = 0;
+	int num_fingers = 0;
 	if (!work) {
 		pr_err("NULL pointer passed\n");
 		return;
@@ -325,6 +326,14 @@ static void fth_touch_work_func(struct work_struct *work)
 	config = &fd_touch->config;
 	large_config = &fd_touch->up_config;
 	finger_event.touch_valid = true;
+	for (slot = 0; slot < MT_MAX_FINGERS; slot++) {
+		if (fd_touch->current_events[slot].id >= 0) {
+			num_fingers++;
+			if (num_fingers >= 2) {
+				pr_debug("num_fingers:%d\n", num_fingers);
+			}
+		}
+	}
 	for (slot = 0; slot < MT_MAX_FINGERS; slot++) {
 		bool *is_finger_in = &fd_touch->is_finger_in[slot];
 		memcpy(&current_event, &fd_touch->current_events[slot],
@@ -354,22 +363,22 @@ static void fth_touch_work_func(struct work_struct *work)
 		in_small_aoi = fth_touch_filter_aoi_region(&current_event, config);
 		in_large_aoi = fth_touch_filter_aoi_region(&current_event, large_config);
 		if (!(*is_finger_in)) {
-				if (in_small_aoi && !(current_event.id < 0)) {
-						finger_event.state = FTH_EVENT_FINGER_DOWN;
-						*is_finger_in = true;
-				} else {
-						// Don't report.
-						continue;
-				}
+			if (in_small_aoi && !(current_event.id < 0)) {
+					finger_event.state = FTH_EVENT_FINGER_DOWN;
+					*is_finger_in = true;
+			} else {
+					// Don't report.
+					continue;
+			}
 		} else {
-				// Need to update state if finger has left large AoI.
-				if (current_event.id < 0) {
+			// Need to update state if finger has left large AoI.
+			if (current_event.id < 0) {
+				*is_finger_in = false;
+			} else if (!in_large_aoi) {
+					finger_event.state = FTH_EVENT_FINGER_UP;
 					*is_finger_in = false;
-				} else if (!in_large_aoi) {
-						finger_event.state = FTH_EVENT_FINGER_UP;
-						*is_finger_in = false;
-				}
-				// Report event.
+			}
+			// Report event.
 		}
 
 		// Radius filtering on moves to limit report frequency.
@@ -380,13 +389,14 @@ static void fth_touch_work_func(struct work_struct *work)
 			continue;
 		}
 		// Report touch event to HAL and update interrupts.
-		finger_event.id = slot;
+		finger_event.slot = slot;
 		finger_event.X = current_event.X;
 		finger_event.Y = current_event.Y;
 		finger_event.major = current_event.major;
 		finger_event.minor = current_event.minor;
 		finger_event.orientation = current_event.orientation;
 		finger_event.time_us = ktime_to_us(current_event.ktime_mono);
+		finger_event.num_fingers = num_fingers;
 		if (finger_event.state != FTH_EVENT_FINGER_MOVE) {
 			drvdata->current_slot_state[slot] = finger_event.state;
 		}
@@ -535,7 +545,7 @@ static long fth_ioctl(
 	case FTH_IOCTL_GET_TOUCH_FD_VERSION:
 	{
 		struct fth_touch_fd_version version;
-		version.version = FTH_TOUCH_FD_VERSION_4;
+		version.version = FTH_TOUCH_FD_VERSION_5;
 		rc = copy_to_user((void __user *)priv_arg,
 				&version, sizeof(version));
 		if (rc != 0) {
@@ -545,8 +555,9 @@ static long fth_ioctl(
 		}
 		break;
 	}
-	case FTH_IOCTL_CONFIGURE_TOUCH_FD_V4:
+	case FTH_IOCTL_CONFIGURE_TOUCH_FD_V5:
 	{
+		__s32 version;
 		if (copy_from_user(&drvdata->fd_touch.config.version,
 				priv_arg,
 				sizeof(drvdata->fd_touch.config.version))
@@ -555,8 +566,8 @@ static long fth_ioctl(
 			pr_err("failed copy from user space %d\n", rc);
 			goto end;
 		}
-		if (drvdata->fd_touch.config.version.version
-				!= FTH_TOUCH_FD_VERSION_4) {
+		version = drvdata->fd_touch.config.version.version;
+		if (version != FTH_TOUCH_FD_VERSION_5) {
 			rc = -EINVAL;
 			pr_err("unsupported version %d\n",
 					drvdata->fd_touch.config.version.version);
@@ -570,7 +581,7 @@ static long fth_ioctl(
 			goto end;
 		} else {
 			// Succeeded in copying, double side length for up AoI.
-			struct fth_touch_config_v4 *config = &drvdata->fd_touch.config;
+			struct fth_touch_config_v5 *config = &drvdata->fd_touch.config;
 			int width = config->right - config->left;
 			int height = config->bottom - config->top;
 			memcpy(&drvdata->fd_touch.up_config,
@@ -625,7 +636,7 @@ static int get_events_fifo_len_locked(
 static ssize_t fth_read(struct file *filp, char __user *ubuf,
 		size_t cnt, loff_t *ppos)
 {
-	struct fth_touch_event *fd_evt;
+	struct fth_touch_event_v5 *fd_evt;
 	struct fth_drvdata *drvdata;
 	struct fth_fd_buf *scratch_buf;
 	wait_queue_head_t *read_wait_queue = NULL;
@@ -675,8 +686,8 @@ static ssize_t fth_read(struct file *filp, char __user *ubuf,
 				scratch_buf->num_events = i;
 				break;
 			}
-			pr_debug("Reading event id: %d state: %d\n",
-					fd_evt->id, fd_evt->state);
+			pr_debug("Reading event slot: %d state: %d\n",
+					fd_evt->slot, fd_evt->state);
 			pr_debug("x: %d y: %d, time_us: %lld\n",
 					fd_evt->X, fd_evt->Y,
 					fd_evt->time_us);
