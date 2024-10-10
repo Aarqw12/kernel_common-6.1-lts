@@ -51,6 +51,13 @@
 #define GPU_UTIL_SCALING_FACTOR ((u64)1E9)
 #endif
 
+#if IS_ENABLED(CONFIG_SOC_ZUMA)
+// To mitigate GPU_ACTIVE vs GPU_ITER_ACTIVE differences
+#define GPU_UTIL_OFFSET 4
+#define GPU_UTIL_MIN 0
+#define GPU_UTIL_MAX 100
+#endif
+
 /*
  * Possible state transitions
  * ON        -> ON | OFF | STOPPED
@@ -428,7 +435,11 @@ void kbase_pm_get_dvfs_action(struct kbase_device *kbdev)
 	kbase_pm_get_dvfs_metrics(kbdev, &kbdev->pm.backend.metrics.dvfs_last, diff);
 
 	utilisation = (100 * diff->time_busy) / max(diff->time_busy + diff->time_idle, 1u);
-
+#if IS_ENABLED(CONFIG_SOC_ZUMA)
+	if (utilisation > GPU_UTIL_MIN) {
+		utilisation = clamp(utilisation + GPU_UTIL_OFFSET, GPU_UTIL_MIN, GPU_UTIL_MAX);
+	}
+#endif
 #if !MALI_USE_CSF
 	busy = max(diff->busy_gl + diff->busy_cl[0] + diff->busy_cl[1], 1u);
 
