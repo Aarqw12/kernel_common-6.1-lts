@@ -27,6 +27,7 @@
 #include "mali_kbase_csf_firmware.h"
 #include "mali_kbase_csf_protected_memory.h"
 #include "mali_kbase_hwaccess_time.h"
+#include <mali_kbase_defs.h>
 
 /* Indicate invalid CS h/w interface
  */
@@ -47,11 +48,6 @@
  * signify there is no group that has protected mode execution pending.
  */
 #define KBASEP_TICK_PROTM_PEND_SCAN_SEQ_NR_INVALID (U32_MAX)
-
-#define FIRMWARE_IDLE_HYSTERESIS_TIME_NS (10 * 1000 * 1000) /* Default 10 milliseconds */
-
-/* Idle hysteresis time can be scaled down when GPU sleep feature is used */
-#define FIRMWARE_IDLE_HYSTERESIS_GPU_SLEEP_SCALER (5)
 
 /**
  * kbase_csf_ctx_init - Initialize the CSF interface for a GPU address space.

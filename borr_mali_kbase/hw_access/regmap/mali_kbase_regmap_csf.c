@@ -683,6 +683,8 @@ static void kbase_regmap_v10_8_init(struct kbase_device *kbdev)
 							   KBASE_REGMAP_PERM_WRITE;
 	kbdev->regmap.flags[DOORBELL_BLOCK_63__DOORBELL] = KBASE_REGMAP_WIDTH_32_BIT |
 							   KBASE_REGMAP_PERM_WRITE;
+	kbdev->regmap.flags[DEBUG_MCUC_DB_VALUE_0] =
+		KBASE_REGMAP_WIDTH_32_BIT | KBASE_REGMAP_PERM_READ | KBASE_REGMAP_PERM_WRITE;
 
 	kbdev->regmap.regs[GPU_CONTROL__GPU_ID] = kbdev->reg + 0x0;
 	kbdev->regmap.regs[GPU_CONTROL__L2_FEATURES] = kbdev->reg + 0x4;
@@ -1003,6 +1005,7 @@ static void kbase_regmap_v10_8_init(struct kbase_device *kbdev)
 	kbdev->regmap.regs[DOORBELL_BLOCK_61__DOORBELL] = kbdev->reg + 0x450000;
 	kbdev->regmap.regs[DOORBELL_BLOCK_62__DOORBELL] = kbdev->reg + 0x460000;
 	kbdev->regmap.regs[DOORBELL_BLOCK_63__DOORBELL] = kbdev->reg + 0x470000;
+	kbdev->regmap.regs[DEBUG_MCUC_DB_VALUE_0] = kbdev->reg + 0x20080;
 }
 
 static void kbase_regmap_v10_10_init(struct kbase_device *kbdev)
@@ -1514,6 +1517,7 @@ static char *enum_strings[] = {
 	[GPU_CONTROL__GPU_COMMAND_ARG1] = "GPU_CONTROL__GPU_COMMAND_ARG1",
 	[GPU_CONTROL__MCU_FEATURES] = "GPU_CONTROL__MCU_FEATURES",
 	[GPU_CONTROL__SHADER_PWRFEATURES] = "GPU_CONTROL__SHADER_PWRFEATURES",
+	[DEBUG_MCUC_DB_VALUE_0] = "DEBUG_MCUC_DB_VALUE_0",
 };
 
 const char *kbase_reg_get_enum_string(u32 reg_enum)

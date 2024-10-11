@@ -242,8 +242,10 @@ void kbase_device_set_timeout_ms(struct kbase_device *kbdev, enum kbase_timeout_
 #if MALI_USE_CSF
 	if (IS_ENABLED(CONFIG_MALI_REAL_HW) && !IS_ENABLED(CONFIG_MALI_IS_FPGA) &&
 	    unlikely(timeout_ms >= MAX_TIMEOUT_MS)) {
+		/* [PIXEL-MOD] - Most default timeouts at 100MHz hit this warning.
 		dev_warn(kbdev->dev, "%s is capped from %dms to %dms\n",
 			 timeout_info[selector].selector_str, timeout_ms, MAX_TIMEOUT_MS);
+		*/
 		timeout_ms = MAX_TIMEOUT_MS;
 	}
 #endif

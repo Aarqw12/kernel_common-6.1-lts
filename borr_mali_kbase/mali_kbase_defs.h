@@ -69,9 +69,19 @@
 #include <linux/clk.h>
 #include <linux/debugfs.h>
 #include <linux/regulator/consumer.h>
+#include <linux/rtmutex.h>
+
+/**
+ * Multiplier on kernel timeout constants, useful for emulation
+ */
+#ifdef CONFIG_BOARD_EMULATOR
+#define KBASE_TIMEOUT_MULTIPLIER (1000)
+#else
+#define KBASE_TIMEOUT_MULTIPLIER (1)
+#endif
 
 /** Number of milliseconds before we time out on a GPU soft/hard reset */
-#define RESET_TIMEOUT 500
+#define RESET_TIMEOUT (500 * KBASE_TIMEOUT_MULTIPLIER)
 
 /**
  * BASE_JM_MAX_NR_SLOTS - The maximum number of Job Slots to support in the Hardware.
@@ -106,6 +116,21 @@
  *                                   as a logarithm
  */
 #define KBASE_LOCK_REGION_MAX_SIZE_LOG2 (48) /*  256 TB */
+
+/**
+ * Priority level for realtime worker threads
+ */
+#define KBASE_RT_THREAD_PRIO (2)
+
+/**
+ * Minimum allowed wake duration in usec for apc request.
+ */
+#define KBASE_APC_MIN_DUR_USEC (100)
+
+/**
+ * Maximum allowed wake duration in usec for apc request.
+ */
+#define KBASE_APC_MAX_DUR_USEC (4000)
 
 #include "mali_kbase_hwaccess_defs.h"
 
@@ -314,7 +339,7 @@ struct kbase_fault {
  * @num_free_pgd_sub_pages:  The total number of free 4K PGD pages in the mmut.
  */
 struct kbase_mmu_table {
-	struct mutex mmu_lock;
+	struct rt_mutex mmu_lock;
 	phys_addr_t pgd;
 	u8 group_id;
 	struct kbase_context *kctx;
@@ -475,7 +500,7 @@ struct kbase_clk_rate_trace_manager {
  * @clk_rtm: The state of the GPU clock rate trace manager
  */
 struct kbase_pm_device_data {
-	struct mutex lock;
+	struct rt_mutex lock;
 	int active_count;
 	bool suspending;
 	bool resuming;
@@ -685,6 +710,9 @@ struct kbase_devfreq_queue_info {
  * @total_gpu_pages:    Total gpu pages allocated across all the contexts
  *                      of this process, it accounts for both native allocations
  *                      and dma_buf imported allocations.
+ * @dma_buf_pages:      Total dma_buf pages allocated across all the contexts
+ *                      of this process, native allocations can be accounted for
+ *                      by subtracting this from &total_gpu_pages.
  * @kctx_list:          List of kbase contexts created for the process.
  * @kprcs_node:         Node to a rb_tree, kbase_device will maintain a rb_tree
  *                      based on key tgid, kprcs_node is the node link to
@@ -694,14 +722,19 @@ struct kbase_devfreq_queue_info {
  *                      Used to ensure that pages of allocation are accounted
  *                      only once for the process, even if the allocation gets
  *                      imported multiple times for the process.
+ * @kobj:               Links to the per-process sysfs node
+ *                      &kbase_device.proc_sysfs_node.
  */
 struct kbase_process {
 	pid_t tgid;
 	size_t total_gpu_pages;
+	size_t dma_buf_pages;
 	struct list_head kctx_list;
 
 	struct rb_node kprcs_node;
 	struct rb_root dma_buf_root;
+
+	struct kobject kobj;
 };
 
 /**
@@ -774,7 +807,7 @@ struct kbase_mem_migrate {
  * @regulators:            Pointer to the structs corresponding to the
  *                         regulators referenced by the GPU device node.
  * @nr_regulators:         Number of regulators set in the regulators array.
- * @opp_table:             Pointer to the device OPP structure maintaining the
+ * @opp_token:             Token linked to the device OPP structure maintaining the
  *                         link to OPPs attached to a device. This is obtained
  *                         after setting regulator names for the device.
  * @token:                 Integer replacement for opp_table in kernel versions
@@ -1041,11 +1074,21 @@ struct kbase_mem_migrate {
  *                          mapping and gpu memory usage at device level and
  *                          other one at process level.
  * @total_gpu_pages:        Total GPU pages used for the complete GPU device.
+ * @dma_buf_pages:          Total dma_buf pages used for GPU platform device.
  * @dma_buf_lock:           This mutex should be held while accounting for
  *                          @total_gpu_pages from imported dma buffers.
  * @gpu_mem_usage_lock:     This spinlock should be held while accounting
  *                          @total_gpu_pages for both native and dma-buf imported
  *                          allocations.
+ * @job_done_worker:        Worker for job_done work.
+ * @event_worker:           Worker for event work.
+ * @apc.worker:             Worker for async power control work.
+ * @apc.power_on_work:      Work struct for powering on the GPU.
+ * @apc.power_off_work:     Work struct for powering off the GPU.
+ * @apc.end_ts:             The latest end timestamp to power off the GPU.
+ * @apc.timer:              A hrtimer for powering off based on wake duration.
+ * @apc.pending:            Whether an APC power on request is active and not handled yet.
+ * @apc.lock:               Lock for @apc.end_ts, @apc.timer and @apc.pending.
  * @dummy_job_wa:           struct for dummy job execution workaround for the
  *                          GPU hang issue
  * @dummy_job_wa.kctx:       dummy job workaround context
@@ -1058,6 +1101,7 @@ struct kbase_mem_migrate {
  * @pcm_dev:                The priority control manager device.
  * @oom_notifier_block:     notifier_block containing kernel-registered out-of-
  *                          memory handler.
+ * @proc_sysfs_node:        Sysfs directory node to store per-process stats.
  * @mem_migrate:            Per device object for managing page migration.
  * @live_fence_metadata:    Count of live fence metadata structures created by
  *                          KCPU queue. These structures may outlive kbase module
@@ -1083,6 +1127,7 @@ struct kbase_device {
 	u64 reg_start;
 	size_t reg_size;
 	void __iomem *reg;
+
 	struct {
 		void __iomem **regs;
 		u32 *flags;
@@ -1327,6 +1372,9 @@ struct kbase_device {
 #else
 	struct kbasep_js_device_data js_data;
 
+	struct kthread_worker job_done_worker;
+	struct kthread_worker event_worker;
+
 	/* See KBASE_JS_*_PRIORITY_MODE for details. */
 	u32 js_ctx_scheduling_mode;
 
@@ -1339,10 +1387,27 @@ struct kbase_device {
 
 #endif /* MALI_USE_CSF */
 
+	struct {
+		struct kthread_worker worker;
+#if !MALI_USE_CSF
+		// APC ioctl for core domain
+		struct kthread_work power_on_work;
+		struct kthread_work power_off_work;
+		ktime_t end_ts;
+		struct hrtimer timer;
+		bool pending;
+		struct mutex lock;
+#else
+		// sysfs power hint for CSF scheduler
+		struct kthread_work wakeup_csf_scheduler_work;
+#endif
+	} apc;
+
 	struct rb_root process_root;
 	struct rb_root dma_buf_root;
 
 	size_t total_gpu_pages;
+	size_t dma_buf_pages;
 	struct mutex dma_buf_lock;
 	spinlock_t gpu_mem_usage_lock;
 
@@ -1360,7 +1425,11 @@ struct kbase_device {
 
 	struct notifier_block oom_notifier_block;
 
+	struct kobject *proc_sysfs_node;
 
+#ifdef CONFIG_MALI_PM_RUNTIME_S2MPU_CONTROL
+	struct device *s2mpu_dev;
+#endif /* CONFIG_MALI_PM_RUNTIME_S2MPU_CONTROL */
 	struct kbase_mem_migrate mem_migrate;
 
 #if MALI_USE_CSF && IS_ENABLED(CONFIG_SYNC_FILE)
@@ -1632,8 +1701,6 @@ struct kbase_sub_alloc {
  * @event_closed:         Flag set through POST_TERM ioctl, indicates that Driver
  *                        should stop posting events and also inform event handling
  *                        thread that context termination is in progress.
- * @event_workq:          Workqueue for processing work items corresponding to atoms
- *                        that do not return an event to userspace.
  * @event_count:          Count of the posted events to be consumed by Userspace.
  * @event_coalesce_count: Count of the events present in @event_coalesce_list.
  * @flags:                bitmap of enums from kbase_context_flags, indicating the
@@ -1784,7 +1851,7 @@ struct kbase_sub_alloc {
  * @completed_jobs:       List containing completed atoms for which base_jd_event is
  *                        to be posted.
  * @work_count:           Number of work items, corresponding to atoms, currently
- *                        pending on job_done workqueue of @jctx.
+ *                        pending on job_done kthread of @jctx.
  * @soft_job_timeout:     Timer object used for failing/cancelling the waiting
  *                        soft-jobs which have been blocked for more than the
  *                        timeout value used for the soft-jobs
@@ -2015,9 +2082,7 @@ struct kbase_context {
 
 	u64 limited_core_mask;
 
-#if !MALI_USE_CSF
 	void *platform_data;
-#endif
 
 	struct task_struct *task;
 
@@ -2030,6 +2095,12 @@ struct kbase_context {
 #endif
 
 	char comm[TASK_COMM_LEN];
+
+#if MALI_USE_CSF
+	/* pixel: protm timestamps for this kctx. */
+	ktime_t protm_enter_ts;
+	ktime_t protm_exit_ts;
+#endif
 };
 
 #ifdef CONFIG_MALI_CINSTR_GWT

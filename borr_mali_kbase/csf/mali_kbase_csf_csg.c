@@ -621,10 +621,10 @@ int kbasep_csf_csg_dump_print(struct kbase_context *const kctx, struct kbasep_pr
 	kbasep_print(kbpr,
 		     "CSF groups status (version: v" __stringify(MALI_CSF_CSG_DUMP_VERSION) "):\n");
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 	kbase_csf_scheduler_lock(kbdev);
 	kbase_csf_csg_update_status(kbdev);
-	kbasep_print(kbpr, "Ctx %d_%d\n", kctx->tgid, kctx->id);
+	kbasep_print(kbpr, "Ctx %d_%d (%s)\n", kctx->tgid, kctx->id, kctx->comm);
 	for (gr = 0; gr < MAX_QUEUE_GROUP_NUM; gr++) {
 		struct kbase_queue_group *const group = kctx->csf.queue_groups[gr];
 
@@ -634,7 +634,7 @@ int kbasep_csf_csg_dump_print(struct kbase_context *const kctx, struct kbasep_pr
 		kbasep_csf_csg_active_dump_group(kbpr, group);
 	}
 	kbase_csf_scheduler_unlock(kbdev);
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 
 	return 0;
 }
@@ -661,7 +661,8 @@ int kbasep_csf_csg_active_dump_print(struct kbase_device *kbdev, struct kbasep_p
 		if (!group)
 			continue;
 
-		kbasep_print(kbpr, "Ctx %d_%d\n", group->kctx->tgid, group->kctx->id);
+		kbasep_print(kbpr, "Ctx %d_%d (%s)\n", group->kctx->tgid, group->kctx->id,
+				group->kctx->comm);
 
 		kbasep_csf_csg_active_dump_group(kbpr, group);
 	}

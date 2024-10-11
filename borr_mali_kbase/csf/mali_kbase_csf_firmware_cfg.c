@@ -337,6 +337,21 @@ int kbase_csf_firmware_cfg_option_entry_parse(struct kbase_device *kbdev,
 	return 0;
 }
 
+int kbase_csf_firmware_cfg_find_config_address(struct kbase_device *kbdev, const char *name, u32* addr)
+{
+	struct firmware_config *config;
+
+	list_for_each_entry(config, &kbdev->csf.firmware_config, node) {
+		if (strcmp(config->name, name) || !config->address)
+			continue;
+
+		*addr = config->address;
+		return 0;
+	}
+
+	return -ENOENT;
+}
+
 int kbase_csf_firmware_cfg_fw_wa_enable(struct kbase_device *kbdev)
 {
 	struct firmware_config *config;

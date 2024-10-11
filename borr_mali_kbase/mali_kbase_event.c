@@ -88,9 +88,9 @@ int kbase_event_dequeue(struct kbase_context *kctx, struct base_jd_event_v2 *uev
 	if (atom->core_req & BASE_JD_REQ_EXTERNAL_RESOURCES)
 		kbase_jd_free_external_resources(atom);
 
-	mutex_lock(&kctx->jctx.lock);
+	rt_mutex_lock(&kctx->jctx.lock);
 	uevent->udata = kbase_event_process(kctx, atom);
-	mutex_unlock(&kctx->jctx.lock);
+	rt_mutex_unlock(&kctx->jctx.lock);
 
 	return 0;
 }
@@ -103,7 +103,7 @@ KBASE_EXPORT_TEST_API(kbase_event_dequeue);
  *                                       resources
  * @data:  Work structure
  */
-static void kbase_event_process_noreport_worker(struct work_struct *data)
+static void kbase_event_process_noreport_worker(struct kthread_work *data)
 {
 	struct kbase_jd_atom *katom = container_of(data, struct kbase_jd_atom, work);
 	struct kbase_context *kctx = katom->kctx;
@@ -111,9 +111,9 @@ static void kbase_event_process_noreport_worker(struct work_struct *data)
 	if (katom->core_req & BASE_JD_REQ_EXTERNAL_RESOURCES)
 		kbase_jd_free_external_resources(katom);
 
-	mutex_lock(&kctx->jctx.lock);
+	rt_mutex_lock(&kctx->jctx.lock);
 	kbase_event_process(kctx, katom);
-	mutex_unlock(&kctx->jctx.lock);
+	rt_mutex_unlock(&kctx->jctx.lock);
 }
 
 /**
@@ -122,14 +122,14 @@ static void kbase_event_process_noreport_worker(struct work_struct *data)
  * @katom: Atom to be processed
  *
  * Atoms that do not have external resources will be processed immediately.
- * Atoms that do have external resources will be processed on a workqueue, in
+ * Atoms that do have external resources will be processed on a kthread, in
  * order to avoid locking issues.
  */
 static void kbase_event_process_noreport(struct kbase_context *kctx, struct kbase_jd_atom *katom)
 {
 	if (katom->core_req & BASE_JD_REQ_EXTERNAL_RESOURCES) {
-		INIT_WORK(&katom->work, kbase_event_process_noreport_worker);
-		queue_work(kctx->event_workq, &katom->work);
+		kthread_init_work(&katom->work, kbase_event_process_noreport_worker);
+		kthread_queue_work(&kctx->kbdev->event_worker, &katom->work);
 	} else {
 		kbase_event_process(kctx, katom);
 	}
@@ -203,7 +203,7 @@ void kbase_event_post(struct kbase_context *kctx, struct kbase_jd_atom *atom)
 		mutex_unlock(&kctx->event_mutex);
 		dev_dbg(kbdev->dev, "Reporting %d events\n", event_count);
 
-		kbase_event_wakeup(kctx);
+		kbase_event_wakeup_sync(kctx);
 
 		/* Post-completion latency */
 		trace_sysgraph(SGR_POST, kctx->id, kbase_jd_atom_id(kctx, atom));
@@ -216,7 +216,7 @@ void kbase_event_close(struct kbase_context *kctx)
 	mutex_lock(&kctx->event_mutex);
 	atomic_set(&kctx->event_closed, true);
 	mutex_unlock(&kctx->event_mutex);
-	kbase_event_wakeup(kctx);
+	kbase_event_wakeup_sync(kctx);
 }
 
 int kbase_event_init(struct kbase_context *kctx)
@@ -226,10 +226,7 @@ int kbase_event_init(struct kbase_context *kctx)
 	INIT_LIST_HEAD(&kctx->event_list);
 	INIT_LIST_HEAD(&kctx->event_coalesce_list);
 	mutex_init(&kctx->event_mutex);
-	kctx->event_workq = alloc_workqueue("kbase_event", WQ_MEM_RECLAIM, 1);
-
-	if (kctx->event_workq == NULL)
-		return -EINVAL;
+	kctx->event_coalesce_count = 0;
 
 	return 0;
 }
@@ -241,10 +238,8 @@ void kbase_event_cleanup(struct kbase_context *kctx)
 	int event_count;
 
 	KBASE_DEBUG_ASSERT(kctx);
-	KBASE_DEBUG_ASSERT(kctx->event_workq);
 
-	flush_workqueue(kctx->event_workq);
-	destroy_workqueue(kctx->event_workq);
+	kthread_flush_worker(&kctx->kbdev->event_worker);
 
 	/* We use kbase_event_dequeue to remove the remaining events as that
 	 * deals with all the cleanup needed for the atoms.

@@ -30,6 +30,7 @@
 #include "mali_kbase_mem_pool_group.h"
 #include "mali_kbase_reset_gpu.h"
 #include "mali_kbase_csf_scheduler.h"
+#include "mali_kbase_config_defaults.h"
 #include <mali_kbase_hwaccess_time.h>
 #include "device/mali_kbase_device.h"
 #include "backend/gpu/mali_kbase_pm_internal.h"
@@ -54,15 +55,14 @@
 #include <asm/arch_timer.h>
 #include <linux/delay.h>
 #include <linux/version_compat_defs.h>
-#include <mali_kbase_config_defaults.h>
-#define MALI_MAX_DEFAULT_FIRMWARE_NAME_LEN ((size_t)20)
 
-static char default_fw_name[MALI_MAX_DEFAULT_FIRMWARE_NAME_LEN] = "mali_csffw.bin";
-module_param_string(fw_name, default_fw_name, sizeof(default_fw_name), 0644);
+static char release_fw_name[] = "mali_csffw-r51p0.bin";
+static char default_fw_name[] = "mali_csffw.bin";
+module_param_string(fw_name, release_fw_name, sizeof(release_fw_name), 0644);
 MODULE_PARM_DESC(fw_name, "firmware image");
 
 /* The waiting time for firmware to boot */
-static unsigned int csf_firmware_boot_timeout_ms;
+static unsigned int csf_firmware_boot_timeout_ms = (500 * KBASE_TIMEOUT_MULTIPLIER);
 module_param(csf_firmware_boot_timeout_ms, uint, 0444);
 MODULE_PARM_DESC(csf_firmware_boot_timeout_ms, "Maximum time to wait for firmware to boot.");
 
@@ -117,6 +117,8 @@ MODULE_PARM_DESC(fw_debug, "Enables effective use of a debugger for debugging fi
 	(GLB_REQ_CFG_ALLOC_EN_MASK | GLB_REQ_CFG_PROGRESS_TIMER_MASK | \
 	 GLB_REQ_CFG_PWROFF_TIMER_MASK | GLB_REQ_IDLE_ENABLE_MASK |    \
 	 GLB_REQ_CFG_EVICTION_TIMER_MASK | GLB_REQ_ITER_TRACE_ENABLE_MASK)
+
+char fw_git_sha[BUILD_INFO_GIT_SHA_LEN];
 
 static unsigned int entry_type(u32 header)
 {
@@ -328,6 +330,9 @@ static void wait_for_firmware_boot(struct kbase_device *kbdev)
 				       wait_timeout);
 	if (!remaining)
 		dev_err(kbdev->dev, "Timed out waiting for fw boot completion");
+	else
+		dev_info(kbdev->dev, "Firmware boot completed");
+
 	kbdev->csf.interrupt_received = false;
 }
 
@@ -372,6 +377,7 @@ static int wait_ready(struct kbase_device *kbdev)
 
 	dev_err(kbdev->dev,
 		"AS_ACTIVE bit stuck for MCU AS. Might be caused by unstable GPU clk/pwr or faulty system");
+	queue_work(system_highpri_wq, &kbdev->csf.coredump_work);
 
 	if (kbase_prepare_to_reset_gpu_locked(kbdev, RESET_FLAGS_HWC_UNRECOVERABLE_ERROR))
 		kbase_reset_gpu_locked(kbdev);
@@ -735,12 +741,17 @@ static int parse_memory_setup_entry(struct kbase_device *kbdev,
 		protected_mode = true;
 
 	if (protected_mode && kbdev->csf.pma_dev == NULL) {
-		dev_err(kbdev->dev,
+		dev_warn(kbdev->dev,
 			"Protected memory allocator not found, Firmware protected mode entry will not be supported");
 		return 0;
 	}
 
 	num_pages = (virtual_end - virtual_start) >> PAGE_SHIFT;
+
+	if(protected_mode) {
+		force_small_page = true;
+		dev_warn(kbdev->dev, "Protected memory allocation requested for %u bytes (%u pages), serving with small pages and tight allocation.", (virtual_end - virtual_start), num_pages);
+	}
 
 retry_alloc:
 	ret = 0;
@@ -757,8 +768,15 @@ retry_alloc:
 		if (!reuse_pages) {
 			pma = kbase_csf_protected_memory_alloc(kbdev, phys, num_pages_aligned,
 							       is_small_page);
-			if (!pma)
-				ret = -ENOMEM;
+			if (!pma) {
+				/* If we can't allocate sufficient memory for FW - bail out and leave protected execution unsupported by termintating the allocator. */
+				dev_warn(kbdev->dev,
+				"Protected memory allocation failed during FW initialization - Firmware protected mode entry will not be supported");
+				kbase_csf_protected_memory_term(kbdev);
+				kbdev->csf.pma_dev = NULL;
+				kfree(phys);
+				return 0;
+			}
 		} else if (WARN_ON(!pma)) {
 			ret = -EINVAL;
 			goto out;
@@ -1010,6 +1028,8 @@ static int parse_build_info_metadata_entry(struct kbase_device *kbdev,
 			i++;
 		}
 		git_sha[i] = '\0';
+
+		memcpy(fw_git_sha, git_sha, BUILD_INFO_GIT_SHA_LEN);
 
 		dev_info(kbdev->dev, "Mali firmware git_sha: %s\n", git_sha);
 	} else
@@ -1473,7 +1493,6 @@ static bool global_request_complete(struct kbase_csf_fw_io *fw_io,
 				    u32 const req_mask)
 {
 	struct kbase_device *const kbdev = fw_io->kbdev;
-
 	bool complete = false;
 	unsigned long flags;
 
@@ -1812,7 +1831,8 @@ static void global_init(struct kbase_device *const kbdev, u64 core_mask)
 		GLB_ACK_IRQ_MASK_PROTM_EXIT_MASK | GLB_ACK_IRQ_MASK_FIRMWARE_CONFIG_UPDATE_MASK |
 		GLB_ACK_IRQ_MASK_CFG_PWROFF_TIMER_MASK | GLB_ACK_IRQ_MASK_IDLE_EVENT_MASK |
 		GLB_REQ_DEBUG_CSF_REQ_MASK | GLB_ACK_IRQ_MASK_IDLE_ENABLE_MASK |
-		GLB_ACK_IRQ_MASK_CFG_EVICTION_TIMER_MASK | GLB_ACK_IRQ_MASK_ITER_TRACE_ENABLE_MASK;
+		GLB_ACK_IRQ_MASK_CFG_EVICTION_TIMER_MASK | GLB_ACK_IRQ_MASK_ITER_TRACE_ENABLE_MASK |
+		GLB_ACK_FATAL_MASK;
 	bool const fw_soi_allowed = kbase_pm_fw_sleep_on_idle_allowed(kbdev);
 	struct kbase_csf_fw_io *fw_io = &kbdev->csf.fw_io;
 	unsigned long flags, fw_io_flags;
@@ -1997,6 +2017,10 @@ static void kbase_csf_firmware_reload_worker(struct work_struct *work)
 
 	kbase_csf_tl_reader_reset(&kbdev->timeline->csf_tl_reader);
 
+	err = kbasep_platform_fw_config_init(kbdev);
+	if (WARN_ON(err))
+		return;
+
 	err = kbase_csf_firmware_cfg_fw_wa_enable(kbdev);
 	if (WARN_ON(err))
 		return;
@@ -2015,7 +2039,7 @@ void kbase_csf_firmware_trigger_reload(struct kbase_device *kbdev)
 
 	if (kbdev->csf.firmware_reload_needed) {
 		kbdev->csf.firmware_reload_needed = false;
-		queue_work(system_wq, &kbdev->csf.firmware_reload_work);
+		queue_work(system_highpri_wq, &kbdev->csf.firmware_reload_work);
 	} else {
 		kbase_csf_firmware_enable_mcu(kbdev);
 	}
@@ -2050,6 +2074,7 @@ KBASE_EXPORT_TEST_API(kbase_csf_firmware_reload_completed);
 
 static u32 convert_dur_to_idle_count(struct kbase_device *kbdev, const u64 dur_ns, u32 *no_modifier)
 {
+#define MICROSECONDS_PER_SECOND 1000000u
 #define HYSTERESIS_VAL_UNIT_SHIFT (10)
 	/* Get the cntfreq_el0 value, which drives the SYSTEM_TIMESTAMP */
 	u64 freq = kbase_arch_timer_get_cntfrq(kbdev);
@@ -2281,15 +2306,25 @@ u32 kbase_csf_firmware_reset_mcu_core_pwroff_time(struct kbase_device *kbdev)
 	return kbase_csf_firmware_set_mcu_core_pwroff_time(kbdev, DEFAULT_GLB_PWROFF_TIMEOUT_NS);
 }
 
+static void coredump_worker(struct work_struct *data)
+{
+	struct kbase_device *kbdev = container_of(data, struct kbase_device, csf.coredump_work);
+
+	kbasep_platform_event_core_dump(kbdev, "GPU hang");
+}
+
 int kbase_csf_firmware_early_init(struct kbase_device *kbdev)
 {
+        int csf_hw_doorbell_page_size = CSF_HW_DOORBELL_PAGE_SIZE;
 	kbdev->csf.num_doorbells =
 		(kbdev->reg_size - CSF_HW_DOORBELL_PAGE_OFFSET) / CSF_HW_DOORBELL_PAGE_SIZE;
 
 	if (!kbdev->csf.num_doorbells || (kbdev->csf.num_doorbells > CSF_NUM_DOORBELL_MAX)) {
-		dev_err(kbdev->dev, "Invalid number of doorbell pages: %u",
-			kbdev->csf.num_doorbells);
-		return -EINVAL;
+		dev_warn(kbdev->dev, "Invalid number of doorbell pages: %u and page size %d",
+			kbdev->csf.num_doorbells, csf_hw_doorbell_page_size);
+		// b/363213832 - Not a real error to have more memory here.
+		kbdev->csf.num_doorbells = CSF_NUM_DOORBELL_MAX;
+		//return -EINVAL;
 	}
 
 	init_waitqueue_head(&kbdev->csf.event_wait);
@@ -2302,6 +2337,7 @@ int kbase_csf_firmware_early_init(struct kbase_device *kbdev)
 	INIT_LIST_HEAD(&kbdev->csf.user_reg.list);
 	INIT_WORK(&kbdev->csf.firmware_reload_work, kbase_csf_firmware_reload_worker);
 	INIT_WORK(&kbdev->csf.glb_fatal_work, kbase_csf_glb_fatal_worker);
+	INIT_WORK(&kbdev->csf.coredump_work, coredump_worker);
 
 	init_rwsem(&kbdev->csf.mmu_sync_sem);
 	mutex_init(&kbdev->csf.reg_lock);
@@ -2322,16 +2358,15 @@ int kbase_csf_firmware_late_init(struct kbase_device *kbdev)
 {
 	u32 no_modifier = 0;
 
-	kbdev->csf.gpu_idle_hysteresis_ns = FIRMWARE_IDLE_HYSTERESIS_TIME_NS;
-
-#ifdef KBASE_PM_RUNTIME
-	if (kbase_pm_gpu_sleep_allowed(kbdev))
-		kbdev->csf.gpu_idle_hysteresis_ns /= FIRMWARE_IDLE_HYSTERESIS_GPU_SLEEP_SCALER;
-#endif
 	WARN_ON(!kbdev->csf.gpu_idle_hysteresis_ns);
-	kbdev->csf.gpu_idle_dur_count =
-		convert_dur_to_idle_count(kbdev, kbdev->csf.gpu_idle_hysteresis_ns, &no_modifier);
+
+	kbdev->csf.gpu_idle_dur_count = convert_dur_to_idle_count(
+		kbdev, kbdev->csf.gpu_idle_hysteresis_ns, &no_modifier);
 	kbdev->csf.gpu_idle_dur_count_no_modifier = no_modifier;
+	kbdev->csf.mcu_core_pwroff_dur_ns = DEFAULT_GLB_PWROFF_TIMEOUT_NS;
+	kbdev->csf.mcu_core_pwroff_dur_count = convert_dur_to_core_pwroff_count(
+		kbdev, DEFAULT_GLB_PWROFF_TIMEOUT_NS, &no_modifier);
+	kbdev->csf.mcu_core_pwroff_dur_count_no_modifier = no_modifier;
 
 	kbdev->csf.csg_suspend_timeout_ms = CSG_SUSPEND_TIMEOUT_MS;
 
@@ -2348,7 +2383,8 @@ int kbase_csf_firmware_load_init(struct kbase_device *kbdev)
 	u32 entry_end_offset;
 	u32 entry_offset;
 	int ret;
-	const char *fw_name = default_fw_name;
+	const char *fw_name = release_fw_name;
+	const char *fallback_fw_name = default_fw_name;
 
 	lockdep_assert_held(&kbdev->fw_load_lock);
 
@@ -2398,8 +2434,17 @@ int kbase_csf_firmware_load_init(struct kbase_device *kbdev)
 
 #endif /* IS_ENABLED(CONFIG_OF) */
 
-	if (request_firmware(&firmware, fw_name, kbdev->dev) != 0) {
-		dev_err(kbdev->dev, "Failed to load firmware image '%s'\n", fw_name);
+	/* First we will attempt to open the named release version firmware, if
+	 * that fails, we will open the default one.
+	 * See b/297471843 for more information.
+	 */
+	if (firmware_request_nowarn(&firmware, fw_name, kbdev->dev) != 0) {
+		/* No warning here, just a silent fallback */
+		ret = request_firmware(&firmware, fallback_fw_name, kbdev->dev);
+	}
+
+	if (ret) {
+		dev_err(kbdev->dev, "Failed to load firmware image '%s'\n", fallback_fw_name);
 		ret = -ENOENT;
 	} else {
 		/* Try to save a copy and then release the loaded firmware image */
@@ -2492,6 +2537,11 @@ int kbase_csf_firmware_load_init(struct kbase_device *kbdev)
 		goto err_out;
 	}
 
+	ret = kbasep_platform_fw_config_init(kbdev);
+	if (ret != 0) {
+		dev_err(kbdev->dev, "Failed to perform platform specific FW configuration");
+		goto err_out;
+	}
 	init_page_fault_cnt_firmware_memory(kbdev);
 
 	ret = kbase_csf_firmware_cfg_fw_wa_init(kbdev);
@@ -2548,6 +2598,8 @@ int kbase_csf_firmware_load_init(struct kbase_device *kbdev)
 	if (ret != 0)
 		goto err_out;
 
+	/* Firmware loaded successfully */
+	dev_info(kbdev->dev, "Firmware load successful");
 	if (kbdev->csf.fw_core_dump.available)
 		kbase_csf_firmware_core_dump_init(kbdev);
 

@@ -296,6 +296,22 @@ check_padding_KBASE_IOCTL_KINSTR_PRFCNT_SETUP(union kbase_ioctl_kinstr_prfcnt_se
 	return 0;
 }
 
+/***************
+ * Pixel ioctls *
+ ***************/
+
+static inline int
+check_padding_KBASE_IOCTL_APC_REQUEST(struct kbase_ioctl_apc_request *p)
+{
+	return 0;
+}
+
+static inline int
+check_padding_KBASE_IOCTL_BUFFER_LIVENESS_UPDATE(struct kbase_ioctl_buffer_liveness_update *p)
+{
+	return 0;
+}
+
 #if MALI_UNIT_TEST
 #endif /* MALI_UNIT_TEST */
 

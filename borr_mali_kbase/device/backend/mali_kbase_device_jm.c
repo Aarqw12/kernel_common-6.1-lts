@@ -18,6 +18,8 @@
  * http://www.gnu.org/licenses/gpl-2.0.html.
  *
  */
+#include <linux/sched/rt.h>
+#include <uapi/linux/sched/types.h>
 
 #include <device/mali_kbase_device_internal.h>
 #include <device/mali_kbase_device.h>
@@ -275,6 +277,8 @@ static const struct kbase_device_init dev_init[] = {
 	  "GPU property population failed" },
 	{ NULL, kbase_dummy_job_wa_cleanup, NULL },
 	{ kbase_device_late_init, kbase_device_late_term, "Late device initialization failed" },
+	{ kbase_pm_apc_init, kbase_pm_apc_term,
+	  "Asynchronous power control initialization failed" },
 };
 
 static void kbase_device_term_partial(struct kbase_device *kbdev, unsigned int i)
@@ -313,6 +317,20 @@ int kbase_device_init(struct kbase_device *kbdev)
 				break;
 			}
 		}
+	}
+
+	if (err)
+		return err;
+
+	err = kbase_kthread_run_worker_rt(kbdev, &kbdev->job_done_worker, "mali_jd_thread");
+	if (err)
+		return err;
+
+	kthread_init_worker(&kbdev->event_worker);
+	kbdev->event_worker.task =
+		kthread_run(kthread_worker_fn, &kbdev->event_worker, "mali_event_thread");
+	if (IS_ERR(kbdev->event_worker.task)) {
+		err = -ENOMEM;
 	}
 
 	return err;

@@ -318,7 +318,6 @@ KBASE_KTRACE_CODE_MAKE_CODE(SCHEDULER_EVICT_CTX_SLOTS_START),
 	 * KCPU extra_info_val == Fence seqno.
 	 */
 	KBASE_KTRACE_CODE_MAKE_CODE(KCPU_FENCE_WAIT_END),
-
 #if 0 /* Dummy section to avoid breaking formatting */
 };
 #endif

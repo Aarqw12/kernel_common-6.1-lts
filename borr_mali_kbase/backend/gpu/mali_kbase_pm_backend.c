@@ -44,6 +44,7 @@
 #include <mali_kbase_dummy_job_wa.h>
 #include <backend/gpu/mali_kbase_irq_internal.h>
 
+#include <trace/hooks/systrace.h>
 
 static void kbase_pm_gpu_poweroff_wait_wq(struct work_struct *data);
 static void kbase_pm_hwcnt_disable_worker(struct work_struct *data);
@@ -67,18 +68,35 @@ int kbase_pm_runtime_init(struct kbase_device *kbdev)
 		kbdev->pm.backend.callback_power_runtime_off =
 			callbacks->power_runtime_off_callback;
 		kbdev->pm.backend.callback_power_runtime_idle =
-			callbacks->power_runtime_idle_callback;
-		kbdev->pm.backend.callback_soft_reset = callbacks->soft_reset_callback;
+					callbacks->power_runtime_idle_callback;
+		kbdev->pm.backend.callback_soft_reset =
+					callbacks->soft_reset_callback;
+		kbdev->pm.backend.callback_hardware_reset =
+					callbacks->hardware_reset_callback;
 		kbdev->pm.backend.callback_power_runtime_gpu_idle =
 			callbacks->power_runtime_gpu_idle_callback;
 		kbdev->pm.backend.callback_power_runtime_gpu_active =
-			callbacks->power_runtime_gpu_active_callback;
+					callbacks->power_runtime_gpu_active_callback;
 
 		if (callbacks->power_runtime_init_callback)
 			return callbacks->power_runtime_init_callback(kbdev);
 		else
 			return 0;
 	}
+
+	kbdev->pm.backend.callback_power_on = NULL;
+	kbdev->pm.backend.callback_power_off = NULL;
+	kbdev->pm.backend.callback_power_suspend = NULL;
+	kbdev->pm.backend.callback_power_resume = NULL;
+	kbdev->pm.callback_power_runtime_init = NULL;
+	kbdev->pm.callback_power_runtime_term = NULL;
+	kbdev->pm.backend.callback_power_runtime_on = NULL;
+	kbdev->pm.backend.callback_power_runtime_off = NULL;
+	kbdev->pm.backend.callback_power_runtime_idle = NULL;
+	kbdev->pm.backend.callback_soft_reset = NULL;
+	kbdev->pm.backend.callback_hardware_reset = NULL;
+	kbdev->pm.backend.callback_power_runtime_gpu_idle = NULL;
+	kbdev->pm.backend.callback_power_runtime_gpu_active = NULL;
 
 	return 0;
 }
@@ -122,7 +140,9 @@ int kbase_hwaccess_pm_init(struct kbase_device *kbdev)
 
 	KBASE_DEBUG_ASSERT(kbdev != NULL);
 
-	mutex_init(&kbdev->pm.lock);
+	rt_mutex_init(&kbdev->pm.lock);
+
+	kbase_pm_init_event_log(kbdev);
 
 	kbdev->pm.backend.gpu_poweroff_wait_wq =
 		alloc_workqueue("kbase_pm_poweroff_wait", WQ_HIGHPRI | WQ_UNBOUND, 1);
@@ -788,9 +808,9 @@ void kbase_hwaccess_pm_halt(struct kbase_device *kbdev)
 #if MALI_USE_CSF && defined(KBASE_PM_RUNTIME)
 	WARN_ON(kbase_pm_do_poweroff_sync(kbdev));
 #else
-	mutex_lock(&kbdev->pm.lock);
+	rt_mutex_lock(&kbdev->pm.lock);
 	kbase_pm_do_poweroff(kbdev);
-	mutex_unlock(&kbdev->pm.lock);
+	rt_mutex_unlock(&kbdev->pm.lock);
 
 	kbase_pm_wait_for_poweroff_work_complete(kbdev);
 #endif
@@ -890,12 +910,16 @@ void kbase_pm_set_debug_core_mask(struct kbase_device *kbdev, u64 *new_core_mask
 
 void kbase_hwaccess_pm_gpu_active(struct kbase_device *kbdev)
 {
+	ATRACE_BEGIN(__func__);
 	kbase_pm_update_active(kbdev);
+	ATRACE_END();
 }
 
 void kbase_hwaccess_pm_gpu_idle(struct kbase_device *kbdev)
 {
+	ATRACE_BEGIN(__func__);
 	kbase_pm_update_active(kbdev);
+	ATRACE_END();
 }
 
 int kbase_hwaccess_pm_suspend(struct kbase_device *kbdev)
@@ -977,7 +1001,7 @@ void kbase_pm_handle_gpu_lost(struct kbase_device *kbdev)
 		return;
 	}
 
-	mutex_lock(&kbdev->pm.lock);
+	rt_mutex_lock(&kbdev->pm.lock);
 	mutex_lock(&arb_vm_state->vm_state_lock);
 	if (kbdev->pm.backend.gpu_powered && !kbase_pm_is_gpu_lost(kbdev)) {
 		kbase_pm_set_gpu_lost(kbdev, true);
@@ -1039,7 +1063,7 @@ void kbase_pm_handle_gpu_lost(struct kbase_device *kbdev)
 #endif /* MALI_USE_CSF */
 	}
 	mutex_unlock(&arb_vm_state->vm_state_lock);
-	mutex_unlock(&kbdev->pm.lock);
+	rt_mutex_unlock(&kbdev->pm.lock);
 }
 
 #if MALI_USE_CSF && defined(KBASE_PM_RUNTIME)

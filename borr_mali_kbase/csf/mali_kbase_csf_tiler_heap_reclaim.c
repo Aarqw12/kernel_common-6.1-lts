@@ -295,7 +295,7 @@ static unsigned long kbase_csf_tiler_heap_reclaim_scan_free_pages(struct kbase_d
 	unsigned long avail = 0;
 
 	/* If Scheduler is busy in action, return 0 */
-	if (!mutex_trylock(&kbdev->csf.scheduler.lock)) {
+	if (!rt_mutex_trylock(&kbdev->csf.scheduler.lock)) {
 		struct kbase_csf_scheduler *const scheduler = &kbdev->csf.scheduler;
 		long remaining = (long)msecs_to_jiffies(2);
 
@@ -305,7 +305,7 @@ static unsigned long kbase_csf_tiler_heap_reclaim_scan_free_pages(struct kbase_d
 							       (scheduler->state != SCHED_BUSY),
 							       remaining);
 
-		if (!mutex_trylock(&kbdev->csf.scheduler.lock)) {
+		if (!rt_mutex_trylock(&kbdev->csf.scheduler.lock)) {
 			dev_dbg(kbdev->dev, "Tiler heap reclaim scan see device busy (freed: 0)");
 			return 0;
 		}
@@ -315,14 +315,14 @@ static unsigned long kbase_csf_tiler_heap_reclaim_scan_free_pages(struct kbase_d
 	if (avail)
 		freed = reclaim_unused_heap_pages(kbdev);
 
-	mutex_unlock(&kbdev->csf.scheduler.lock);
+	rt_mutex_unlock(&kbdev->csf.scheduler.lock);
 
 #if (KERNEL_VERSION(4, 14, 0) <= LINUX_VERSION_CODE)
 	if (freed > sc->nr_to_scan)
 		sc->nr_scanned = freed;
 #endif /* (KERNEL_VERSION(4, 14, 0) <= LINUX_VERSION_CODE) */
 
-	dev_info(kbdev->dev, "Tiler heap reclaim scan freed pages: %lu (unused: %lu)", freed,
+	dev_dbg(kbdev->dev, "Tiler heap reclaim scan freed pages: %lu (unused: %lu)", freed,
 		 avail);
 
 	/* On estimate suggesting available, yet actual free failed, return STOP */

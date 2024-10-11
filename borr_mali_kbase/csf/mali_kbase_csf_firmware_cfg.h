@@ -71,6 +71,17 @@ int kbase_csf_firmware_cfg_option_entry_parse(struct kbase_device *kbdev,
 					      const u32 *entry, unsigned int size, bool updatable);
 
 /**
+ * kbase_csf_firmware_cfg_find_config_address() - Get a FW config option address
+ *
+ * @kbdev:     Kbase device structure
+ * @name:      Name of cfg option to find
+ * @addr:      Pointer to store the address
+ *
+ * Return: 0 if successful, negative error code on failure
+ */
+int kbase_csf_firmware_cfg_find_config_address(struct kbase_device *kbdev, const char *name,
+					       u32 *addr);
+/**
  * kbase_csf_firmware_cfg_fw_wa_enable() - Enable firmware workarounds configuration.
  *
  * @kbdev:     Kbase device structure

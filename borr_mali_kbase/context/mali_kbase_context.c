@@ -42,6 +42,49 @@
 #include <mmu/mali_kbase_mmu.h>
 #include <context/mali_kbase_context_internal.h>
 
+#define to_kprcs(kobj) container_of(kobj, struct kbase_process, kobj)
+
+static void kbase_kprcs_release(struct kobject *kobj)
+{
+	struct kbase_process *kprcs = to_kprcs(kobj);
+	kfree(kprcs);
+}
+
+static ssize_t total_gpu_mem_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	struct kbase_process *kprcs = to_kprcs(kobj);
+	if (WARN_ON(!kprcs))
+		return 0;
+
+	return sysfs_emit(buf, "%lu\n",
+			(unsigned long) kprcs->total_gpu_pages << PAGE_SHIFT);
+}
+static struct kobj_attribute total_gpu_mem_attr = __ATTR_RO(total_gpu_mem);
+
+static ssize_t dma_buf_gpu_mem_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	struct kbase_process *kprcs = to_kprcs(kobj);
+	if (WARN_ON(!kprcs))
+		return 0;
+
+	return sysfs_emit(buf, "%lu\n",
+			(unsigned long) kprcs->dma_buf_pages << PAGE_SHIFT);
+}
+static struct kobj_attribute dma_buf_gpu_mem_attr = __ATTR_RO(dma_buf_gpu_mem);
+
+static struct attribute *kprcs_attrs[] = {
+	&total_gpu_mem_attr.attr,
+	&dma_buf_gpu_mem_attr.attr,
+	NULL
+};
+ATTRIBUTE_GROUPS(kprcs);
+
+static struct kobj_type kprcs_ktype = {
+	.release = kbase_kprcs_release,
+	.sysfs_ops = &kobj_sysfs_ops,
+	.default_groups = kprcs_groups,
+};
+
 /**
  * find_process_node - Used to traverse the process rb_tree to find if
  *                     process exists already in process rb_tree.
@@ -108,6 +151,11 @@ static int kbase_insert_kctx_to_process(struct kbase_context *kctx)
 		INIT_LIST_HEAD(&kprcs->kctx_list);
 		kprcs->dma_buf_root = RB_ROOT;
 		kprcs->total_gpu_pages = 0;
+		kprcs->dma_buf_pages = 0;
+		WARN_ON(kobject_init_and_add(
+					&kprcs->kobj, &kprcs_ktype,
+					kctx->kbdev->proc_sysfs_node,
+					"%d", tgid));
 
 		while (*new) {
 			struct kbase_process *prcs_node;
@@ -155,6 +203,9 @@ int kbase_context_common_init(struct kbase_context *kctx)
 				 */
 				get_task_struct(task);
 				kctx->task = task;
+
+				/* PIXEL: For better visibility, save the comm from the tgid */
+				memcpy(kctx->comm, task->comm, sizeof(task->comm));
 			} else {
 				dev_err(kctx->kbdev->dev, "Failed to get task pointer for %s/%d",
 					current->comm, current->pid);
@@ -195,6 +246,7 @@ int kbase_context_common_init(struct kbase_context *kctx)
 	mutex_lock(&kctx->kbdev->kctx_list_lock);
 	err = kbase_insert_kctx_to_process(kctx);
 	mutex_unlock(&kctx->kbdev->kctx_list_lock);
+
 	if (err) {
 		dev_err(kctx->kbdev->dev, "(err:%d) failed to insert kctx to kbase_process", err);
 		if (likely(kctx->filp)) {
@@ -268,7 +320,10 @@ static void kbase_remove_kctx_from_process(struct kbase_context *kctx)
 		WARN_ON(kprcs->total_gpu_pages);
 		spin_unlock(&kctx->kbdev->gpu_mem_usage_lock);
 		WARN_ON(!RB_EMPTY_ROOT(&kprcs->dma_buf_root));
-		kfree(kprcs);
+		kobject_del(&kprcs->kobj);
+		kobject_put(&kprcs->kobj);
+		// kfree(kprcs); -> done in kobject release callback, left here
+		// for easy tracking of differences from upstream.
 	}
 }
 

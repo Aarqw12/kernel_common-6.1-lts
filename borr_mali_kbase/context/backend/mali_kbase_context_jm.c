@@ -93,7 +93,7 @@ static int kbase_context_submit_check(struct kbase_context *kctx)
 
 	base_context_create_flags const flags = kctx->create_flags;
 
-	mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
+	rt_mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
 	spin_lock_irqsave(&kctx->kbdev->hwaccess_lock, irq_flags);
 
 	/* Translate the flags */
@@ -101,7 +101,7 @@ static int kbase_context_submit_check(struct kbase_context *kctx)
 		kbase_ctx_flag_clear(kctx, KCTX_SUBMIT_DISABLED);
 
 	spin_unlock_irqrestore(&kctx->kbdev->hwaccess_lock, irq_flags);
-	mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
+	rt_mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
 
 	return 0;
 }
@@ -109,7 +109,7 @@ static int kbase_context_submit_check(struct kbase_context *kctx)
 static void kbase_context_flush_jobs(struct kbase_context *kctx)
 {
 	kbase_jd_zap_context(kctx);
-	flush_workqueue(kctx->jctx.job_done_wq);
+	kthread_flush_worker(&kctx->kbdev->job_done_worker);
 }
 
 /**

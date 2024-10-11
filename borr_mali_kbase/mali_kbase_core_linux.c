@@ -76,6 +76,9 @@
 #endif
 #include "mali_kbase_ioctl_helpers.h"
 
+/* Pixel includes */
+#include "platform/pixel/pixel_gpu_slc.h"
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/poll.h>
@@ -83,6 +86,7 @@
 #include <linux/errno.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/of_irq.h>
 #include <linux/platform_device.h>
 #include <linux/of_platform.h>
 #include <linux/miscdevice.h>
@@ -119,6 +123,8 @@
 #include <context/mali_kbase_context.h>
 
 #include <mali_kbase_caps.h>
+
+#include <linux/sched/types.h>
 
 #define KERNEL_SIDE_DDK_VERSION_STRING "K:" MALI_RELEASE_NAME "(GPL)"
 
@@ -218,6 +224,88 @@ bool mali_kbase_supports_cap(unsigned long api_version, enum mali_kbase_cap cap)
 	supported = (api_version >= required_ver);
 
 	return supported;
+}
+
+static void kbase_set_sched_rt(struct kbase_device *kbdev, struct task_struct *task, char *thread_name)
+{
+	static struct sched_attr attr = {
+		.sched_policy = SCHED_FIFO,
+		.sched_priority = KBASE_RT_THREAD_PRIO,
+	};
+
+	wake_up_process(task);
+	if(sched_setattr_nocheck(task, &attr))
+		dev_warn(kbdev->dev, "%s attributes weren't set", thread_name);
+	else {
+		dev_dbg(kbdev->dev, "%s set to RT prio: %i", thread_name, attr.sched_priority);
+	}
+}
+
+struct task_struct *kbase_kthread_run_rt(struct kbase_device *kbdev,
+	int (*threadfn)(void *data), void *thread_param, const char namefmt[], ...)
+{
+	struct task_struct *task;
+	va_list args;
+	char name_buf[128];
+	int len;
+
+	/* Construct the thread name */
+	va_start(args, namefmt);
+	len = vsnprintf(name_buf, sizeof(name_buf), namefmt, args);
+	va_end(args);
+	if (len + 1 > sizeof(name_buf)) {
+		dev_warn(kbdev->dev, "RT thread name truncated to %s", name_buf);
+	}
+
+	task = kthread_create(threadfn, thread_param, name_buf);
+
+	if (!IS_ERR(task)) {
+		kbase_set_sched_rt(kbdev, task, name_buf);
+	}
+
+	return task;
+}
+
+int kbase_kthread_run_worker_rt(struct kbase_device *kbdev,
+	struct kthread_worker *worker, const char namefmt[], ...)
+{
+	struct task_struct *task;
+	va_list args;
+	char name_buf[128];
+	int len;
+
+	/* Construct the thread name */
+	va_start(args, namefmt);
+	len = vsnprintf(name_buf, sizeof(name_buf), namefmt, args);
+	va_end(args);
+	if (len + 1 > sizeof(name_buf)) {
+		dev_warn(kbdev->dev, "RT thread name truncated to %s", name_buf);
+	}
+
+	kthread_init_worker(worker);
+
+	task = kthread_create(kthread_worker_fn, worker, name_buf);
+
+	if (!IS_ERR(task)) {
+		worker->task = task;
+		kbase_set_sched_rt(kbdev, task, name_buf);
+		return 0;
+	}
+
+	return PTR_ERR(task);
+}
+
+void kbase_destroy_kworker_stack(struct kthread_worker *worker)
+{
+	struct task_struct *task;
+
+	task = worker->task;
+	if (WARN_ON(!task))
+		return;
+
+	kthread_flush_worker(worker);
+	kthread_stop(task);
+	WARN_ON(!list_empty(&worker->work_list));
 }
 
 /**
@@ -780,18 +868,34 @@ static int kbase_api_set_flags(struct kbase_file *kfile, struct kbase_ioctl_set_
 		 */
 #else
 		js_kctx_info = &kctx->jctx.sched_info;
-		mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
+		rt_mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
 		spin_lock_irqsave(&kctx->kbdev->hwaccess_lock, irq_flags);
 		/* Translate the flags */
 		if ((flags->create_flags & BASE_CONTEXT_SYSTEM_MONITOR_SUBMIT_DISABLED) == 0)
 			kbase_ctx_flag_clear(kctx, KCTX_SUBMIT_DISABLED);
 
 		spin_unlock_irqrestore(&kctx->kbdev->hwaccess_lock, irq_flags);
-		mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
+		rt_mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
 #endif
 	}
 
 	return err;
+}
+
+#if !MALI_USE_CSF
+static int kbase_api_apc_request(struct kbase_file *kfile,
+		struct kbase_ioctl_apc_request *apc)
+{
+	kbase_pm_apc_request(kfile->kbdev, apc->dur_usec);
+	return 0;
+}
+#endif
+
+static int kbase_api_buffer_liveness_update(struct kbase_context *kctx,
+		struct kbase_ioctl_buffer_liveness_update *update)
+{
+	/* Defer handling to platform */
+	return gpu_pixel_handle_buffer_liveness_update_ioctl(kctx, update);
 }
 
 #if !MALI_USE_CSF
@@ -1513,8 +1617,8 @@ static int kbasep_cs_tiler_heap_init(struct kbase_context *kctx,
 {
 	if (heap_init->in.group_id >= MEMORY_GROUP_MANAGER_NR_GROUPS)
 		return -EINVAL;
-
-	kctx->jit_group_id = heap_init->in.group_id;
+	else
+		kctx->jit_group_id = heap_init->in.group_id;
 
 	return kbase_csf_tiler_heap_init(kctx, heap_init->in.chunk_size,
 					 heap_init->in.initial_chunks, heap_init->in.max_chunks,
@@ -1708,6 +1812,15 @@ static long kbase_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		KBASE_HANDLE_IOCTL_IN(KBASE_IOCTL_SET_FLAGS, kbase_api_set_flags,
 				      struct kbase_ioctl_set_flags, kfile);
 		break;
+
+#if !MALI_USE_CSF
+	case KBASE_IOCTL_APC_REQUEST:
+		KBASE_HANDLE_IOCTL_IN(KBASE_IOCTL_APC_REQUEST,
+				kbase_api_apc_request,
+				struct kbase_ioctl_apc_request,
+				kfile);
+		break;
+#endif
 
 	case KBASE_IOCTL_KINSTR_PRFCNT_ENUM_INFO:
 		KBASE_HANDLE_IOCTL_INOUT(KBASE_IOCTL_KINSTR_PRFCNT_ENUM_INFO,
@@ -1983,6 +2096,12 @@ static long kbase_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				      kbasep_ioctl_set_limited_core_count,
 				      struct kbase_ioctl_set_limited_core_count, kctx);
 		break;
+	case KBASE_IOCTL_BUFFER_LIVENESS_UPDATE:
+		KBASE_HANDLE_IOCTL_IN(KBASE_IOCTL_BUFFER_LIVENESS_UPDATE,
+				kbase_api_buffer_liveness_update,
+				struct kbase_ioctl_buffer_liveness_update,
+				kctx);
+		break;
 	}
 
 	dev_warn(kbdev->dev, "Unknown ioctl 0x%x nr:%d", cmd, _IOC_NR(cmd));
@@ -2108,14 +2227,22 @@ static __poll_t kbase_poll(struct file *filp, poll_table *wait)
 	return 0;
 }
 
-void kbase_event_wakeup(struct kbase_context *kctx)
+void _kbase_event_wakeup(struct kbase_context *kctx, bool sync)
 {
 	KBASE_DEBUG_ASSERT(kctx);
-	dev_dbg(kctx->kbdev->dev, "Waking event queue for context %pK\n", (void *)kctx);
-	wake_up_interruptible(&kctx->event_queue);
+        if(sync) {
+	    dev_dbg(kctx->kbdev->dev,
+                    "Waking event queue for context %pK (sync)\n", (void *)kctx);
+	    wake_up_interruptible_sync(&kctx->event_queue);
+        }
+        else {
+	    dev_dbg(kctx->kbdev->dev,
+                    "Waking event queue for context %pK (nosync)\n",(void *)kctx);
+	    wake_up_interruptible(&kctx->event_queue);
+        }
 }
 
-KBASE_EXPORT_TEST_API(kbase_event_wakeup);
+KBASE_EXPORT_TEST_API(_kbase_event_wakeup);
 
 #if MALI_USE_CSF
 int kbase_event_pending(struct kbase_context *kctx)
@@ -3315,7 +3442,7 @@ int kbase_pm_gpu_freq_init(struct kbase_device *kbdev)
 	/* find lowest frequency OPP */
 	opp_ptr = dev_pm_opp_find_freq_ceil(kbdev->dev, &found_freq);
 	if (IS_ERR(opp_ptr)) {
-		dev_err(kbdev->dev, "No OPPs found in device tree! Scaling timeouts using %llu kHz",
+		dev_dbg(kbdev->dev, "No OPPs found in device tree! Scaling timeouts using %llu kHz",
 			(unsigned long long)lowest_freq_khz);
 	} else {
 #if KERNEL_VERSION(4, 11, 0) <= LINUX_VERSION_CODE
@@ -4480,8 +4607,10 @@ int power_control_init(struct kbase_device *kbdev)
 	int err = 0;
 	unsigned int i;
 #if defined(CONFIG_REGULATOR)
-	static const char *const regulator_names[] = { "mali", "shadercores" };
-	BUILD_BUG_ON(ARRAY_SIZE(regulator_names) < BASE_MAX_NR_CLOCKS_REGULATORS);
+	static const char * const regulator_names[] = {
+		"mali", "shadercores", NULL
+	};
+	BUILD_BUG_ON(ARRAY_SIZE(regulator_names) - 1 < BASE_MAX_NR_CLOCKS_REGULATORS);
 #endif /* CONFIG_REGULATOR */
 
 	if (!kbdev)
@@ -4569,8 +4698,7 @@ int power_control_init(struct kbase_device *kbdev)
 	}
 #elif (KERNEL_VERSION(4, 10, 0) <= LINUX_VERSION_CODE)
 	if (kbdev->nr_regulators > 0) {
-		kbdev->opp_table = dev_pm_opp_set_regulators(kbdev->dev, regulator_names,
-							     BASE_MAX_NR_CLOCKS_REGULATORS);
+		kbdev->opp_token = dev_pm_opp_set_regulators(kbdev->dev, regulator_names);
 
 		if (IS_ERR(kbdev->opp_table)) {
 			err = PTR_ERR(kbdev->opp_table);
@@ -4584,8 +4712,7 @@ int power_control_init(struct kbase_device *kbdev)
 #endif /* CONFIG_PM_OPP */
 	return 0;
 
-#if defined(CONFIG_PM_OPP) && \
-	((KERNEL_VERSION(4, 10, 0) <= LINUX_VERSION_CODE) && defined(CONFIG_REGULATOR))
+#if defined(CONFIG_PM_OPP) && defined(CONFIG_REGULATOR)
 regulators_probe_defer:
 	for (i = 0; i < BASE_MAX_NR_CLOCKS_REGULATORS; i++) {
 		if (kbdev->clocks[i]) {
@@ -4703,6 +4830,45 @@ static int kbase_device_debugfs_reset_write(void *data, u64 wait_for_reset)
 }
 
 DEFINE_DEBUGFS_ATTRIBUTE(fops_trigger_reset, NULL, &kbase_device_debugfs_reset_write, "%llu\n");
+
+/**
+ * kbase_device_debugfs_trigger_uevent_write - send a GPU uevent
+ * @file: File object to write to
+ * @ubuf:  User buffer to read data from
+ * @count:  Length of user buffer
+ * @ppos: Offset within file object
+ *
+ * Return: bytes read.
+ */
+static ssize_t kbase_device_debugfs_trigger_uevent_write(struct file *file,
+		const char __user *ubuf, size_t count, loff_t *ppos)
+{
+	struct kbase_device *kbdev = (struct kbase_device *)file->private_data;
+	struct gpu_uevent evt = { 0 };
+	char str[8] = { 0 };
+
+	if (count >= sizeof(str))
+		return -EINVAL;
+
+	if (copy_from_user(str, ubuf, count))
+		return -EINVAL;
+
+	str[count] = '\0';
+
+	if (sscanf(str, "%u %u", &evt.type, &evt.info) != 2)
+		return -EINVAL;
+
+	pixel_gpu_uevent_send(kbdev, (const struct gpu_uevent *) &evt);
+
+	return count;
+}
+
+static const struct file_operations fops_trigger_uevent = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.write = kbase_device_debugfs_trigger_uevent_write,
+	.llseek = default_llseek,
+};
 
 /**
  * debugfs_protected_debug_mode_read - "protected_debug_mode" debugfs read
@@ -4919,6 +5085,10 @@ static struct dentry *init_debugfs(struct kbase_device *kbdev)
 		dev_err(kbdev->dev, "Unable to create reset debugfs entry\n");
 		return dentry;
 	}
+
+	debugfs_create_file("trigger_uevent", 0644,
+			kbdev->mali_debugfs_directory, kbdev,
+			&fops_trigger_uevent);
 
 	kbase_ktrace_debugfs_init(kbdev);
 
@@ -5607,6 +5777,36 @@ static struct attribute *kbase_scheduling_attrs[] = {
 	NULL
 };
 
+static ssize_t total_gpu_mem_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *const buf)
+{
+	struct kbase_device *kbdev;
+	kbdev = to_kbase_device(dev);
+	if (!kbdev)
+		return -ENODEV;
+
+	return sysfs_emit(buf, "%lu\n",
+		(unsigned long) kbdev->total_gpu_pages << PAGE_SHIFT);
+}
+static DEVICE_ATTR_RO(total_gpu_mem);
+
+static ssize_t dma_buf_gpu_mem_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *const buf)
+{
+	struct kbase_device *kbdev;
+	kbdev = to_kbase_device(dev);
+	if (!kbdev)
+		return -ENODEV;
+
+	return sysfs_emit(buf, "%lu\n",
+		(unsigned long) kbdev->dma_buf_pages << PAGE_SHIFT);
+}
+static DEVICE_ATTR_RO(dma_buf_gpu_mem);
+
 static struct attribute *kbase_attrs[] = {
 #ifdef CONFIG_MALI_DEBUG
 	&dev_attr_debug_command.attr,
@@ -5643,6 +5843,8 @@ static struct attribute *kbase_attrs[] = {
 #if !MALI_USE_CSF
 	&dev_attr_js_ctx_scheduling_mode.attr,
 #endif /* !MALI_USE_CSF */
+	&dev_attr_total_gpu_mem.attr,
+	&dev_attr_dma_buf_gpu_mem.attr,
 	NULL
 };
 
@@ -5694,6 +5896,9 @@ int kbase_sysfs_init(struct kbase_device *kbdev)
 		sysfs_remove_group(&kbdev->dev->kobj, &kbase_attr_group);
 	}
 
+	kbdev->proc_sysfs_node = kobject_create_and_add("kprcs",
+			&kbdev->dev->kobj);
+
 	return err;
 }
 
@@ -5702,6 +5907,8 @@ void kbase_sysfs_term(struct kbase_device *kbdev)
 	sysfs_remove_group(&kbdev->dev->kobj, &kbase_mempool_attr_group);
 	sysfs_remove_group(&kbdev->dev->kobj, &kbase_scheduling_attr_group);
 	sysfs_remove_group(&kbdev->dev->kobj, &kbase_attr_group);
+	kobject_del(kbdev->proc_sysfs_node);
+	kobject_put(kbdev->proc_sysfs_node);
 	put_device(kbdev->dev);
 }
 
@@ -5743,6 +5950,11 @@ static int kbase_platform_device_probe(struct platform_device *pdev)
 {
 	struct kbase_device *kbdev;
 	int err = 0;
+
+#if IS_ENABLED(CONFIG_GOOGLE_BCL)
+	if (!google_retrieve_bcl_handle())
+		return -EPROBE_DEFER;
+#endif
 
 	mali_kbase_print_cs_experimental();
 
@@ -5796,9 +6008,9 @@ static int kbase_platform_device_probe(struct platform_device *pdev)
 		mutex_unlock(&kbase_probe_mutex);
 #endif
 		if (kbase_has_arbiter(kbdev)) {
-			mutex_lock(&kbdev->pm.lock);
+			rt_mutex_lock(&kbdev->pm.lock);
 			kbase_arbiter_pm_vm_event(kbdev, KBASE_VM_GPU_INITIALIZED_EVT);
-			mutex_unlock(&kbdev->pm.lock);
+			rt_mutex_unlock(&kbdev->pm.lock);
 		}
 	}
 
@@ -6059,8 +6271,12 @@ module_init(kbase_driver_init);
 module_exit(kbase_driver_exit);
 #endif
 MODULE_LICENSE("GPL");
-MODULE_VERSION(MALI_RELEASE_NAME " (UK version " __stringify(BASE_UK_VERSION_MAJOR) "." __stringify(
-	BASE_UK_VERSION_MINOR) ")");
+MODULE_IMPORT_NS(DMA_BUF);
+MODULE_VERSION(MALI_RELEASE_NAME " (UK version " \
+		__stringify(BASE_UK_VERSION_MAJOR) "." \
+		__stringify(BASE_UK_VERSION_MINOR) ")");
+MODULE_SOFTDEP("pre: mali_pixel");
+MODULE_SOFTDEP("pre: exynos-pd-dbg");
 MODULE_SOFTDEP("pre: memory_group_manager");
 MODULE_INFO(import_ns, "DMA_BUF");
 

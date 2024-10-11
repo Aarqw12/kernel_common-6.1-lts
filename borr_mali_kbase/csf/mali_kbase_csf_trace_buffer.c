@@ -120,7 +120,12 @@ static const struct firmware_trace_buffer_data trace_buffer_data[] = {
 #if MALI_UNIT_TEST
 	{ KBASE_CSFFW_UTF_BUF_NAME, { 0 }, 1 },
 #endif
-	{ KBASE_CSFFW_LOG_BUF_NAME, { 0 }, 4 },
+#ifdef CONFIG_MALI_PIXEL_GPU_SSCD
+	/* Enable all the logs */
+	{ KBASE_CSFFW_LOG_BUF_NAME, { 0xFFFFFFFF }, FW_TRACE_BUF_NR_PAGES },
+#else
+	{ KBASE_CSFFW_LOG_BUF_NAME, { 0 }, FW_TRACE_BUF_NR_PAGES },
+#endif /* CONFIG_MALI_PIXEL_GPU_SSCD */
 	{ KBASE_CSFFW_BENCHMARK_BUF_NAME, { 0 }, 2 },
 	{ KBASE_CSFFW_TIMELINE_BUF_NAME, { 0 }, KBASE_CSF_TL_BUFFER_NR_PAGES },
 #if IS_ENABLED(CONFIG_MALI_TRACE_POWER_GPU_WORK_PERIOD)

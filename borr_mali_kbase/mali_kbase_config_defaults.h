@@ -19,6 +19,17 @@
  *
  */
 
+/*
+ * Increase multiplier to increase timeout limit for:
+ *
+ *  - JS_HARD_STOP_TICKS_SS
+ *  - JS_SOFT_JOB_TIMEOUT
+ *  - JS_RESET_TICKS_SS
+ *
+ * Default is 1
+ */
+#define TICK_MULTIPLIER (1)
+
 /**
  * DOC: Default values for configuration settings
  *
@@ -129,7 +140,7 @@ enum {
 #define DEFAULT_JS_SOFT_STOP_TICKS_CL (1) /* 100ms-200ms */
 
 /* Default minimum number of scheduling ticks before jobs are hard-stopped */
-#define DEFAULT_JS_HARD_STOP_TICKS_SS (50) /* 5s */
+#define DEFAULT_JS_HARD_STOP_TICKS_SS (50 * TICK_MULTIPLIER) /* Default: 5s */
 
 /* Default minimum number of scheduling ticks before CL jobs are hard-stopped. */
 #define DEFAULT_JS_HARD_STOP_TICKS_CL (50) /* 5s */
@@ -142,12 +153,12 @@ enum {
 /* Default timeout for some software jobs, after which the software event wait
  * jobs will be cancelled.
  */
-#define DEFAULT_JS_SOFT_JOB_TIMEOUT (3000) /* 3s */
+#define DEFAULT_JS_SOFT_JOB_TIMEOUT (3000 * TICK_MULTIPLIER) /* Default: 3s */
 
 /* Default minimum number of scheduling ticks before the GPU is reset to clear a
  * "stuck" job
  */
-#define DEFAULT_JS_RESET_TICKS_SS (55) /* 5.5s */
+#define DEFAULT_JS_RESET_TICKS_SS (55 * TICK_MULTIPLIER) /* Default: 5.5s */
 
 /* Default minimum number of scheduling ticks before the GPU is reset to clear a
  * "stuck" CL job.
@@ -177,7 +188,7 @@ enum {
  * Based on 75000ms timeout at nominal 100MHz, as is required for Android - based
  * on scaling from a 50MHz GPU system.
  */
-#define CSF_FIRMWARE_TIMEOUT_CYCLES (7500000000ull)
+#define CSF_FIRMWARE_TIMEOUT_CYCLES (((u64)7500000000) * KBASE_TIMEOUT_MULTIPLIER)
 
 /* Timeout in clock cycles for GPU Power Management to reach the desired
  * Shader, L2 and MCU state.
@@ -192,7 +203,8 @@ enum {
  * More cycles (1s @ 100Mhz = 100000000) are added up to ensure that
  * host timeout is always bigger than FW timeout.
  */
-#define CSF_CSG_SUSPEND_TIMEOUT_CYCLES (3100000000ull)
+/* pixel: b/319408928 - CSF_CSG_SUSPEND_TIMEOUT_CYCLES is set to 2s@100MHz. */
+#define CSF_CSG_SUSPEND_TIMEOUT_CYCLES (200000000ull)
 
 /* Waiting timeout in clock cycles for GPU suspend to complete. */
 #define CSF_GPU_SUSPEND_TIMEOUT_CYCLES (CSF_CSG_SUSPEND_TIMEOUT_CYCLES)
@@ -314,7 +326,7 @@ enum {
 /* Default number of milliseconds given for other jobs on the GPU to be
  * soft-stopped when the GPU needs to be reset.
  */
-#define JM_DEFAULT_RESET_TIMEOUT_MS (3000) /* 3s */
+#define JM_DEFAULT_RESET_TIMEOUT_MS (3000 * KBASE_TIMEOUT_MULTIPLIER) /* 3s */
 
 /* Default timeout in clock cycles to be used when checking if JS_COMMAND_NEXT
  * is updated on HW side so a Job Slot is considered free.

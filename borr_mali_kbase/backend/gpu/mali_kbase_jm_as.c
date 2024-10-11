@@ -129,7 +129,7 @@ int kbase_backend_find_and_release_free_address_space(struct kbase_device *kbdev
 	js_devdata = &kbdev->js_data;
 	js_kctx_info = &kctx->jctx.sched_info;
 
-	mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
+	rt_mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
 	mutex_lock(&js_devdata->runpool_mutex);
 
 	spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
@@ -154,7 +154,7 @@ int kbase_backend_find_and_release_free_address_space(struct kbase_device *kbdev
 
 				spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
 				mutex_unlock(&js_devdata->runpool_mutex);
-				mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
+				rt_mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
 
 				return KBASEP_AS_NR_INVALID;
 			}
@@ -167,10 +167,10 @@ int kbase_backend_find_and_release_free_address_space(struct kbase_device *kbdev
 			 */
 			spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
 			mutex_unlock(&js_devdata->runpool_mutex);
-			mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
+			rt_mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
 
 			/* Release context from address space */
-			mutex_lock(&as_js_kctx_info->ctx.jsctx_mutex);
+			rt_mutex_lock(&as_js_kctx_info->ctx.jsctx_mutex);
 			mutex_lock(&js_devdata->runpool_mutex);
 
 			kbasep_js_runpool_release_ctx_nolock(kbdev, as_kctx);
@@ -179,7 +179,7 @@ int kbase_backend_find_and_release_free_address_space(struct kbase_device *kbdev
 				kbasep_js_runpool_requeue_or_kill_ctx(kbdev, as_kctx, true);
 
 				mutex_unlock(&js_devdata->runpool_mutex);
-				mutex_unlock(&as_js_kctx_info->ctx.jsctx_mutex);
+				rt_mutex_unlock(&as_js_kctx_info->ctx.jsctx_mutex);
 
 				return i;
 			}
@@ -188,9 +188,9 @@ int kbase_backend_find_and_release_free_address_space(struct kbase_device *kbdev
 			 * continue looking for free AS
 			 */
 			mutex_unlock(&js_devdata->runpool_mutex);
-			mutex_unlock(&as_js_kctx_info->ctx.jsctx_mutex);
+			rt_mutex_unlock(&as_js_kctx_info->ctx.jsctx_mutex);
 
-			mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
+			rt_mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
 			mutex_lock(&js_devdata->runpool_mutex);
 			spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
 		}
@@ -199,7 +199,7 @@ int kbase_backend_find_and_release_free_address_space(struct kbase_device *kbdev
 	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
 
 	mutex_unlock(&js_devdata->runpool_mutex);
-	mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
+	rt_mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
 
 	return KBASEP_AS_NR_INVALID;
 }

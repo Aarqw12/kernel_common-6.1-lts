@@ -151,7 +151,7 @@ static bool notify_group_csg_reg_map_error(struct kbase_queue_group *group)
 		dev_err(kbdev->dev, "Fatal: group_%d_%d_%d exceeded shared region map retry limit",
 			group->kctx->tgid, group->kctx->id, group->handle);
 		kbase_csf_add_group_fatal_error(group, &err_payload);
-		kbase_event_wakeup(group->kctx);
+		kbase_event_wakeup_nosync(group->kctx);
 	}
 
 	return group->csg_reg_bind_retries >= MCU_SHARED_REGS_BIND_ATTEMPT_LIMIT;

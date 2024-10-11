@@ -305,6 +305,8 @@ out:
 
 int __init kutf_kprobe_init(struct dentry *base_dir)
 {
+//TODO: b/317480128 - add register_kprobe & unregister_kprobe symbols
+#if 0
 	struct dentry *kutf_kp_reg_debugfs_file;
 	struct dentry *kutf_kp_unreg_debugfs_file;
 
@@ -330,12 +332,14 @@ int __init kutf_kprobe_init(struct dentry *base_dir)
 		}
 	} else
 		pr_info("kallsyms_lookup_name addr not available\n");
-
+#endif
 	return 0;
 }
 
 void kutf_kprobe_exit(void)
 {
+//TODO: b/317480128 - add register_kprobe & unregister_kprobe symbols
+#if 0
 	struct kutf_kp_data *kp_iter;
 	struct kutf_kp_data *n;
 
@@ -349,6 +353,7 @@ void kutf_kprobe_exit(void)
 	}
 
 	mutex_unlock(&kp_list_lock);
+#endif
 }
 
 #endif

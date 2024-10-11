@@ -35,12 +35,15 @@
 
 #include <linux/of.h>
 
+#include <trace/hooks/systrace.h>
+
 static const struct kbase_pm_policy *const all_policy_list[] = {
 #if IS_ENABLED(CONFIG_MALI_NO_MALI)
 	&kbase_pm_always_on_policy_ops,
 	&kbase_pm_coarse_demand_policy_ops,
 #else /* CONFIG_MALI_NO_MALI */
 	&kbase_pm_coarse_demand_policy_ops,
+	&kbase_pm_adaptive_policy_ops,
 	&kbase_pm_always_on_policy_ops,
 #endif /* CONFIG_MALI_NO_MALI */
 };
@@ -127,10 +130,12 @@ void kbase_pm_update_active(struct kbase_device *kbdev)
 		} else {
 			/* Cancel the invocation of
 			 * kbase_pm_gpu_poweroff_wait_wq() from the L2 state
-			 * machine. This is safe - it
+			 * machine. This is safe - if
 			 * invoke_poweroff_wait_wq_when_l2_off is true, then
 			 * the poweroff work hasn't even been queued yet,
-			 * meaning we can go straight to powering on.
+			 * meaning we can go straight to powering on. We must
+			 * however wake_up(poweroff_wait) in case someone was
+			 * waiting for poweroff_wait_in_progress to become false.
 			 */
 			pm->backend.invoke_poweroff_wait_wq_when_l2_off = false;
 			pm->backend.poweroff_wait_in_progress = false;
@@ -140,6 +145,7 @@ void kbase_pm_update_active(struct kbase_device *kbdev)
 #endif
 
 			spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
+			wake_up(&kbdev->pm.backend.poweroff_wait);
 			kbase_pm_do_poweron(kbdev, false);
 		}
 	} else {
@@ -230,11 +236,13 @@ void kbase_pm_update_cores_state(struct kbase_device *kbdev)
 {
 	unsigned long flags;
 
+	ATRACE_BEGIN(__func__);
 	spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
 
 	kbase_pm_update_cores_state_nolock(kbdev);
 
 	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
+	ATRACE_END();
 }
 
 size_t kbase_pm_list_policies(struct kbase_device *kbdev,
@@ -342,7 +350,7 @@ void kbase_pm_set_policy(struct kbase_device *kbdev, const struct kbase_pm_polic
 	 * check it here. So we hold the scheduler lock to avoid other operations
 	 * interfering with the policy change and vice versa.
 	 */
-	mutex_lock(&scheduler->lock);
+	rt_mutex_lock(&scheduler->lock);
 	spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
 	/* policy_change_clamp_state_to_off, when needed, is set/cleared in
 	 * this function, a very limited temporal scope for covering the
@@ -371,6 +379,7 @@ void kbase_pm_set_policy(struct kbase_device *kbdev, const struct kbase_pm_polic
 	spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
 
 	kbdev->pm.backend.policy_change_clamp_state_to_off = sched_suspend;
+
 	kbase_pm_update_state(kbdev);
 	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
 
@@ -440,7 +449,7 @@ void kbase_pm_set_policy(struct kbase_device *kbdev, const struct kbase_pm_polic
 	/* Reverse the suspension done */
 	if (sched_suspend)
 		kbase_csf_scheduler_pm_resume_no_lock(kbdev);
-	mutex_unlock(&scheduler->lock);
+	rt_mutex_unlock(&scheduler->lock);
 
 	if (reset_op_prevented)
 		kbase_reset_gpu_allow(kbdev);

@@ -28,6 +28,7 @@
 #include <mmu/mali_kbase_mmu_hw.h>
 #include <tl/mali_kbase_tracepoints.h>
 #include <linux/delay.h>
+#include "mali_kbase_config_defaults.h"
 
 #if MALI_USE_CSF
 /**
@@ -179,6 +180,7 @@ static int wait_ready(struct kbase_device *kbdev, unsigned int as_nr)
 	if (!err)
 		return 0;
 
+	pixel_gpu_uevent_kmd_error_send(kbdev, GPU_UEVENT_INFO_MMU_AS_ACTIVE_STUCK);
 	dev_err(kbdev->dev,
 		"AS_ACTIVE bit stuck for as %u. Might be caused by unstable GPU clk/pwr or faulty system",
 		as_nr);
@@ -213,7 +215,7 @@ static int write_cmd(struct kbase_device *kbdev, unsigned int as_nr, u32 cmd)
 #if MALI_USE_CSF
 static int wait_l2_power_trans_complete(struct kbase_device *kbdev)
 {
-	u32 val;
+	u64 val;
 	const u32 timeout_us =
 		kbase_get_timeout_ms(kbdev, MMU_AS_INACTIVE_WAIT_TIMEOUT) * USEC_PER_MSEC;
 	const int err = kbase_reg_poll64_timeout(kbdev, GPU_CONTROL_ENUM(L2_PWRTRANS), val,
@@ -445,6 +447,8 @@ static int mmu_hw_do_lock(struct kbase_device *kbdev, struct kbase_as *as,
 	if (!ret)
 		mmu_command_instr(kbdev, op_param->kctx_id, AS_COMMAND_COMMAND_LOCK, lock_addr,
 				  op_param->mmu_sync_info);
+	else
+		dev_err(kbdev->dev, "AS_ACTIVE bit stuck after sending UNLOCK command");
 
 	return ret;
 }

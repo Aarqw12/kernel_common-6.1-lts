@@ -26,6 +26,28 @@ ifeq ($(KDIR),)
     $(error Must specify KDIR to point to the kernel to target))
 endif
 
+
+#
+# Pixel integration configuration values
+#
+
+# Debug Ftrace configuration options
+CONFIG_MALI_SYSTEM_TRACE=y
+
+# Core kbase configuration options
+CONFIG_MALI_EXPERT=y
+CONFIG_MALI_MIDGARD_DVFS=y
+CONFIG_MALI_TRACE_POWER_GPU_WORK_PERIOD = y
+
+# Pixel integration specific configuration options
+CONFIG_MALI_PLATFORM_NAME="pixel"
+CONFIG_MALI_PIXEL_GPU_QOS ?= y
+CONFIG_MALI_PIXEL_GPU_BTS ?= y
+CONFIG_MALI_PIXEL_GPU_SECURE_RENDERING ?= y
+CONFIG_MALI_PIXEL_GPU_THERMAL ?= y
+CONFIG_MALI_PIXEL_GPU_PM ?= y
+CONFIG_MALI_PIXEL_GPU_SLC ?= y
+
 #
 # Default configuration values
 #
@@ -101,7 +123,6 @@ ifeq ($(MALI_KCONFIG_EXT_PREFIX),)
             else
                 # Prevent misuse when CONFIG_MALI_DEBUG=n
                 CONFIG_MALI_MIDGARD_ENABLE_TRACE = n
-                CONFIG_MALI_SYSTEM_TRACE = n
                 CONFIG_MALI_FENCE_DEBUG = n
             endif
         else
@@ -117,7 +138,6 @@ ifeq ($(MALI_KCONFIG_EXT_PREFIX),)
             CONFIG_MALI_PRFCNT_SET_SELECT_VIA_DEBUG_FS = n
             CONFIG_MALI_DEBUG = n
             CONFIG_MALI_MIDGARD_ENABLE_TRACE = n
-            CONFIG_MALI_SYSTEM_TRACE = n
             CONFIG_MALI_FENCE_DEBUG = n
         endif
 
@@ -141,9 +161,9 @@ ifeq ($(MALI_KCONFIG_EXT_PREFIX),)
             endif
         else
             # Prevent misuse when CONFIG_MALI_DEBUG=n
-            CONFIG_MALI_KUTF = n
+            CONFIG_MALI_KUTF = y
             CONFIG_MALI_KUTF_IRQ_TEST = n
-            CONFIG_MALI_KUTF_CLK_RATE_TRACE = n
+            CONFIG_MALI_KUTF_CLK_RATE_TRACE = y
             CONFIG_MALI_KUTF_MGM_INTEGRATION_TEST = n
         endif
     else
@@ -151,14 +171,13 @@ ifeq ($(MALI_KCONFIG_EXT_PREFIX),)
         CONFIG_MALI_ARBITRATION = n
         CONFIG_MALI_KUTF = n
         CONFIG_MALI_KUTF_IRQ_TEST = n
-        CONFIG_MALI_KUTF_CLK_RATE_TRACE = n
+        CONFIG_MALI_KUTF_CLK_RATE_TRACE = y
         CONFIG_MALI_KUTF_MGM_INTEGRATION_TEST = n
     endif
 
     # All Mali CONFIG should be listed here
     CONFIGS += \
         CONFIG_MALI_MIDGARD \
-        CONFIG_MALI_CSF_SUPPORT \
         CONFIG_MALI_GATOR_SUPPORT \
         CONFIG_MALI_ARBITRATION \
         CONFIG_MALI_PARTITION_MANAGER \
@@ -193,6 +212,14 @@ ifeq ($(MALI_KCONFIG_EXT_PREFIX),)
         CONFIG_MALI_CORESIGHT \
         CONFIG_MALI_TRACE_POWER_GPU_WORK_PERIOD
 
+    # Pixel integration CONFIG options
+    CONFIGS += \
+        CONFIG_MALI_PIXEL_GPU_QOS \
+        CONFIG_MALI_PIXEL_GPU_BTS \
+        CONFIG_MALI_PIXEL_GPU_THERMAL \
+        CONFIG_MALI_PIXEL_GPU_SECURE_RENDERING \
+        CONFIG_MALI_PIXEL_GPU_PM \
+        CONFIG_MALI_PIXEL_GPU_SLC
 
 
 endif
@@ -230,14 +257,16 @@ ifeq ($(MALI_KCONFIG_EXT_PREFIX),)
     EXTRA_CFLAGS += -DCONFIG_MALI_NO_MALI_DEFAULT_GPU='\"$(CONFIG_MALI_NO_MALI_DEFAULT_GPU)\"'
 endif
 
+include $(KDIR)/../private/google-modules/soc/gs/Makefile.include
+
 #
 # KBUILD_EXTRA_SYMBOLS to prevent warnings about unknown functions
 #
-BASE_SYMBOLS =
-
+BASE_SYMBOLS = $(OUT_DIR)/../private/google-modules/gpu/mali_pixel/Module.symvers
 
 EXTRA_SYMBOLS += \
     $(BASE_SYMBOLS)
+EXTRA_SYMBOLS += $(OUT_DIR)/../private/google-modules/power/mitigation/Module.symvers
 
 CFLAGS_MODULE += -Wall -Werror
 
@@ -296,10 +325,10 @@ ifeq ($(CONFIG_MALI_KCOV),y)
 endif
 
 all:
-	$(MAKE) -C $(KDIR) M=$(M) $(MAKE_ARGS) EXTRA_CFLAGS="$(EXTRA_CFLAGS)" KBUILD_EXTRA_SYMBOLS="$(EXTRA_SYMBOLS)" modules
+	$(MAKE) -C $(KDIR) M=$(M) W=1 $(MAKE_ARGS) EXTRA_CFLAGS="$(EXTRA_CFLAGS)" KBUILD_EXTRA_SYMBOLS="$(EXTRA_SYMBOLS)" modules
 
 modules_install:
-	$(MAKE) -C $(KDIR) M=$(M) $(MAKE_ARGS) modules_install
+	$(MAKE) -C $(KDIR) M=$(M) W=1 $(MAKE_ARGS) modules_install
 
 clean:
-	$(MAKE) -C $(KDIR) M=$(M) $(MAKE_ARGS) clean
+	$(MAKE) -C $(KDIR) M=$(M) W=1 $(MAKE_ARGS) clean

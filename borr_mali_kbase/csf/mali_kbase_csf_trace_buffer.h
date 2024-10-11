@@ -25,6 +25,7 @@
 #include <linux/types.h>
 
 #define CSF_FIRMWARE_TRACE_ENABLE_INIT_MASK_MAX (4)
+#define FW_TRACE_BUF_NR_PAGES 4
 #if MALI_UNIT_TEST
 #define KBASE_CSFFW_UTF_BUF_NAME "fwutf"
 #endif

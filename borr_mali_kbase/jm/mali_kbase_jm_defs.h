@@ -95,6 +95,14 @@
 #define KBASE_KATOM_FLAG_JSCTX_IN_TREE (1U << 12)
 /* Atom is waiting for L2 caches to power up in order to enter protected mode */
 #define KBASE_KATOM_FLAG_HOLDING_L2_REF_PROT (1U << 13)
+/* Atom is part of a simple graphics frame. Only applies to fragment atoms.
+ * See &jd_mark_simple_gfx_frame_atoms for more info.
+ */
+#define KBASE_KATOM_FLAG_SIMPLE_FRAME_FRAGMENT (1U << 14)
+/* Atom can be deferred until the GPU is powered on by another event. Only
+ * applies to vertex atoms. See &jd_mark_simple_gfx_frame_atoms for more info.
+ */
+#define KBASE_KATOM_FLAG_DEFER_WHILE_POWEROFF (1U << 15)
 
 /* SW related flags about types of JS_COMMAND action
  * NOTE: These must be masked off by JS_COMMAND_MASK
@@ -502,7 +510,7 @@ enum kbase_atom_exit_protected_state {
  * @jobslot: Job slot to use when BASE_JD_REQ_JOB_SLOT is specified.
  */
 struct kbase_jd_atom {
-	struct work_struct work;
+	struct kthread_work work;
 	ktime_t start_timestamp;
 
 	struct base_jd_udata udata;
@@ -702,10 +710,6 @@ static inline bool kbase_jd_atom_is_earlier(const struct kbase_jd_atom *katom_a,
  *                            the waiter should also briefly obtain and drop
  *                            @lock to guarantee that the setter has completed
  *                            its work on the kbase_context
- * @job_done_wq:              Workqueue to which the per atom work item is
- *                            queued for bottom half processing when the
- *                            atom completes
- *                            execution on GPU or the input fence get signaled.
  * @tb_lock:                  Lock to serialize the write access made to @tb to
  *                            store the register access trace messages.
  * @tb:                       Pointer to the Userspace accessible buffer storing
@@ -726,7 +730,7 @@ static inline bool kbase_jd_atom_is_earlier(const struct kbase_jd_atom *katom_a,
  * @max_priority:             Max priority level allowed for this context.
  */
 struct kbase_jd_context {
-	struct mutex lock;
+	struct rt_mutex lock;
 	struct kbasep_js_kctx_info sched_info;
 	struct kbase_jd_atom atoms[BASE_JD_ATOM_COUNT];
 	struct workqueue_struct *job_done_wq;

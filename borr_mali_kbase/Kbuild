@@ -68,6 +68,9 @@ endif
 # Configurations
 #
 
+# We are building for Pixel
+CONFIG_MALI_PLATFORM_NAME="pixel"
+
 # Driver version string which is returned to userspace via an ioctl
 MALI_RELEASE_NAME ?= '"r51p0-00eac0"'
 # Set up defaults if not defined by build system
@@ -83,14 +86,27 @@ MALI_COVERAGE ?= 0
 # Kconfig passes in the name with quotes for in-tree builds - remove them.
 MALI_PLATFORM_DIR := $(shell echo $(CONFIG_MALI_PLATFORM_NAME))
 
+ifneq ($(CONFIG_SOC_GS101),y)
+    CONFIG_MALI_CSF_SUPPORT ?= y
+endif
+
 ifeq ($(CONFIG_MALI_CSF_SUPPORT),y)
     MALI_JIT_PRESSURE_LIMIT_BASE = 0
     MALI_USE_CSF = 1
+    ccflags-y += -DCONFIG_MALI_PIXEL_GPU_SSCD
 else
     MALI_JIT_PRESSURE_LIMIT_BASE ?= 1
     MALI_USE_CSF ?= 0
 endif
+ifeq ($(CONFIG_SOC_ZUMA),y)
+    ccflags-y += -DCONFIG_MALI_PM_RUNTIME_S2MPU_CONTROL
+    ccflags-y += -DCONFIG_MALI_PIXEL_GPU_SLEEP
+# Flag to enable Fmax cap.
+# Comment it to enable all possible OPPs in DVFS table
+    ccflags-y += -DCONFIG_MALI_PIXEL_GPU_HARD_FMAX
+endif
 
+ccflags-y += -DCONFIG_GOOGLE_BCL
 
 ifneq ($(CONFIG_MALI_KUTF), n)
     MALI_KERNEL_TEST_API ?= 1
@@ -108,7 +124,7 @@ endif
 #
 # ccflags
 #
-ccflags-y = \
+ccflags-y += \
     -DMALI_CUSTOMER_RELEASE=$(MALI_CUSTOMER_RELEASE) \
     -DMALI_USE_CSF=$(MALI_USE_CSF) \
     -DMALI_KERNEL_TEST_API=$(MALI_KERNEL_TEST_API) \
@@ -118,6 +134,8 @@ ccflags-y = \
     -DMALI_JIT_PRESSURE_LIMIT_BASE=$(MALI_JIT_PRESSURE_LIMIT_BASE) \
     -DMALI_PLATFORM_DIR=$(MALI_PLATFORM_DIR)
 
+subdir-ccflags-y += \
+		-I$(KERNEL_SRC)/../private/google-modules/power/mitigation
 
 ifeq ($(KBUILD_EXTMOD),)
 # in-tree
@@ -128,12 +146,14 @@ else
 endif
 
 ccflags-y += \
-    -I$(srctree)/include/linux \
-    -I$(srctree)/drivers/staging/android \
     -I$(src) \
     -I$(src)/platform/$(MALI_PLATFORM_DIR) \
     -I$(src)/../../../base \
-    -I$(src)/../../../../include
+    -I$(src)/../../../../include \
+    -I$(src)/tests/include
+
+# Add include path for related GPU modules
+ccflags-y += -I$(src)/../common/include
 
 subdir-ccflags-y += $(ccflags-y)
 

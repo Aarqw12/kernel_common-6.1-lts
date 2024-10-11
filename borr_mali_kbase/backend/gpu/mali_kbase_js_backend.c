@@ -172,8 +172,8 @@ static enum hrtimer_restart timer_callback(struct hrtimer *timer)
 					u32 ms = js_devdata->scheduling_period_ns / 1000000u;
 					dev_warn(
 						kbdev->dev,
-						"JS: Job Hard-Stopped (took more than %u ticks at %u ms/tick)",
-						ticks, ms);
+						"JS: Job Slot %u from ctx_%d_%d Hard-Stopped (took more than %u ticks at %u ms/tick)",
+						s, atom->kctx->tgid, atom->kctx->pid, ticks, ms);
 					kbase_job_slot_hardstop(atom->kctx, s, atom);
 #endif
 				} else if (ticks == gpu_reset_ticks) {
@@ -183,6 +183,8 @@ static enum hrtimer_restart timer_callback(struct hrtimer *timer)
 					 * Signal that the GPU needs to be
 					 * reset.
 					 */
+					dev_err(kbdev->dev, "JS: Job Slot %u from ctx_%d_%d has been on the GPU for too long.",
+					       s, atom->kctx->tgid, atom->kctx->pid);
 					reset_needed = true;
 				}
 #else /* !CONFIG_MALI_JOB_DUMP */
@@ -241,6 +243,9 @@ static enum hrtimer_restart timer_callback(struct hrtimer *timer)
 	backend->timeouts_updated = false;
 
 	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
+
+	/* Inform platform of scheduling event */
+	kbasep_platform_event_tick_tock(kbdev);
 
 	return HRTIMER_NORESTART;
 }

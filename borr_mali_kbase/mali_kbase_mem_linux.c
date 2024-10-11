@@ -49,10 +49,8 @@
 #include <mali_kbase_reset_gpu.h>
 #include <linux/version_compat_defs.h>
 
-#if ((KERNEL_VERSION(5, 3, 0) <= LINUX_VERSION_CODE) || \
-     (KERNEL_VERSION(5, 0, 0) > LINUX_VERSION_CODE))
-/* Enable workaround for ion for kernels prior to v5.0.0 and from v5.3.0
- * onwards.
+#if (KERNEL_VERSION(5, 0, 0) > LINUX_VERSION_CODE)
+/* Enable workaround for ion for kernels prior to v5.0.0
  *
  * For kernels prior to v4.12, workaround is needed as ion lacks the cache
  * maintenance in begin_cpu_access and end_cpu_access methods.
@@ -75,7 +73,7 @@
  * import. The same problem can if there is another importer of dma-buf
  * memory.
  *
- * Workaround can be safely disabled for kernels between v5.0.0 and v5.2.2,
+ * Workaround can be safely disabled for kernels after v5.0.0
  * as all the above stated issues are not there.
  *
  * dma_sync_sg_for_* calls will be made directly as a workaround using the
@@ -1712,7 +1710,6 @@ static struct kbase_va_region *kbase_mem_from_user_buffer(struct kbase_context *
 	reg->extension = 0;
 
 	write = reg->flags & (KBASE_REG_CPU_WR | KBASE_REG_GPU_WR);
-
 	down_read(kbase_mem_get_process_mmap_lock());
 	faulted_pages =
 		kbase_get_user_pages(address, *va_pages, write ? FOLL_WRITE : 0, NULL, NULL);
@@ -2822,9 +2819,9 @@ int kbase_context_mmap(struct kbase_context *const kctx, struct vm_area_struct *
 		goto out;
 	case PFN_DOWN(BASEP_MEM_CSF_USER_IO_PAGES_HANDLE)... PFN_DOWN(BASE_MEM_COOKIE_BASE) - 1: {
 		kbase_gpu_vm_unlock_with_pmode_sync(kctx);
-		mutex_lock(&kctx->csf.lock);
+		rt_mutex_lock(&kctx->csf.lock);
 		err = kbase_csf_cpu_mmap_user_io_pages(kctx, vma);
-		mutex_unlock(&kctx->csf.lock);
+		rt_mutex_unlock(&kctx->csf.lock);
 		goto out;
 	}
 #endif
@@ -3396,9 +3393,9 @@ static void kbase_csf_user_io_pages_vm_close(struct vm_area_struct *vma)
 	else
 		reset_prevented = true;
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 	kbase_csf_queue_unbind(queue, is_process_exiting(vma));
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 
 	if (reset_prevented)
 		kbase_reset_gpu_allow(kbdev);

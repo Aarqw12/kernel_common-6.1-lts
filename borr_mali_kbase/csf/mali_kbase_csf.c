@@ -35,10 +35,12 @@
 #include <csf/ipa_control/mali_kbase_csf_ipa_control.h>
 #include <mali_kbase_hwaccess_time.h>
 #include "mali_kbase_csf_event.h"
+#include <mali_linux_trace.h>
 #include "mali_kbase_ctx_sched.h"
 #include <tl/mali_kbase_tracepoints.h>
 #include "mali_kbase_csf_mcu_shared_reg.h"
 #include <linux/version_compat_defs.h>
+#include "mali_kbase_config_defaults.h"
 
 #define CS_REQ_EXCEPTION_MASK (CS_REQ_FAULT_MASK | CS_REQ_FATAL_MASK)
 #define CS_ACK_EXCEPTION_MASK (CS_ACK_FAULT_MASK | CS_ACK_FATAL_MASK)
@@ -361,9 +363,9 @@ int kbase_csf_queue_group_handle_is_valid(struct kbase_context *kctx, u8 group_h
 {
 	struct kbase_queue_group *group;
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 	group = find_queue_group(kctx, group_handle);
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 
 	return group ? 0 : -EINVAL;
 }
@@ -460,7 +462,7 @@ static int csf_queue_register_internal(struct kbase_context *kctx,
 	queue_addr = reg->buffer_gpu_addr;
 	queue_size = reg->buffer_size >> PAGE_SHIFT;
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	/* Check if queue is already registered */
 	if (find_queue(kctx, queue_addr) != NULL) {
@@ -566,7 +568,7 @@ static int csf_queue_register_internal(struct kbase_context *kctx,
 out_unlock_vm:
 	kbase_gpu_vm_unlock(kctx);
 out:
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 
 	return ret;
 }
@@ -656,7 +658,7 @@ void kbase_csf_queue_terminate(struct kbase_context *kctx,
 	else
 		reset_prevented = true;
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 	queue = find_queue(kctx, term->buffer_gpu_addr);
 
 	if (queue) {
@@ -676,7 +678,7 @@ void kbase_csf_queue_terminate(struct kbase_context *kctx,
 			queue->queue_reg->user_data = NULL;
 		kbase_gpu_vm_unlock(kctx);
 
-		mutex_unlock(&kctx->csf.lock);
+		rt_mutex_unlock(&kctx->csf.lock);
 		/* The GPU reset can be allowed now as the queue has been unbound. */
 		if (reset_prevented) {
 			kbase_reset_gpu_allow(kbdev);
@@ -686,12 +688,12 @@ void kbase_csf_queue_terminate(struct kbase_context *kctx,
 		/* The work items can be cancelled as Userspace is terminating the queue */
 		cancel_work_sync(&queue->oom_event_work);
 		cancel_work_sync(&queue->cs_error_work);
-		mutex_lock(&kctx->csf.lock);
+		rt_mutex_lock(&kctx->csf.lock);
 
 		release_queue(queue);
 	}
 
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 	if (reset_prevented)
 		kbase_reset_gpu_allow(kbdev);
 }
@@ -703,7 +705,7 @@ int kbase_csf_queue_bind(struct kbase_context *kctx, union kbase_ioctl_cs_queue_
 	u8 max_streams;
 	int ret = -EINVAL;
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	group = find_queue_group(kctx, bind->in.group_handle);
 	queue = find_queue(kctx, bind->in.buffer_gpu_addr);
@@ -737,7 +739,7 @@ int kbase_csf_queue_bind(struct kbase_context *kctx, union kbase_ioctl_cs_queue_
 	queue->bind_state = KBASE_CSF_QUEUE_BIND_IN_PROGRESS;
 
 out:
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 
 	return ret;
 }
@@ -843,7 +845,7 @@ void kbase_csf_ring_cs_kernel_doorbell(struct kbase_device *kbdev, int csi_index
 		return;
 
 	/* The access to CSG_DB_REQ/ACK needs to be ordered with respect to
-	 * CS_REQ/ACK to avoid a scenario where CSG_DB_REQ/ACK becomes visibile to
+	 * CS_REQ/ACK to avoid a scenario where CSG_DB_REQ/ACK becomes visible to
 	 * FW before CS_REQ/ACK is set.
 	 *
 	 * 'osh' is used as CPU and GPU would be in the same outer shareable domain.
@@ -878,7 +880,7 @@ int kbase_csf_queue_group_clear_faults(struct kbase_context *kctx,
 
 		if (copy_from_user(&buf_gpu_addr, user_bufs, sizeof(buf_gpu_addr)))
 			return -EFAULT;
-		mutex_lock(&kctx->csf.lock);
+		rt_mutex_lock(&kctx->csf.lock);
 		kbase_gpu_vm_lock(kctx);
 		region = kbase_region_tracker_find_region_enclosing_address(kctx, buf_gpu_addr);
 		if (likely(!kbase_is_region_invalid_or_free(region))) {
@@ -889,11 +891,11 @@ int kbase_csf_queue_group_clear_faults(struct kbase_context *kctx,
 			dev_warn(kbdev->dev, "GPU queue %u without a valid command buffer region",
 				 i);
 			kbase_gpu_vm_unlock(kctx);
-			mutex_unlock(&kctx->csf.lock);
+			rt_mutex_unlock(&kctx->csf.lock);
 			return -EFAULT;
 		}
 		kbase_gpu_vm_unlock(kctx);
-		mutex_unlock(&kctx->csf.lock);
+		rt_mutex_unlock(&kctx->csf.lock);
 		user_bufs = (void __user *)((uintptr_t)user_bufs + sizeof(buf_gpu_addr));
 	}
 
@@ -1310,7 +1312,7 @@ int kbase_csf_queue_group_create(struct kbase_context *const kctx,
 	const u32 fragment_count = hweight64(create->in.fragment_mask);
 	const u32 compute_count = hweight64(create->in.compute_mask);
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	if ((create->in.tiler_max > tiler_count) || (create->in.fragment_max > fragment_count) ||
 	    (create->in.compute_max > compute_count)) {
@@ -1352,7 +1354,7 @@ int kbase_csf_queue_group_create(struct kbase_context *const kctx,
 			err = group_handle;
 	}
 
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 
 	return err;
 }
@@ -1478,9 +1480,9 @@ static void wait_group_deferred_deschedule_completion(struct kbase_queue_group *
 	if (likely(!group->deschedule_deferred_cnt))
 		return;
 
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 	wait_event(kctx->kbdev->csf.event_wait, !group->deschedule_deferred_cnt);
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 #endif
 }
 
@@ -1519,7 +1521,7 @@ void kbase_csf_queue_group_terminate(struct kbase_context *kctx, u8 group_handle
 	else
 		reset_prevented = true;
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	group = find_queue_group(kctx, group_handle);
 
@@ -1527,7 +1529,7 @@ void kbase_csf_queue_group_terminate(struct kbase_context *kctx, u8 group_handle
 		kctx->csf.queue_groups[group_handle] = NULL;
 		/* Stop the running of the given group */
 		term_queue_group(group);
-		mutex_unlock(&kctx->csf.lock);
+		rt_mutex_unlock(&kctx->csf.lock);
 
 		if (reset_prevented) {
 			/* Allow GPU reset before cancelling the group specific
@@ -1545,7 +1547,7 @@ void kbase_csf_queue_group_terminate(struct kbase_context *kctx, u8 group_handle
 		 */
 		cancel_queue_group_events(group);
 
-		mutex_lock(&kctx->csf.lock);
+		rt_mutex_lock(&kctx->csf.lock);
 
 		/* Clean up after the termination */
 		remove_pending_group_fatal_error(group);
@@ -1553,7 +1555,7 @@ void kbase_csf_queue_group_terminate(struct kbase_context *kctx, u8 group_handle
 		wait_group_deferred_deschedule_completion(group);
 	}
 
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 	if (reset_prevented)
 		kbase_reset_gpu_allow(kbdev);
 
@@ -1575,7 +1577,7 @@ int kbase_csf_queue_group_suspend(struct kbase_context *kctx,
 			 group_handle);
 		return err;
 	}
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	group = find_queue_group(kctx, group_handle);
 	if (group)
@@ -1583,7 +1585,7 @@ int kbase_csf_queue_group_suspend(struct kbase_context *kctx,
 	else
 		err = -EINVAL;
 
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 	kbase_reset_gpu_allow(kbdev);
 
 	return err;
@@ -1617,7 +1619,7 @@ void kbase_csf_active_queue_groups_reset(struct kbase_device *kbdev, struct kbas
 
 	INIT_LIST_HEAD(&evicted_groups);
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	kbase_csf_scheduler_evict_ctx_slots(kbdev, kctx, &evicted_groups);
 	while (!list_empty(&evicted_groups)) {
@@ -1636,7 +1638,7 @@ void kbase_csf_active_queue_groups_reset(struct kbase_device *kbdev, struct kbas
 			kbase_csf_term_descheduled_queue_group(group);
 	}
 
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 }
 
 int kbase_csf_ctx_init(struct kbase_context *kctx)
@@ -1664,7 +1666,7 @@ int kbase_csf_ctx_init(struct kbase_context *kctx)
 				err = kbase_csf_tiler_heap_context_init(kctx);
 
 				if (likely(!err)) {
-					mutex_init(&kctx->csf.lock);
+					rt_mutex_init(&kctx->csf.lock);
 
 					err = kbasep_ctx_user_reg_page_mapping_init(kctx);
 
@@ -1750,7 +1752,7 @@ void kbase_csf_ctx_handle_fault(struct kbase_context *kctx, struct kbase_fault *
 									  .status = fault->status,
 								  } } };
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	for (gr = 0; gr < MAX_QUEUE_GROUP_NUM; gr++) {
 		struct kbase_queue_group *const group = kctx->csf.queue_groups[gr];
@@ -1771,10 +1773,10 @@ void kbase_csf_ctx_handle_fault(struct kbase_context *kctx, struct kbase_fault *
 		}
 	}
 
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 
 	if (reported)
-		kbase_event_wakeup(kctx);
+		kbase_event_wakeup_sync(kctx);
 
 	kbase_reset_gpu_allow(kbdev);
 }
@@ -1804,7 +1806,7 @@ void kbase_csf_ctx_term(struct kbase_context *kctx)
 	else
 		reset_prevented = true;
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	/* Iterate through the queue groups that were not terminated by
 	 * userspace and issue the term request to firmware for them.
@@ -1817,7 +1819,7 @@ void kbase_csf_ctx_term(struct kbase_context *kctx)
 			term_queue_group(group);
 		}
 	}
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 
 	if (reset_prevented)
 		kbase_reset_gpu_allow(kbdev);
@@ -1844,7 +1846,7 @@ void kbase_csf_ctx_term(struct kbase_context *kctx)
 	if (as)
 		flush_workqueue(as->pf_wq);
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	for (i = 0; i < MAX_QUEUE_GROUP_NUM; i++) {
 		kfree(kctx->csf.queue_groups[i]);
@@ -1861,9 +1863,9 @@ void kbase_csf_ctx_term(struct kbase_context *kctx)
 
 		list_del_init(&queue->link);
 
-		mutex_unlock(&kctx->csf.lock);
+		rt_mutex_unlock(&kctx->csf.lock);
 		wait_pending_queue_kick(queue);
-		mutex_lock(&kctx->csf.lock);
+		rt_mutex_lock(&kctx->csf.lock);
 
 		/* The reference held when the IO mapping was created on bind
 		 * would have been dropped otherwise the termination of Kbase
@@ -1876,15 +1878,13 @@ void kbase_csf_ctx_term(struct kbase_context *kctx)
 		release_queue(queue);
 	}
 
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 
 	kbasep_ctx_user_reg_page_mapping_term(kctx);
 	kbase_csf_tiler_heap_context_term(kctx);
 	kbase_csf_kcpu_queue_context_term(kctx);
 	kbase_csf_scheduler_context_term(kctx);
 	kbase_csf_event_term(kctx);
-
-	mutex_destroy(&kctx->csf.lock);
 }
 
 /**
@@ -1992,7 +1992,8 @@ static void report_tiler_oom_error(struct kbase_queue_group *group)
 					  } } } };
 
 	kbase_csf_event_add_error(group->kctx, &group->error_fatal, &error);
-	kbase_event_wakeup(group->kctx);
+	kbase_event_wakeup_sync(group->kctx);
+	pixel_gpu_uevent_kmd_error_send(group->kctx->kbdev, GPU_UEVENT_INFO_TILER_OOM);
 }
 
 static void flush_gpu_cache_on_fatal_error(struct kbase_device *kbdev)
@@ -2126,14 +2127,14 @@ static void oom_event_worker(struct work_struct *data)
 	struct kbase_device *const kbdev = kctx->kbdev;
 	int reset_prevent_err = kbase_reset_gpu_try_prevent(kbdev);
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 	if (likely(!reset_prevent_err)) {
 		kbase_queue_oom_event(queue);
 	} else {
 		dev_warn(kbdev->dev,
 			 "Unable to prevent GPU reset, couldn't handle the OoM event\n");
 	}
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 	if (likely(!reset_prevent_err))
 		kbase_reset_gpu_allow(kbdev);
 }
@@ -2160,7 +2161,7 @@ static void report_group_timeout_error(struct kbase_queue_group *const group)
 		 kbase_csf_timeout_get(group->kctx->kbdev));
 
 	kbase_csf_event_add_error(group->kctx, &group->error_fatal, &error);
-	kbase_event_wakeup(group->kctx);
+	kbase_event_wakeup_sync(group->kctx);
 }
 
 /**
@@ -2178,6 +2179,7 @@ static void timer_event_worker(struct work_struct *data)
 	struct kbase_device *const kbdev = kctx->kbdev;
 	bool reset_prevented = false;
 	int err = kbase_reset_gpu_prevent_and_wait(kbdev);
+	pixel_gpu_uevent_kmd_error_send(kbdev, GPU_UEVENT_INFO_PROGRESS_TIMER);
 
 	if (err)
 		dev_warn(
@@ -2187,13 +2189,13 @@ static void timer_event_worker(struct work_struct *data)
 	else
 		reset_prevented = true;
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	term_queue_group(group);
 	flush_gpu_cache_on_fatal_error(kbdev);
 	report_group_timeout_error(group);
 
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 	if (reset_prevented)
 		kbase_reset_gpu_allow(kbdev);
 }
@@ -2294,7 +2296,7 @@ static int alloc_grp_protected_suspend_buffer_pages(struct kbase_queue_group *co
 		goto phys_free;
 	}
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 	kbase_csf_scheduler_lock(kbdev);
 
 	if (unlikely(!group->csg_reg)) {
@@ -2324,7 +2326,7 @@ static int alloc_grp_protected_suspend_buffer_pages(struct kbase_queue_group *co
 
 unlock:
 	kbase_csf_scheduler_unlock(kbdev);
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 phys_free:
 	kfree(phys);
 	return err;
@@ -2339,7 +2341,7 @@ static void report_group_fatal_error(struct kbase_queue_group *const group)
 					     } } };
 
 	kbase_csf_add_group_fatal_error(group, &err_payload);
-	kbase_event_wakeup(group->kctx);
+	kbase_event_wakeup_sync(group->kctx);
 }
 
 /**
@@ -2434,7 +2436,7 @@ static void report_queue_error(struct kbase_queue *const queue, u32 cs_error, u6
 		error.payload.csg_error.error.payload.fault_queue.csi_index = queue->csi_index;
 	}
 	kbase_csf_event_add_error(queue->kctx, &group->error_fatal, &error);
-	kbase_event_wakeup(queue->kctx);
+	kbase_event_wakeup_sync(queue->kctx);
 
 	if (!fatal)
 		queue->clear_faults = false;
@@ -2458,6 +2460,7 @@ static void cs_error_worker(struct work_struct *const data)
 	int err;
 	const bool cs_fatal = queue->cs_error_fatal;
 
+	pixel_gpu_uevent_kmd_error_send(kbdev, GPU_UEVENT_INFO_CS_ERROR);
 	kbase_debug_csf_fault_wait_completion(kbdev);
 	err = kbase_reset_gpu_prevent_and_wait(kbdev);
 
@@ -2468,7 +2471,7 @@ static void cs_error_worker(struct work_struct *const data)
 	else
 		reset_prevented = true;
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	group = get_bound_queue_group(queue);
 	if (!group) {
@@ -2530,7 +2533,7 @@ static void cs_error_worker(struct work_struct *const data)
 	}
 
 unlock:
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 	if (reset_prevented)
 		kbase_reset_gpu_allow(kbdev);
 }
@@ -2998,6 +3001,7 @@ static inline void check_protm_enter_req_complete(struct kbase_device *kbdev, u3
 	dev_dbg(kbdev->dev, "Protected mode entry interrupt received");
 
 	kbdev->protected_mode = true;
+	trace_mali_protected_mode(kbdev->protected_mode);
 
 	kbase_ipa_protection_mode_switch_event(kbdev);
 	kbase_ipa_control_protm_entered(kbdev);
@@ -3037,6 +3041,9 @@ static inline int process_protm_exit(struct kbase_device *kbdev, u32 glb_ack)
 	if (likely(scheduler->active_protm_grp)) {
 		KBASE_KTRACE_ADD_CSF_GRP(kbdev, SCHEDULER_PROTM_EXIT, scheduler->active_protm_grp,
 					 0u);
+		if (likely(scheduler->active_protm_grp->kctx)) {
+			scheduler->active_protm_grp->kctx->protm_exit_ts = ktime_get_raw();
+		}
 		scheduler->active_protm_grp = NULL;
 	} else {
 		dev_warn(kbdev->dev, "PROTM_EXIT interrupt after no pmode group");
@@ -3044,6 +3051,7 @@ static inline int process_protm_exit(struct kbase_device *kbdev, u32 glb_ack)
 
 	if (!WARN_ON(!kbdev->protected_mode)) {
 		kbdev->protected_mode = false;
+		trace_mali_protected_mode(kbdev->protected_mode);
 		kbase_ipa_control_protm_exited(kbdev);
 		kbase_hwcnt_backend_csf_protm_exited(&kbdev->hwcnt_gpu_iface);
 	}
@@ -3167,7 +3175,10 @@ static void handle_glb_fatal_event(struct kbase_device *kbdev,
 	if (fatal_status == GLB_FATAL_STATUS_VALUE_OK)
 		dev_err(kbdev->dev, "GLB_FATAL_STATUS(OK) must be set with proper reason");
 	else {
-		dev_warn(kbdev->dev, "GLB_FATAL_STATUS: %s", error_string);
+		kbdev->csf.glb_fatal_ts = ktime_get_raw();
+		dev_warn(kbdev->dev, "[%lluns] GLB_FATAL_STATUS: %s",
+			kbdev->csf.glb_fatal_ts, error_string);
+
 		queue_work(system_wq, &kbdev->csf.glb_fatal_work);
 	}
 }
@@ -3344,6 +3355,9 @@ exit:
 static void handle_glb_fatal(struct kbase_device *const kbdev)
 {
 	int as;
+
+	pixel_gpu_uevent_kmd_error_send(kbdev, GPU_UEVENT_INFO_FW_ERROR);
+	kbasep_platform_event_core_dump(kbdev, "Internal firmware error");
 
 	for (as = 0; as < kbdev->nr_hw_address_spaces; as++) {
 		unsigned long flags;
@@ -3547,7 +3561,7 @@ void kbase_csf_process_queue_kick(struct kbase_queue *queue)
 		goto out_release_queue;
 	}
 
-	mutex_lock(&kctx->csf.lock);
+	rt_mutex_lock(&kctx->csf.lock);
 
 	if (queue->bind_state != KBASE_CSF_QUEUE_BOUND)
 		goto out_allow_gpu_reset;
@@ -3582,7 +3596,7 @@ out_allow_gpu_reset:
 		atomic_dec(&queue->pending_kick);
 	}
 
-	mutex_unlock(&kctx->csf.lock);
+	rt_mutex_unlock(&kctx->csf.lock);
 
 	kbase_reset_gpu_allow(kbdev);
 

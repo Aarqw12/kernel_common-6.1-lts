@@ -80,6 +80,13 @@
 /* MAX_SUPPORTED_STREAMS_PER_GROUP: Maximum CSs per csg. */
 #define MAX_SUPPORTED_STREAMS_PER_GROUP 32
 
+#define BUILD_INFO_METADATA_SIZE_OFFSET (0x4)
+#define BUILD_INFO_GIT_SHA_LEN (40U)
+#define BUILD_INFO_GIT_DIRTY_LEN (1U)
+#define BUILD_INFO_GIT_SHA_PATTERN "git_sha: "
+
+extern char fw_git_sha[BUILD_INFO_GIT_SHA_LEN];
+
 struct kbase_device;
 
 /**
@@ -797,6 +804,16 @@ static inline u32 kbase_csf_interface_version(u32 major, u32 minor, u32 patch)
  * Return: 0 if success, or negative error code on failure.
  */
 int kbase_csf_trigger_firmware_config_update(struct kbase_device *kbdev);
+
+/**
+ * kbase_csf_debug_dump_registers - Print CSF debug message.
+ *
+ * @kbdev: Instance of a GPU platform device that implements a CSF interface.
+ *
+ * Prints CSF debug message cccontaining critical CSF firmware information.
+ * GPU must be powered during this call.
+ */
+void kbase_csf_debug_dump_registers(struct kbase_device *kbdev);
 
 /**
  * kbase_csf_firmware_req_core_dump - Request a firmware core dump

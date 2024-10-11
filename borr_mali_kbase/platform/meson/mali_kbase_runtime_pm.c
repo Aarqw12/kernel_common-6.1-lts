@@ -261,5 +261,13 @@ struct kbase_pm_callback_conf pm_callbacks = {
 	.power_runtime_term_callback = NULL,
 	.power_runtime_on_callback = NULL,
 	.power_runtime_off_callback = NULL,
-#endif /* KBASE_PM_RUNTIME */
+#endif				/* KBASE_PM_RUNTIME */
+
+#if MALI_USE_CSF && defined(KBASE_PM_RUNTIME)
+	.power_runtime_gpu_idle_callback = pm_callback_runtime_gpu_idle,
+	.power_runtime_gpu_active_callback = pm_callback_runtime_gpu_active,
+#else
+	.power_runtime_gpu_idle_callback = NULL,
+	.power_runtime_gpu_active_callback = NULL,
+#endif
 };

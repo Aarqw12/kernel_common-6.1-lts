@@ -28,12 +28,18 @@
 #include <mali_kbase_kinstr_prfcnt.h>
 #include <hwcnt/mali_kbase_hwcnt_context.h>
 
+#if MALI_USE_CSF
+#include <csf/mali_kbase_csf_scheduler.h>
+#endif
+
 #include <mali_kbase_pm.h>
 #include <backend/gpu/mali_kbase_pm_internal.h>
 
 #include <arbiter/mali_kbase_arbiter_pm.h>
 
 #include <backend/gpu/mali_kbase_clk_rate_trace_mgr.h>
+
+#include <trace/hooks/systrace.h>
 
 int kbase_pm_powerup(struct kbase_device *kbdev, unsigned int flags)
 {
@@ -57,6 +63,7 @@ kbasep_pm_context_active_handle_suspend_locked(struct kbase_device *kbdev,
 {
 	int c;
 
+	ATRACE_BEGIN(__func__);
 	KBASE_DEBUG_ASSERT(kbdev != NULL);
 	dev_dbg(kbdev->dev, "%s - reason = %d, pid = %d\n", __func__, suspend_handler,
 		current->pid);
@@ -73,8 +80,10 @@ kbasep_pm_context_active_handle_suspend_locked(struct kbase_device *kbdev,
 	/* If there is an Arbiter, wait for Arbiter to grant GPU back to KBase
 	 * so suspend request can be handled.
 	 */
-	if (kbase_arbiter_pm_ctx_active_handle_suspend(kbdev, suspend_handler, sched_lock_held))
+	if (kbase_arbiter_pm_ctx_active_handle_suspend(kbdev, suspend_handler, sched_lock_held)) {
+		ATRACE_END();
 		return 1;
+	}
 
 	if (kbase_pm_is_suspending(kbdev)) {
 		switch (suspend_handler) {
@@ -83,6 +92,7 @@ kbasep_pm_context_active_handle_suspend_locked(struct kbase_device *kbdev,
 				break;
 			fallthrough;
 		case KBASE_PM_SUSPEND_HANDLER_DONT_INCREASE:
+			ATRACE_END();
 			return 1;
 
 		case KBASE_PM_SUSPEND_HANDLER_NOT_POSSIBLE:
@@ -105,6 +115,7 @@ kbasep_pm_context_active_handle_suspend_locked(struct kbase_device *kbdev,
 	}
 
 	dev_dbg(kbdev->dev, "%s %d\n", __func__, kbdev->pm.active_count);
+	ATRACE_END();
 
 	return 0;
 }
@@ -133,6 +144,7 @@ void kbase_pm_context_idle_locked(struct kbase_device *kbdev)
 {
 	int c;
 
+	ATRACE_BEGIN(__func__);
 	KBASE_DEBUG_ASSERT(kbdev != NULL);
 	lockdep_assert_held(&kbdev->pm.lock);
 
@@ -154,6 +166,7 @@ void kbase_pm_context_idle_locked(struct kbase_device *kbdev)
 	}
 
 	dev_dbg(kbdev->dev, "%s %d (pid = %d)\n", __func__, kbdev->pm.active_count, current->pid);
+	ATRACE_END();
 }
 
 void kbase_pm_context_idle(struct kbase_device *kbdev)
@@ -226,14 +239,14 @@ int kbase_pm_driver_suspend(struct kbase_device *kbdev)
 	 */
 	kbase_hwcnt_context_disable(kbdev->hwcnt_gpu_ctx);
 
-	mutex_lock(&kbdev->pm.lock);
+	rt_mutex_lock(&kbdev->pm.lock);
 	if (WARN_ON(kbase_pm_is_suspending(kbdev))) {
-		mutex_unlock(&kbdev->pm.lock);
+		rt_mutex_unlock(&kbdev->pm.lock);
 		/* No error handling for this condition */
 		return 0;
 	}
 	kbdev->pm.suspending = true;
-	mutex_unlock(&kbdev->pm.lock);
+	rt_mutex_unlock(&kbdev->pm.lock);
 
 	if (kbase_has_arbiter(kbdev)) {
 		unsigned long flags;
@@ -266,8 +279,9 @@ int kbase_pm_driver_suspend(struct kbase_device *kbdev)
 	 */
 	kbasep_js_suspend(kbdev);
 #else
-	if (kbase_csf_scheduler_pm_suspend(kbdev))
+	if (kbase_csf_scheduler_pm_suspend(kbdev)) {
 		goto exit;
+	}
 #endif
 
 	scheduling_suspended = true;
@@ -287,8 +301,9 @@ int kbase_pm_driver_suspend(struct kbase_device *kbdev)
 	 * the system resumes. Therefore, it is now safe to skip taking the context
 	 * list lock when traversing the context list.
 	 */
-	if (kbase_csf_kcpu_queue_halt_timers(kbdev))
+	if (kbase_csf_kcpu_queue_halt_timers(kbdev)) {
 		goto exit;
+	}
 #endif
 
 	timers_halted = true;
@@ -327,9 +342,9 @@ exit:
 #endif
 	}
 
-	mutex_lock(&kbdev->pm.lock);
+	rt_mutex_lock(&kbdev->pm.lock);
 	kbdev->pm.suspending = false;
-	mutex_unlock(&kbdev->pm.lock);
+	rt_mutex_unlock(&kbdev->pm.lock);
 
 	if (scheduling_suspended)
 		resume_job_scheduling(kbdev);
@@ -393,4 +408,197 @@ void kbase_pm_resume(struct kbase_device *kbdev)
 		kbase_arbiter_pm_vm_event(kbdev, KBASE_VM_OS_RESUME_EVENT);
 	else
 		kbase_pm_driver_resume(kbdev, false);
+}
+
+#if !MALI_USE_CSF
+/**
+ * kbase_pm_apc_power_off_worker - Power off worker running on mali_apc_thread
+ * @data: A &struct kthread_work
+ *
+ * This worker runs kbase_pm_context_idle on mali_apc_thread.
+ */
+static void kbase_pm_apc_power_off_worker(struct kthread_work *data)
+{
+	struct kbase_device *kbdev = container_of(data, struct kbase_device,
+			apc.power_off_work);
+
+	kbase_pm_context_idle(kbdev);
+}
+
+/**
+ * kbase_pm_apc_power_on_worker - Power on worker running on mali_apc_thread
+ * @data: A &struct kthread_work
+ *
+ * APC power on works by increasing the active context count on the GPU. If the
+ * GPU is powered down, this will initiate the power on sequence. If the GPU is
+ * already on, it will remain on as long as the active context count is greater
+ * than zero.
+ *
+ * In order to keep the GPU from remaining on indefinitely as a result of this
+ * call, we need to ensure that any APC-driven active context count increase
+ * has a corresponding active context count decrease.
+ *
+ * In the normal case we hand over this decrease to an hrtimer which in turn
+ * queues work on mali_apc_thread to decrease the count. However, if the process
+ * of increasing the active context count only completes after the requested end
+ * time, then we release the count immediately.
+ *
+ * If the GPU is in the process of suspending when we attempt to increase the
+ * active context count, we can't increase the active context count and so the
+ * APC request fails.
+ *
+ * Note: apc.pending must be reset before this worker function returns.
+ */
+static void kbase_pm_apc_power_on_worker(struct kthread_work *data)
+{
+	struct kbase_device *kbdev = container_of(data, struct kbase_device, apc.power_on_work);
+	ktime_t cur_ts;
+
+	/* Attempt to add a vote to keep the GPU on (or power it on if it is off) */
+	if (kbase_pm_context_active_handle_suspend(kbdev, KBASE_PM_SUSPEND_HANDLER_DONT_INCREASE)) {
+		/* We couldn't add a vote as the GPU was being suspended. */
+		mutex_lock(&kbdev->apc.lock);
+		kbdev->apc.pending = false;
+		mutex_unlock(&kbdev->apc.lock);
+	} else {
+		/* We have added a vote to keep the GPU power on */
+		mutex_lock(&kbdev->apc.lock);
+
+		cur_ts = ktime_get();
+		if (ktime_after(kbdev->apc.end_ts, cur_ts)) {
+			/* Initiate a timer to eventually release our power on vote */
+			hrtimer_start(&kbdev->apc.timer,
+					ktime_sub(kbdev->apc.end_ts, cur_ts),
+					HRTIMER_MODE_REL);
+			kbdev->apc.pending = false;
+			mutex_unlock(&kbdev->apc.lock);
+		} else {
+			/* We're past the end time already so release our power on vote immediately */
+			kbdev->apc.pending = false;
+			mutex_unlock(&kbdev->apc.lock);
+
+			kbase_pm_context_idle(kbdev);
+		}
+	}
+}
+
+void kbase_pm_apc_request(struct kbase_device *kbdev, u32 dur_usec)
+{
+	ktime_t req_ts;
+
+	if (dur_usec < KBASE_APC_MIN_DUR_USEC)
+		return;
+
+	mutex_lock(&kbdev->apc.lock);
+
+	req_ts = ktime_add_us(ktime_get(), min(dur_usec, (u32)KBASE_APC_MAX_DUR_USEC));
+	if (!ktime_after(req_ts, kbdev->apc.end_ts))
+		goto out_unlock;
+
+
+	switch (hrtimer_try_to_cancel(&kbdev->apc.timer)) {
+	case 1:
+		/*
+		 * The timer was successfully cancelled before firing, so extend the existing APC
+		 * request to the new end time.
+		 */
+		hrtimer_start(&kbdev->apc.timer,
+			ktime_sub(req_ts, kbdev->apc.end_ts),
+			HRTIMER_MODE_REL);
+		kbdev->apc.end_ts = req_ts;
+		goto out_unlock;
+
+	case -1:
+		/*
+		 * The timer callback is already running so we can't directly update it. Wait until
+		 * it has completed before resuming, as long as we haven't had to wait too long.
+		 */
+		hrtimer_cancel(&kbdev->apc.timer);
+		if (ktime_after(ktime_get(), req_ts))
+			goto out_unlock;
+		break;
+
+	case 0:
+		/* The timer was inactive so we perform the usual setup */
+		break;
+	}
+
+	kbdev->apc.end_ts = req_ts;
+
+	/* If a power on is already in flight, it will pick up the new apc.end_ts */
+	if (!kbdev->apc.pending) {
+		kbdev->apc.pending = true;
+		mutex_unlock(&kbdev->apc.lock);
+
+		WARN_ONCE(!kthread_queue_work(&kbdev->apc.worker, &kbdev->apc.power_on_work),
+			"APC power on queue blocked");
+		return;
+	}
+
+out_unlock:
+	mutex_unlock(&kbdev->apc.lock);
+}
+
+/**
+ * kbase_pm_apc_timer_callback - Timer callback for powering off the GPU via APC
+ *
+ * @timer: Timer structure.
+ *
+ * This hrtimer callback queues the power off work to mali_apc_thread.
+ *
+ * Return: Always returns HRTIMER_NORESTART.
+ */
+static enum hrtimer_restart kbase_pm_apc_timer_callback(struct hrtimer *timer)
+{
+	struct kbase_device *kbdev =
+			container_of(timer, struct kbase_device, apc.timer);
+
+	WARN_ONCE(!kthread_queue_work(&kbdev->apc.worker, &kbdev->apc.power_off_work),
+		"APC power off queue blocked");
+
+	return HRTIMER_NORESTART;
+}
+#else
+static void kbase_pm_apc_wakeup_csf_scheduler_worker(struct kthread_work *data)
+{
+	struct kbase_device *kbdev = container_of(data, struct kbase_device, apc.wakeup_csf_scheduler_work);
+
+	kbase_csf_scheduler_force_wakeup(kbdev);
+}
+#endif
+
+int kbase_pm_apc_init(struct kbase_device *kbdev)
+{
+	int ret;
+
+	ret = kbase_kthread_run_worker_rt(kbdev, &kbdev->apc.worker, "mali_apc_thread");
+	if (ret)
+		return ret;
+
+#if !MALI_USE_CSF
+	/*
+	 * We initialize power off and power on work on init as they will each
+	 * only operate on one worker.
+	 */
+	kthread_init_work(&kbdev->apc.power_off_work, kbase_pm_apc_power_off_worker);
+	kthread_init_work(&kbdev->apc.power_on_work, kbase_pm_apc_power_on_worker);
+
+	hrtimer_init(&kbdev->apc.timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	kbdev->apc.timer.function = kbase_pm_apc_timer_callback;
+
+	mutex_init(&kbdev->apc.lock);
+#else
+	kthread_init_work(&kbdev->apc.wakeup_csf_scheduler_work, kbase_pm_apc_wakeup_csf_scheduler_worker);
+#endif
+
+	return 0;
+}
+
+void kbase_pm_apc_term(struct kbase_device *kbdev)
+{
+#if !MALI_USE_CSF
+	hrtimer_cancel(&kbdev->apc.timer);
+#endif
+
+	kbase_destroy_kworker_stack(&kbdev->apc.worker);
 }

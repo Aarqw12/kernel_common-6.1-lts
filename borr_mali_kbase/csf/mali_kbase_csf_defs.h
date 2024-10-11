@@ -648,9 +648,9 @@ struct kbase_queue_group {
  * @cmd_seq_num:        The sequence number assigned to an enqueued command,
  *                      in incrementing order (older commands shall have a
  *                      smaller number).
- * @kcpu_wq: Work queue to process KCPU commands for all queues in this
- *           context. This would be used if the context is not prioritised,
- *           otherwise it would be handled by kbase_csf_scheduler_kthread().
+ * @csf_kcpu_worker:    Dedicated worker to process KCPU commands for all queues in this
+ *                      context. This would be used if the context is not prioritised,
+ *                      otherwise it would be handled by kbase_csf_scheduler_kthread().
  * @jit_lock:           Lock to serialise JIT operations.
  * @jit_cmds_head:      A list of the just-in-time memory commands, both
  *                      allocate & free, in submission order, protected
@@ -666,8 +666,7 @@ struct kbase_csf_kcpu_queue_context {
 	DECLARE_BITMAP(in_use, KBASEP_MAX_KCPU_QUEUES);
 	atomic64_t cmd_seq_num;
 
-	struct workqueue_struct *kcpu_wq;
-
+	struct kthread_worker csf_kcpu_worker;
 	struct mutex jit_lock;
 	struct list_head jit_cmds_head;
 	struct list_head jit_blocked_queues;
@@ -898,7 +897,7 @@ struct kbase_csf_context {
 	struct list_head event_pages_head;
 	DECLARE_BITMAP(cookies, KBASE_CSF_NUM_USER_IO_PAGES_HANDLE);
 	struct kbase_queue *user_pages_info[KBASE_CSF_NUM_USER_IO_PAGES_HANDLE];
-	struct mutex lock;
+	struct rt_mutex lock;
 	struct kbase_queue_group *queue_groups[MAX_QUEUE_GROUP_NUM];
 	struct list_head queue_list;
 	struct kbase_csf_kcpu_queue_context kcpu_queues;
@@ -924,6 +923,7 @@ struct kbase_csf_context {
  *                 mechanism to check for deadlocks involving reset waits.
  * @state:         Tracks if the GPU reset is in progress or not.
  *                 The state is represented by enum @kbase_csf_reset_gpu_state.
+ * @force_pm_hw_reset:	pixel: Powercycle the GPU instead of attempting a soft/hard reset.
  */
 struct kbase_csf_reset_gpu {
 	struct workqueue_struct *workq;
@@ -931,6 +931,7 @@ struct kbase_csf_reset_gpu {
 	wait_queue_head_t wait;
 	struct rw_semaphore sem;
 	atomic_t state;
+	bool force_pm_hw_reset;
 };
 
 /**
@@ -1049,6 +1050,7 @@ struct kbase_csf_mcu_shared_regions {
  *                          "tock" schedule operation concluded. Used for
  *                          evaluating the exclusion window for in-cycle
  *                          schedule operation.
+ * @csf_worker:             Dedicated kthread_worker to execute the @tick_work.
  * @timer_enabled:          Whether the CSF scheduler wakes itself up for
  *                          periodic scheduling tasks. If this value is 0
  *                          then it will only perform scheduling under the
@@ -1146,7 +1148,7 @@ struct kbase_csf_mcu_shared_regions {
  * @fw_soi_enabled:         True if FW Sleep-on-Idle is currently enabled.
  */
 struct kbase_csf_scheduler {
-	struct mutex lock;
+	struct rt_mutex lock;
 	spinlock_t interrupt_lock;
 	enum kbase_csf_scheduler_state state;
 	DECLARE_BITMAP(doorbell_inuse_bitmap, CSF_NUM_DOORBELL_MAX);
@@ -1165,6 +1167,7 @@ struct kbase_csf_scheduler {
 	DECLARE_BITMAP(csg_slots_idle_mask, MAX_SUPPORTED_CSGS);
 	DECLARE_BITMAP(csg_slots_prio_update, MAX_SUPPORTED_CSGS);
 	unsigned long last_schedule;
+	struct kthread_worker csf_worker;
 	atomic_t timer_enabled;
 	struct hrtimer tick_timer;
 	atomic_t pending_sync_update_works;
@@ -1250,8 +1253,27 @@ struct kbase_csf_scheduler {
  */
 #define DISABLE_GLB_PWROFF_TIMER (0)
 
+/* Total number of IPA_* counters registered with IPA, defined below */
+enum kbase_ipa_perf_counters {
+	GPU_UTIL_IDX = 0,
+	MCU_ACTIVE_IDX,
+	// append new perf counters above
+	IPA_NUM_PERF_COUNTERS
+};
+
+/* Index of the MCU_ACTIVE counter within the CSHW counter block */
+#define IPA_MCU_ACTIVE_CNT_IDX (5)
+
+#if IS_ENABLED(CONFIG_SOC_ZUMA)
+/*
+ * GPU_ACTIVE counter has HW errata on Turse(G715) GPU, use GPU_ITER_ACTIVE counter.
+ * Index of the GPU_ITER_ACTIVE counter within the CSHW counter block
+ */
+#define IPA_GPU_UTIL_CNT_IDX (6)
+#else
 /* Index of the GPU_ACTIVE counter within the CSHW counter block */
-#define GPU_ACTIVE_CNT_IDX (4)
+#define IPA_GPU_UTIL_CNT_IDX (4)
+#endif
 
 /*
  * Maximum number of sessions that can be managed by the IPA Control component.
@@ -1662,6 +1684,7 @@ struct kbase_csf_user_reg {
  *                            sent to the FW after MCU was re-enabled and their
  *                            acknowledgement is pending.
  * @glb_fatal_work:         Work item for handling the firmware GLB FATAL event.
+ * @coredump_work:          Work item for initiating a platform core dump.
  * @ipa_control:            IPA Control component manager.
  * @mcu_core_pwroff_dur_ns: Sysfs attribute for the glb_pwroff timeout input
  *                          in unit of nanoseconds. The firmware does not use
@@ -1720,6 +1743,7 @@ struct kbase_csf_user_reg {
  * @compute_progress_timeout_cc: Value of GPU cycle count register when progress
  *                               timer timeout is reported for the compute iterator.
  * @num_doorbells: Number of doorbells supported by the GPU.
+ * @glb_fatal_ts: Pixel: GLB_FATAL fault timestamp for SSCD.
  */
 struct kbase_csf_device {
 	struct kbase_mmu_table mcu_mmu;
@@ -1749,6 +1773,7 @@ struct kbase_csf_device {
 	struct work_struct firmware_reload_work;
 	bool glb_init_request_pending;
 	struct work_struct glb_fatal_work;
+	struct work_struct coredump_work;
 	struct kbase_ipa_control ipa_control;
 	u64 mcu_core_pwroff_dur_ns;
 	u32 mcu_core_pwroff_dur_count;
@@ -1785,6 +1810,8 @@ struct kbase_csf_device {
 	struct kbase_csf_fw_io fw_io;
 	u64 compute_progress_timeout_cc;
 	u32 num_doorbells;
+	/* pixel: GLB_FATAL timestamp */
+	ktime_t glb_fatal_ts;
 };
 
 /**

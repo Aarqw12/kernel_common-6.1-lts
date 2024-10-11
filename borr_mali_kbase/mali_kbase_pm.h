@@ -271,4 +271,54 @@ void kbase_pm_driver_resume(struct kbase_device *kbdev, bool arb_gpu_start);
  */
 void kbase_pm_handle_gpu_lost(struct kbase_device *kbdev);
 
+/**
+ * kbase_pm_apc_init - Initialize Async Power Control (APC)
+ * @kbdev: The kbase device structure for the device (must be a valid pointer)
+ *
+ * Performs setup for Async Power Control including initialization of work
+ * structs and the creation of a realtime kernel thread on which asynchronous
+ * power operations will be performed.
+ *
+ * Return: 0 on success, -ENOMEM on resource allocation failures.
+ */
+int kbase_pm_apc_init(struct kbase_device *kbdev);
+
+/**
+ * kbase_pm_apc_term - Handle APC termination
+ * @kbdev: The kbase device structure for the device (must be a valid pointer)
+ *
+ * Cleans up all structures and threads set up to support Async Power Control.
+ */
+void kbase_pm_apc_term(struct kbase_device *kbdev);
+
+#if !MALI_USE_CSF
+/**
+ * kbase_pm_apc_request - Handle APC power on request
+ * @kbdev: The kbase device structure for the device (must be a valid pointer)
+ * @dur_usec: Requested duration for GPU to stay awake in microseconds
+ *
+ * Instructs the APC mechanism to start powering on the GPU and requests to keep
+ * it powered on for at least &dur_usec microseconds.
+ *
+ * Note that the APC mechanism will limit the power on duration requests made
+ * via &dur_usec to &KBASE_APC_MAX_DUR_USEC. The GPU may remain powered on
+ * for longer than &dur_usec if there are outstanding tasks remaining for it to
+ * process.
+ *
+ * Duration requests smaller than &KBASE_APC_MIN_DUR_USEC will are not supported
+ * and will result in no APC work being queued.
+ */
+void kbase_pm_apc_request(struct kbase_device *kbdev, u32 dur_usec);
+#endif
+
+/**
+ * Print debug message indicating power state of GPU
+ * @kbdev: The kbase device structure for the device (must be a valid pointer)
+ * @timeout_msg: A message to print.
+ *
+ * Prerequisite: GPU is powered.
+ * Takes and releases kbdev->hwaccess_lock on CSF GPUs.
+ */
+void kbase_gpu_timeout_debug_message(struct kbase_device *kbdev, const char *timeout_msg);
+
 #endif /* _KBASE_PM_H_ */

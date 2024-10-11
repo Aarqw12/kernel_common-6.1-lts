@@ -513,6 +513,102 @@ static void jd_update_jit_usage(struct kbase_jd_atom *katom)
 }
 #endif /* MALI_JIT_PRESSURE_LIMIT_BASE */
 
+/*
+ * jd_mark_simple_gfx_frame_atoms() - Identify and mark "simple" graphics frame
+ *
+ * This function implements an heuristic to identify atoms that make up a "simple" graphics frame.
+ * These frames  have a fragment atom that depends on:
+ *
+ *   (a) a sync fence signal indicating when it is safe to begin writing to the framebuffer, and
+ *   (b) a vertex/tiling atom that nothing else depends on.
+ *
+ * If these conditions are matched, then the vertex job is marked as deferrable until the GPU is
+ * powered on for some other reason. The fragment job is marked as belonging to a simple frame.
+ *
+ * When the sync fence signals and unblocks the fragment job in the simple frame, the deferrable
+ * flag will be cleared from the vertex job it depends on.
+ *
+ * @katom: The dependency atom to evaluate.
+ */
+static void jd_mark_simple_gfx_frame_atoms(struct kbase_jd_atom *katom)
+{
+	struct kbase_device *kbdev = katom->kctx->kbdev;
+	struct kbase_jd_atom *dep_fence = NULL;
+	struct kbase_jd_atom *dep_vtx = NULL;
+	int i;
+
+	if (BASE_JD_REQ_SOFT_JOB_OR_DEP(katom->core_req) || !(katom->core_req & BASE_JD_REQ_FS))
+		return;
+
+	if (!katom->dep[0].atom || !katom->dep[1].atom)
+		return;
+
+	for (i = 0; i < 2; i++) {
+		/*
+		 * This loop handles the dependencies in either order, but since the typical
+		 * pattern has the CS|T dependency first and the FENCE_WAIT dependency second
+		 * we check for that on the first iteration.
+		 */
+		struct kbase_jd_atom *dep_a = katom->dep[1 - i].atom;
+		struct kbase_jd_atom *dep_b = katom->dep[i].atom;
+
+		dev_dbg(kbdev->dev,
+			"Atom %pK:%x -> [%pK:%x, %pK:%x -> [%pK:%x, %pK:%x]]\n",
+			katom, katom->core_req,
+			dep_a, dep_a->core_req,
+			dep_b, dep_b->core_req,
+			dep_b->dep[0].atom, dep_b->dep[0].atom ? dep_b->dep[0].atom->core_req : 0,
+			dep_b->dep[1].atom, dep_b->dep[1].atom ? dep_b->dep[1].atom->core_req : 0);
+
+		/*
+		 * Dependency A:
+		 */
+		/* Must be on a fence-wait soft job */
+		if ((dep_a->core_req & BASE_JD_REQ_SOFT_JOB_TYPE) != BASE_JD_REQ_SOFT_FENCE_WAIT)
+			continue;
+
+		/*
+		 * Dependency B:
+		 */
+		/*
+		 * Must be a vertex/tiling job. Note the REQ_CS and REQ_T bits have a different
+		 * meaning for soft jobs, so checking those bits alone is insufficient.
+		 */
+		if (BASE_JD_REQ_SOFT_JOB_OR_DEP(dep_b->core_req) ||
+			(dep_b->core_req & (BASE_JD_REQ_CS | BASE_JD_REQ_T)) !=
+			(BASE_JD_REQ_CS | BASE_JD_REQ_T))
+			continue;
+
+		/* And doesn't have any other dependencies */
+		if (dep_b->dep[0].atom || dep_b->dep[1].atom)
+			continue;
+
+		/* At this point, we have found a simple frame */
+		dep_fence = dep_a;
+		dep_vtx = dep_b;
+		break;
+	}
+
+	if (dep_fence && dep_vtx) {
+		unsigned long flags;
+		dev_dbg(kbdev->dev, "Simple gfx frame: {vtx=%pK, wait=%pK}->frag=%pK\n",
+			dep_vtx, dep_fence, katom);
+		spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
+		katom->atom_flags |= KBASE_KATOM_FLAG_SIMPLE_FRAME_FRAGMENT;
+		dep_vtx->atom_flags |= KBASE_KATOM_FLAG_DEFER_WHILE_POWEROFF;
+		spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
+	}
+}
+
+/*
+ * Perform the necessary handling of an atom that has finished running
+ * on the GPU.
+ *
+ * Note that if this is a soft-job that has had kbase_prepare_soft_job called on it then the caller
+ * is responsible for calling kbase_finish_soft_job *before* calling this function.
+ *
+ * The caller must hold the kbase_jd_context.lock.
+ */
 bool kbase_jd_done_nolock(struct kbase_jd_atom *katom, bool post_immediately)
 {
 	struct kbase_context *kctx = katom->kctx;
@@ -566,6 +662,30 @@ bool kbase_jd_done_nolock(struct kbase_jd_atom *katom, bool post_immediately)
 			node = list_entry(runnable_jobs.next, struct kbase_jd_atom, jd_item);
 			list_del(runnable_jobs.next);
 			node->in_jd_list = false;
+
+			if (node->atom_flags &
+			    KBASE_KATOM_FLAG_SIMPLE_FRAME_FRAGMENT) {
+				dev_dbg(kctx->kbdev->dev,
+					"Simple-frame fragment atom %pK unblocked\n",
+					node);
+				for (i = 0; i < 2; i++) {
+					if (node->dep[i].atom &&
+					    node->dep[i].atom->atom_flags &
+						    KBASE_KATOM_FLAG_DEFER_WHILE_POWEROFF) {
+						unsigned long flags;
+						spin_lock_irqsave(&kctx->kbdev->hwaccess_lock, flags);
+						node->dep[i].atom->atom_flags &=
+							~KBASE_KATOM_FLAG_DEFER_WHILE_POWEROFF;
+						spin_unlock_irqrestore(&kctx->kbdev->hwaccess_lock, flags);
+						dev_dbg(kctx->kbdev->dev,
+							"  Undeferred atom %pK\n",
+							node->dep[i].atom);
+						need_to_try_schedule_context =
+							true;
+						break;
+					}
+				}
+			}
 
 			dev_dbg(kctx->kbdev->dev, "List node %pK has status %d\n", node,
 				node->status);
@@ -952,6 +1072,8 @@ static bool jd_submit_atom(struct kbase_context *const kctx,
 		}
 	}
 
+	jd_mark_simple_gfx_frame_atoms(katom);
+
 #if IS_ENABLED(CONFIG_GPU_TRACEPOINTS)
 	katom->work_id = atomic_inc_return(&jctx->work_id);
 	trace_gpu_job_enqueue(kctx->id, katom->work_id,
@@ -1066,7 +1188,7 @@ int kbase_jd_submit(struct kbase_context *kctx, void __user *user_addr, u32 nr_a
 
 		user_addr = (void __user *)((uintptr_t)user_addr + stride);
 
-		mutex_lock(&jctx->lock);
+		rt_mutex_lock(&jctx->lock);
 #ifndef compiletime_assert
 #define compiletime_assert_defined
 #define compiletime_assert(x, msg) \
@@ -1095,7 +1217,7 @@ int kbase_jd_submit(struct kbase_context *kctx, void __user *user_addr, u32 nr_a
 			/* Atom number is already in use, wait for the atom to
 			 * complete
 			 */
-			mutex_unlock(&jctx->lock);
+			rt_mutex_unlock(&jctx->lock);
 
 			/* This thread will wait for the atom to complete. Due
 			 * to thread scheduling we are not sure that the other
@@ -1113,7 +1235,7 @@ int kbase_jd_submit(struct kbase_context *kctx, void __user *user_addr, u32 nr_a
 				 */
 				return 0;
 			}
-			mutex_lock(&jctx->lock);
+			rt_mutex_lock(&jctx->lock);
 		}
 		KBASE_TLSTREAM_TL_JD_SUBMIT_ATOM_START(kbdev, katom);
 		need_to_try_schedule_context |= jd_submit_atom(kctx, &user_atom, katom);
@@ -1123,7 +1245,7 @@ int kbase_jd_submit(struct kbase_context *kctx, void __user *user_addr, u32 nr_a
 		 */
 		kbase_disjoint_event_potential(kbdev);
 
-		mutex_unlock(&jctx->lock);
+		rt_mutex_unlock(&jctx->lock);
 		if (fatal_signal_pending(current)) {
 			dev_dbg(kbdev->dev, "Fatal signal pending for kctx %d_%d", kctx->tgid,
 				kctx->id);
@@ -1140,7 +1262,7 @@ int kbase_jd_submit(struct kbase_context *kctx, void __user *user_addr, u32 nr_a
 
 KBASE_EXPORT_TEST_API(kbase_jd_submit);
 
-void kbase_jd_done_worker(struct work_struct *data)
+void kbase_jd_done_worker(struct kthread_work *data)
 {
 	struct kbase_jd_atom *katom = container_of(data, struct kbase_jd_atom, work);
 	struct kbase_jd_context *jctx;
@@ -1172,10 +1294,10 @@ void kbase_jd_done_worker(struct work_struct *data)
 	/*
 	 * Begin transaction on JD context and JS context
 	 */
-	mutex_lock(&jctx->lock);
+	rt_mutex_lock(&jctx->lock);
 	KBASE_TLSTREAM_TL_ATTRIB_ATOM_STATE(kbdev, katom, TL_ATOM_STATE_DONE);
-	mutex_lock(&js_devdata->queue_mutex);
-	mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
+	rt_mutex_lock(&js_devdata->queue_mutex);
+	rt_mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
 
 	/* This worker only gets called on contexts that are scheduled *in*. This is
 	 * because it only happens in response to an IRQ from a job that was
@@ -1187,8 +1309,8 @@ void kbase_jd_done_worker(struct work_struct *data)
 		unsigned long flags;
 
 		dev_dbg(kbdev->dev, "Atom %pK has been promoted to stopped\n", (void *)katom);
-		mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
-		mutex_unlock(&js_devdata->queue_mutex);
+		rt_mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
+		rt_mutex_unlock(&js_devdata->queue_mutex);
 
 		spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
 
@@ -1197,7 +1319,7 @@ void kbase_jd_done_worker(struct work_struct *data)
 		kbase_js_unpull(kctx, katom);
 
 		spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
-		mutex_unlock(&jctx->lock);
+		rt_mutex_unlock(&jctx->lock);
 
 		return;
 	}
@@ -1215,8 +1337,8 @@ void kbase_jd_done_worker(struct work_struct *data)
 	KBASE_DEBUG_ASSERT(kbasep_js_has_atom_finished(&katom_retained_state));
 
 	kbasep_js_remove_job(kbdev, kctx, katom);
-	mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
-	mutex_unlock(&js_devdata->queue_mutex);
+	rt_mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
+	rt_mutex_unlock(&js_devdata->queue_mutex);
 	/* kbase_jd_done_nolock() requires the jsctx_mutex lock to be dropped */
 	kbase_jd_done_nolock(katom, false);
 
@@ -1226,7 +1348,7 @@ void kbase_jd_done_worker(struct work_struct *data)
 		unsigned long flags;
 
 		context_idle = false;
-		mutex_lock(&js_devdata->queue_mutex);
+		rt_mutex_lock(&js_devdata->queue_mutex);
 		spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
 
 		/* If kbase_sched() has scheduled this context back in then
@@ -1265,13 +1387,13 @@ void kbase_jd_done_worker(struct work_struct *data)
 			kbase_ctx_flag_set(kctx, KCTX_ACTIVE);
 		}
 		spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
-		mutex_unlock(&js_devdata->queue_mutex);
+		rt_mutex_unlock(&js_devdata->queue_mutex);
 	}
 
 	/*
 	 * Transaction complete
 	 */
-	mutex_unlock(&jctx->lock);
+	rt_mutex_unlock(&jctx->lock);
 
 	/* Job is now no longer running, so can now safely release the context
 	 * reference, and handle any actions that were logged against the
@@ -1286,7 +1408,7 @@ void kbase_jd_done_worker(struct work_struct *data)
 		/* If worker now idle then post all events that kbase_jd_done_nolock()
 		 * has queued
 		 */
-		mutex_lock(&jctx->lock);
+		rt_mutex_lock(&jctx->lock);
 		while (!list_empty(&kctx->completed_jobs)) {
 			struct kbase_jd_atom *atom = list_entry(kctx->completed_jobs.next,
 								struct kbase_jd_atom, jd_item);
@@ -1294,7 +1416,7 @@ void kbase_jd_done_worker(struct work_struct *data)
 
 			kbase_event_post(kctx, atom);
 		}
-		mutex_unlock(&jctx->lock);
+		rt_mutex_unlock(&jctx->lock);
 	}
 
 	kbase_backend_complete_wq_post_sched(kbdev, core_req);
@@ -1310,7 +1432,7 @@ void kbase_jd_done_worker(struct work_struct *data)
 
 /**
  * jd_cancel_worker - Work queue job cancel function.
- * @data: a &struct work_struct
+ * @data: a &struct kthread_work
  *
  * Only called as part of 'Zapping' a context (which occurs on termination).
  * Operates serially with the kbase_jd_done_worker() on the work queue.
@@ -1322,7 +1444,7 @@ void kbase_jd_done_worker(struct work_struct *data)
  * running (by virtue of only being called on contexts that aren't
  * scheduled).
  */
-static void jd_cancel_worker(struct work_struct *data)
+static void jd_cancel_worker(struct kthread_work *data)
 {
 	struct kbase_jd_atom *katom = container_of(data, struct kbase_jd_atom, work);
 	struct kbase_jd_context *jctx;
@@ -1351,11 +1473,11 @@ static void jd_cancel_worker(struct work_struct *data)
 	KBASE_DEBUG_ASSERT(!kbase_ctx_flag(kctx, KCTX_SCHEDULED));
 
 	/* Scheduler: Remove the job from the system */
-	mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
+	rt_mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
 	attr_state_changed = kbasep_js_remove_cancelled_job(kbdev, kctx, katom);
-	mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
+	rt_mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
 
-	mutex_lock(&jctx->lock);
+	rt_mutex_lock(&jctx->lock);
 
 	need_to_try_schedule_context = kbase_jd_done_nolock(katom, true);
 	/* Because we're zapping, we're not adding any more jobs to this ctx, so no need to
@@ -1363,9 +1485,10 @@ static void jd_cancel_worker(struct work_struct *data)
 	 * around this too.
 	 */
 	KBASE_DEBUG_ASSERT(!need_to_try_schedule_context);
+	CSTD_UNUSED(need_to_try_schedule_context);
 
 	/* katom may have been freed now, do not use! */
-	mutex_unlock(&jctx->lock);
+	rt_mutex_unlock(&jctx->lock);
 
 	if (attr_state_changed)
 		kbase_js_sched_all(kbdev);
@@ -1422,9 +1545,10 @@ void kbase_jd_done(struct kbase_jd_atom *katom, unsigned int slot_nr, ktime_t *e
 		return;
 #endif
 
-	WARN_ON(work_pending(&katom->work));
-	INIT_WORK(&katom->work, kbase_jd_done_worker);
-	queue_work(kctx->jctx.job_done_wq, &katom->work);
+	/* At this point no work should be pending on katom->work */
+
+	kthread_init_work(&katom->work, kbase_jd_done_worker);
+	kthread_queue_work(&kbdev->job_done_worker, &katom->work);
 }
 
 KBASE_EXPORT_TEST_API(kbase_jd_done);
@@ -1444,12 +1568,12 @@ void kbase_jd_cancel(struct kbase_device *kbdev, struct kbase_jd_atom *katom)
 	/* This should only be done from a context that is not scheduled */
 	KBASE_DEBUG_ASSERT(!kbase_ctx_flag(kctx, KCTX_SCHEDULED));
 
-	WARN_ON(work_pending(&katom->work));
+	/* At this point no work should be pending on katom->work */
 
 	katom->event_code = BASE_JD_EVENT_JOB_CANCELLED;
 
-	INIT_WORK(&katom->work, jd_cancel_worker);
-	queue_work(kctx->jctx.job_done_wq, &katom->work);
+	kthread_init_work(&katom->work, jd_cancel_worker);
+	kthread_queue_work(&kctx->kbdev->job_done_worker, &katom->work);
 }
 
 void kbase_jd_zap_context(struct kbase_context *kctx)
@@ -1466,7 +1590,7 @@ void kbase_jd_zap_context(struct kbase_context *kctx)
 
 	kbase_js_zap_context(kctx);
 
-	mutex_lock(&kctx->jctx.lock);
+	rt_mutex_lock(&kctx->jctx.lock);
 
 	/*
 	 * While holding the struct kbase_jd_context lock clean up jobs which are known to kbase but are
@@ -1479,7 +1603,7 @@ void kbase_jd_zap_context(struct kbase_context *kctx)
 		kbase_cancel_soft_job(katom);
 	}
 
-	mutex_unlock(&kctx->jctx.lock);
+	rt_mutex_unlock(&kctx->jctx.lock);
 
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	kbase_debug_job_fault_kctx_unblock(kctx);
@@ -1493,18 +1617,11 @@ KBASE_EXPORT_TEST_API(kbase_jd_zap_context);
 int kbase_jd_init(struct kbase_context *kctx)
 {
 	int i;
-	int mali_err = 0;
 	struct priority_control_manager_device *pcm_device = NULL;
 
 	KBASE_DEBUG_ASSERT(kctx);
 	pcm_device = kctx->kbdev->pcm_dev;
 	kctx->jctx.max_priority = KBASE_JS_ATOM_SCHED_PRIO_REALTIME;
-
-	kctx->jctx.job_done_wq = alloc_workqueue("mali_jd", WQ_HIGHPRI | WQ_UNBOUND, 1);
-	if (kctx->jctx.job_done_wq == NULL) {
-		mali_err = -ENOMEM;
-		goto out1;
-	}
 
 	for (i = 0; i < BASE_JD_ATOM_COUNT; i++) {
 		init_waitqueue_head(&kctx->jctx.atoms[i].completed);
@@ -1521,7 +1638,7 @@ int kbase_jd_init(struct kbase_context *kctx)
 #endif
 	}
 
-	mutex_init(&kctx->jctx.lock);
+	rt_mutex_init(&kctx->jctx.lock);
 
 	init_waitqueue_head(&kctx->jctx.zero_jobs_wait);
 
@@ -1535,9 +1652,6 @@ int kbase_jd_init(struct kbase_context *kctx)
 			pcm_device, current, KBASE_JS_ATOM_SCHED_PRIO_REALTIME);
 
 	return 0;
-
-out1:
-	return mali_err;
 }
 
 KBASE_EXPORT_TEST_API(kbase_jd_init);
@@ -1546,8 +1660,7 @@ void kbase_jd_exit(struct kbase_context *kctx)
 {
 	KBASE_DEBUG_ASSERT(kctx);
 
-	/* Work queue is emptied by this */
-	destroy_workqueue(kctx->jctx.job_done_wq);
+	kthread_flush_worker(&kctx->kbdev->job_done_worker);
 }
 
 KBASE_EXPORT_TEST_API(kbase_jd_exit);

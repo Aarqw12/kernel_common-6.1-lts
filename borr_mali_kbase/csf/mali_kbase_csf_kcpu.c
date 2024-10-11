@@ -450,7 +450,7 @@ static void enqueue_kcpuq_work(struct kbase_kcpu_command_queue *queue)
 	struct kbase_context *const kctx = queue->kctx;
 
 	if (!atomic_read(&kctx->prioritized))
-		queue_work(kctx->csf.kcpu_queues.kcpu_wq, &queue->work);
+		kthread_queue_work(&kctx->csf.kcpu_queues.csf_kcpu_worker, &queue->work);
 	else
 		kbase_csf_scheduler_enqueue_kcpuq_work(queue);
 }
@@ -1760,7 +1760,7 @@ static void fence_signal_timeout_cb(struct timer_list *timer)
 		if (atomic_read(&kcpu_queue->fence_signal_pending_cnt) > 1)
 			fence_signal_timeout_start(kcpu_queue);
 
-		queue_work(kctx->csf.kcpu_queues.kcpu_wq, &kcpu_queue->timeout_work);
+		kthread_queue_work(&kctx->csf.kcpu_queues.csf_kcpu_worker, &kcpu_queue->timeout_work);
 	}
 }
 
@@ -1828,6 +1828,8 @@ static int kbasep_kcpu_fence_signal_init(struct kbase_kcpu_command_queue *kcpu_q
 	kcpu_fence = kzalloc(sizeof(*kcpu_fence), GFP_KERNEL);
 	if (!kcpu_fence)
 		return -ENOMEM;
+	/* Set reference to KCPU metadata */
+	kcpu_fence->metadata = kcpu_queue->metadata;
 
 	/* Set reference to KCPU metadata and increment refcount */
 	kcpu_fence->metadata = kcpu_queue->metadata;
@@ -2017,7 +2019,7 @@ static void kcpu_fence_timeout_dump(struct kbase_kcpu_command_queue *queue,
 	kbasep_print(kbpr, "-----------------------------------------------\n");
 }
 
-static void kcpu_queue_timeout_worker(struct work_struct *data)
+static void kcpu_queue_timeout_worker(struct kthread_work *data)
 {
 	struct kbase_kcpu_command_queue *queue =
 		container_of(data, struct kbase_kcpu_command_queue, timeout_work);
@@ -2033,7 +2035,7 @@ static void kcpu_queue_timeout_worker(struct work_struct *data)
 	kcpu_queue_force_fence_signal(queue);
 }
 
-static void kcpu_queue_process_worker(struct work_struct *data)
+static void kcpu_queue_process_worker(struct kthread_work *data)
 {
 	struct kbase_kcpu_command_queue *queue =
 		container_of(data, struct kbase_kcpu_command_queue, work);
@@ -2087,7 +2089,7 @@ static int delete_queue(struct kbase_context *kctx, u32 id)
 
 		mutex_unlock(&queue->lock);
 
-		cancel_work_sync(&queue->timeout_work);
+		kthread_cancel_work_sync(&queue->timeout_work);
 
 		/*
 		 * Drain a pending request to process this queue in
@@ -2097,8 +2099,7 @@ static int delete_queue(struct kbase_context *kctx, u32 id)
 		kbase_csf_scheduler_wait_for_kthread_pending_work(kctx->kbdev,
 								  &queue->pending_kick);
 
-		cancel_work_sync(&queue->work);
-
+		kthread_cancel_work_sync(&queue->work);
 		mutex_destroy(&queue->lock);
 
 		vfree(queue);
@@ -2728,16 +2729,13 @@ out:
 
 int kbase_csf_kcpu_queue_context_init(struct kbase_context *kctx)
 {
-	kctx->csf.kcpu_queues.kcpu_wq =
-		alloc_workqueue("mali_kcpu_wq_%i_%i", 0, 0, kctx->tgid, kctx->id);
-	if (kctx->csf.kcpu_queues.kcpu_wq == NULL) {
-		dev_err(kctx->kbdev->dev,
-			"Failed to initialize KCPU queue high-priority workqueue");
-		return -ENOMEM;
+	int ret = kbase_kthread_run_worker_rt(kctx->kbdev, &kctx->csf.kcpu_queues.csf_kcpu_worker, "csf_kcpu_worker");
+	if (ret) {
+		dev_err(kctx->kbdev->dev, "Failed to initialize KCPU worker");
+		return ret;
 	}
 
 	mutex_init(&kctx->csf.kcpu_queues.lock);
-
 	return 0;
 }
 
@@ -2753,8 +2751,7 @@ void kbase_csf_kcpu_queue_context_term(struct kbase_context *kctx)
 	}
 
 	mutex_destroy(&kctx->csf.kcpu_queues.lock);
-
-	destroy_workqueue(kctx->csf.kcpu_queues.kcpu_wq);
+	kbase_destroy_kworker_stack(&kctx->csf.kcpu_queues.csf_kcpu_worker);
 }
 KBASE_EXPORT_TEST_API(kbase_csf_kcpu_queue_context_term);
 
@@ -2836,11 +2833,14 @@ int kbase_csf_kcpu_queue_new(struct kbase_context *kctx, struct kbase_ioctl_kcpu
 	};
 
 	mutex_init(&queue->lock);
-	INIT_WORK(&queue->work, kcpu_queue_process_worker);
+
+
 	INIT_LIST_HEAD(&queue->high_prio_work);
 	atomic_set(&queue->pending_kick, 0);
-	INIT_WORK(&queue->timeout_work, kcpu_queue_timeout_worker);
 	INIT_LIST_HEAD(&queue->jit_blocked);
+
+	kthread_init_work(&queue->work, kcpu_queue_process_worker);
+	kthread_init_work(&queue->timeout_work, kcpu_queue_timeout_worker);
 
 	if (IS_ENABLED(CONFIG_SYNC_FILE)) {
 		metadata = kbase_csf_kcpu_queue_metadata_new(kctx, queue->fence_context);

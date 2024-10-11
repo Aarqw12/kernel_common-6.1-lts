@@ -27,6 +27,7 @@
 #include <mali_kbase_debug.h>
 
 #include <uapi/gpu/arm/midgard/mali_base_kernel.h>
+
 #include <mali_kbase_linux.h>
 #include <linux/version_compat_defs.h>
 
@@ -84,6 +85,10 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <linux/interrupt.h>
+#include <linux/kthread.h>
+
+#include <linux/sched/rt.h>
+#include <uapi/linux/sched/types.h>
 
 #define KBASE_DRV_NAME "mali"
 #define KBASE_TIMELINE_NAME KBASE_DRV_NAME ".timeline"
@@ -105,6 +110,9 @@
 /*
  * Kernel-side Base (KBase) APIs
  */
+
+#define kbase_event_wakeup_sync(kctx) _kbase_event_wakeup(kctx, true)
+#define kbase_event_wakeup_nosync(kctx) _kbase_event_wakeup(kctx, false)
 
 struct kbase_device *kbase_device_alloc(void);
 /*
@@ -267,7 +275,7 @@ int kbase_jd_submit(struct kbase_context *kctx, void __user *user_addr, u32 nr_a
 
 /**
  * kbase_jd_done_worker - Handle a job completion
- * @data: a &struct work_struct
+ * @data: a &struct kthread_work
  *
  * This function requeues the job from the runpool (if it was soft-stopped or
  * removed from NEXT registers).
@@ -282,7 +290,7 @@ int kbase_jd_submit(struct kbase_context *kctx, void __user *user_addr, u32 nr_a
  * Handles retrying submission outside of IRQ context if it failed from within
  * IRQ context.
  */
-void kbase_jd_done_worker(struct work_struct *data);
+void kbase_jd_done_worker(struct kthread_work *data);
 
 void kbase_jd_done(struct kbase_jd_atom *katom, unsigned int slot_nr, ktime_t *end_timestamp,
 		   kbasep_js_atom_done_code done_code);
@@ -399,7 +407,7 @@ int kbase_event_pending(struct kbase_context *kctx);
 int kbase_event_init(struct kbase_context *kctx);
 void kbase_event_close(struct kbase_context *kctx);
 void kbase_event_cleanup(struct kbase_context *kctx);
-void kbase_event_wakeup(struct kbase_context *kctx);
+void _kbase_event_wakeup(struct kbase_context *kctx, bool sync);
 
 /**
  * kbasep_jit_alloc_validate() - Validate the JIT allocation info.
@@ -581,6 +589,40 @@ void kbase_pm_metrics_start(struct kbase_device *kbdev);
  */
 void kbase_pm_metrics_stop(struct kbase_device *kbdev);
 
+/**
+ * kbase_pm_init_event_log - Initialize the event log and make it discoverable
+ *
+ * @kbdev: The kbase device structure for the device (must be a valid pointer)
+ */
+void kbase_pm_init_event_log(struct kbase_device *kbdev);
+
+/**
+ * kbase_pm_max_event_log_size - Get the largest size of the power management event log
+ *
+ * @kbdev: The kbase device structure for the device (must be a valid pointer)
+ *
+ * Return: The size of a buffer large enough to contain the log at any time.
+ */
+u64 kbase_pm_max_event_log_size(struct kbase_device *kbdev);
+
+/**
+ * kbase_pm_copy_event_log - Retrieve a copy of the power management event log
+ *
+ * @kbdev: The kbase device structure for the device (must be a valid pointer)
+ * @buffer: If non-NULL, a buffer of @size bytes to copy the data into
+ * @size: The size of buffer (should be at least as large as returned by
+ *        kbase_pm_event_max_log_size())
+ *
+ * This function is called when dumping a debug log of all recent events in the
+ * power management backend.
+ *
+ * Return: 0 if the log could be copied successfully, otherwise an error code.
+ *
+ * Requires kbdev->pmaccess_lock to be held.
+ */
+int kbase_pm_copy_event_log(struct kbase_device *kbdev,
+		void *buffer, u64 size);
+
 #if MALI_USE_CSF && defined(KBASE_PM_RUNTIME)
 /**
  * kbase_pm_handle_runtime_suspend - Handle the runtime suspend of GPU
@@ -619,6 +661,7 @@ int kbase_pm_handle_runtime_suspend(struct kbase_device *kbdev);
  * Return: 0 if the wake up was successful.
  */
 int kbase_pm_force_mcu_wakeup_after_sleep(struct kbase_device *kbdev);
+
 #endif
 
 #if !MALI_USE_CSF
@@ -783,6 +826,48 @@ bool kbasep_adjust_prioritized_process(struct kbase_device *kbdev, bool add, uin
  * and the number of contexts is >= this value it is reported as a disjoint event
  */
 #define KBASE_DISJOINT_STATE_INTERLEAVED_CONTEXT_COUNT_THRESHOLD 2
+
+/**
+ * kbase_kthread_run_rt - Create a realtime thread with an appropriate coremask
+ *
+ * @kbdev:        the kbase device
+ * @threadfn:     the function the realtime thread will execute
+ * @thread_param: data pointer to @threadfn
+ * @namefmt:      a name for the thread.
+ *
+ * Creates a realtime kthread with priority &KBASE_RT_THREAD_PRIO and restricted
+ * to cores defined by &KBASE_RT_THREAD_CPUMASK_MIN and &KBASE_RT_THREAD_CPUMASK_MAX.
+ *
+ * Wakes up the task.
+ *
+ * Return: IS_ERR() on failure, or a valid task pointer.
+ */
+struct task_struct *kbase_kthread_run_rt(struct kbase_device *kbdev,
+	int (*threadfn)(void *data), void *thread_param, const char namefmt[], ...);
+
+/**
+ * kbase_kthread_run_worker_rt - Create a realtime kthread_worker_fn with an appropriate coremask
+ *
+ * @kbdev:   the kbase device
+ * @worker:  pointer to the thread's parameters
+ * @namefmt: a name for the thread.
+ *
+ * Creates a realtime kthread_worker_fn thread with priority &KBASE_RT_THREAD_PRIO and restricted
+ * to cores defined by &KBASE_RT_THREAD_CPUMASK_MIN and &KBASE_RT_THREAD_CPUMASK_MAX.
+ *
+ * Wakes up the task.
+ *
+ * Return: Zero on success, or an PTR_ERR on failure.
+ */
+int kbase_kthread_run_worker_rt(struct kbase_device *kbdev,
+	struct kthread_worker *worker, const char namefmt[], ...);
+
+/**
+ * kbase_destroy_kworker_stack - Destroy a kthread_worker and it's thread on the stack
+ *
+ * @worker:   pointer to the thread's kworker
+ */
+void kbase_destroy_kworker_stack(struct kthread_worker *worker);
 
 #if !defined(UINT64_MAX)
 #define UINT64_MAX ((uint64_t)0xFFFFFFFFFFFFFFFFULL)
