@@ -50,7 +50,9 @@ enum vendor_inheritnace_t {
 struct vendor_inheritance_struct {
 	unsigned int uclamp[VI_MAX][UCLAMP_CNT];
 	short int uclamp_fork_reset;
+	short int adpf;
 	short int prefer_idle;
+	short int prefer_fit;
 };
 
 struct uclamp_filter {
@@ -75,7 +77,6 @@ struct vendor_task_struct {
 	struct list_head node;
 	int queued_to_list;
 	bool uclamp_fork_reset;
-	bool prefer_idle;
 	bool prefer_high_cap;
 	int auto_uclamp_max_flags;	// Relative to cpu instead of absolute
 	struct uclamp_filter uclamp_filter;
@@ -92,6 +93,12 @@ struct vendor_task_struct {
 	unsigned long util_enqueued;
 	unsigned long prev_util_enqueued;
 	bool ignore_util_est_update;
+
+	/* sched qos attributes */
+	bool boost_prio;
+	bool prefer_fit;
+	bool prefer_idle;
+	bool adpf;
 
 	/*
 	 * A general field for time measurement in the same process context.

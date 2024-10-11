@@ -1483,7 +1483,7 @@ static void prio_changed(struct task_struct *p, int old_prio, int new_prio)
 	prio_changed_fair(rq, p, old_prio);
 }
 
-void update_adpf_prio(struct task_struct *p, struct vendor_task_struct *vp, bool val)
+void update_task_prio(struct task_struct *p, struct vendor_task_struct *vp, bool val)
 {
 	int new_prio, old_prio;
 
@@ -1603,7 +1603,7 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 
 	p_util_min = max(p_util_min, get_vendor_task_struct(p)->iowait_boost);
 
-	if (get_uclamp_fork_reset(p, true) || get_auto_prefer_fit(p))
+	if (get_uclamp_fork_reset(p, true) || get_prefer_fit(p) || get_auto_prefer_fit(p))
 		prefer_fit = true;
 
 	for (; pd; pd = pd->next) {
@@ -2269,6 +2269,11 @@ void initialize_vendor_group_property(void)
 #endif
 		vg[i].rampup_multiplier = 1;
 		vg[i].disable_util_est = false;
+
+		vg[i].qos_adpf_enable = false;
+		vg[i].qos_prefer_idle_enable = false;
+		vg[i].qos_prefer_fit_enable = false;
+		vg[i].qos_boost_prio_enable = false;
 	}
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
@@ -2619,7 +2624,7 @@ void rvh_set_user_nice_locked_pixel_mod(void *data, struct task_struct *p, long 
 		return;
 
 	vp = get_vendor_task_struct(p);
-	if (get_uclamp_fork_reset(p, false)) {
+	if (get_uclamp_fork_reset(p, false) || vp->boost_prio) {
 		raw_spin_lock_irqsave(&vp->lock, flags);
 		p->normal_prio = p->static_prio = vp->orig_prio = NICE_TO_PRIO(*nice);
 		raw_spin_unlock_irqrestore(&vp->lock, flags);
@@ -2643,7 +2648,7 @@ void rvh_setscheduler_pixel_mod(void *data, struct task_struct *p)
 		return;
 
 	vp = get_vendor_task_struct(p);
-	if (get_uclamp_fork_reset(p, false)) {
+	if (get_uclamp_fork_reset(p, false) || vp->boost_prio) {
 		raw_spin_lock_irqsave(&vp->lock, flags);
 		vp->orig_prio = p->static_prio;
 		raw_spin_unlock_irqrestore(&vp->lock, flags);
