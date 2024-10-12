@@ -129,6 +129,29 @@
 	DRM_V_TIMING(VDISPLAY, VFP, VSA, VBP)
 
 /**
+ * DRM_VRR_MODE_TIMING() - same as DRM_MODE_TIMING, but with VRR capabilities
+ * @PEAK_REFRESH_FREQ: Peak physical image refresh frequency, in Hz
+ * @TE_FREQ: TE signal frequency, in Hz
+ * @HDISPLAY: Horizontal active region
+ * @HFP: Horizontal front porch
+ * @HSA: Horizontal sync
+ * @HBP: Horizontal back porch
+ * @VDISPLAY: Vertical active region
+ * @VFP: Vertical front porch
+ * @VSA: Vertical sync
+ * @VBP: Vertical back porch
+ *
+ * This fills the same role as DRM_MODE_TIMING(), but also encodes the `vscan`
+ * member to indicate the difference between (peak) refresh rate and TE frequency
+ * inherent in VRR modes.
+ * Notably, the `clock` member is also multiplied by the `vscan` result with this encoding.
+ */
+#define DRM_VRR_MODE_TIMING(PEAK_REFRESH_FREQ, TE_FREQ, HDISPLAY, HFP, HSA, HBP, \
+			    VDISPLAY, VFP, VSA, VBP) \
+	DRM_MODE_TIMING(TE_FREQ, HDISPLAY, HFP, HSA, HBP, VDISPLAY, VFP, VSA, VBP), \
+	.vscan = (TE_FREQ) / (PEAK_REFRESH_FREQ)
+
+/**
  * struct gs_display_dsc - Information about a mode's DSC parameters
  * @enabled: Whether DSC is enabled for this mode
  * @dsc_count: Number of encoders to be used by DPU (TODO:b/283964743)

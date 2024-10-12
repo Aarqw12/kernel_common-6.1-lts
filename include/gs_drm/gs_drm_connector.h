@@ -349,6 +349,9 @@ static inline int gs_drm_mode_te_freq(const struct drm_display_mode *mode)
 {
 	int freq = drm_mode_vrefresh(mode);
 
+	if (mode->vscan > 1)
+		return freq * mode->vscan;
+
 	if (mode->flags & DRM_MODE_FLAG_TE_FREQ_X2)
 		freq *= 2;
 	else if (mode->flags & DRM_MODE_FLAG_TE_FREQ_X4)
