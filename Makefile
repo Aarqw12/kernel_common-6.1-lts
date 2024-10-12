@@ -53,6 +53,7 @@ google-bms-objs += gbms_storage.o
 # obj-$(CONFIG_GOOGLE_BEE)	+= google_eeprom.o
 google-bms-objs += google_eeprom.o
 google-bms-objs += google_eeprom_01.o
+google-bms-objs += google_eeprom_02.o
 
 # Battery
 obj-$(CONFIG_GOOGLE_BATTERY) += google-battery.o

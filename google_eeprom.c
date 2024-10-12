@@ -48,8 +48,8 @@
 #define BATT_EEPROM_TAG_EXTRA_START	(BATT_EEPROM_TAG_HIST_OFFSET + BATT_TOTAL_HIST_LEN)
 
 // 0x3E2 is the first free with 75 history entries
-#define BATT_EEPROM_TAG_FGST_OFFSET      0x3E4
-#define BATT_EEPROM_TAG_FGST_LEN         1
+#define BATT_EEPROM_TAG_FGST_OFFSET	0x3E4
+#define BATT_EEPROM_TAG_FGST_LEN 	1
 #define BATT_EEPROM_TAG_AYMD_OFFSET	0x3E5
 #define BATT_EEPROM_TAG_AYMD_LEN	BATT_EEPROM_TAG_XYMD_LEN
 #define BATT_EEPROM_TAG_GCFE_OFFSET	0x3E8
@@ -386,6 +386,15 @@ struct gbms_storage_desc gbee_storage01_dsc = {
 	.write_data = gbee_storage_write_data,
 };
 
+struct gbms_storage_desc gbee_storage02_dsc = {
+	.info = gbee_storage02_info,
+	.iter = gbee_storage_iter,
+	.read = gbee_storage_read,
+	.write = gbee_storage_write,
+	.read_data = gbee_storage_read_data,
+	.write_data = gbee_storage_write_data,
+};
+
 /* TODO: factor history mechanics out of google battery? */
 static int gbms_hist_move(struct nvmem_device *nvmem, int from, int to, int len)
 {
@@ -426,19 +435,10 @@ exit:
 	return ret;
 }
 
-/* LOTR is in a fixed position, move  */
-static int gbms_lotr_update(struct nvmem_device *nvmem, int lotr_to)
+static int gbms_lotr_update_to_v1(struct nvmem_device *nvmem)
 {
-	int ret, lotr_from = 0;
+	int ret;
 	static u8 init_data[5]= { 0 };
-
-	ret = nvmem_device_read(nvmem, BATT_EEPROM_TAG_LOTR_OFFSET,
-				BATT_EEPROM_TAG_LOTR_LEN, &lotr_from);
-	if (ret < 0 || lotr_from == lotr_to)
-		return ret;
-
-	if (lotr_to != GBMS_LOTR_V1 || lotr_from != GBMS_LOTR_DEFAULT)
-		return 0;
 
 	ret = gbms_hist_move(nvmem, 0x5E, 0x64, BATT_TOTAL_HIST_LEN);
 	if (ret < 0) {
@@ -452,6 +452,45 @@ static int gbms_lotr_update(struct nvmem_device *nvmem, int lotr_to)
 		pr_err("%s: cannot init new fields\n", __func__);
 		return ret < 0 ? ret : -EINVAL;
 	}
+
+	return ret;
+}
+
+static int gbms_lotr_update_to_v2(struct nvmem_device *nvmem)
+{
+	int ret;
+	static u8 clr_val[1] = { 0xff };
+	static size_t offset = BATT_EEPROM_TAG_FGST_OFFSET;
+	size_t index, size = 0x3FF - offset;
+
+	/* clear space in old version format */
+	for (index = 0; index < size; index++) {
+		ret = nvmem_device_write(nvmem, index + offset, 1, clr_val);
+		if (ret < 0)
+			return ret;
+		msleep(BATT_WAIT_INTERNAL_WRITE_MS);
+	}
+
+	return ret;
+}
+
+/* LOTR is in a fixed position, move  */
+static int gbms_lotr_update(struct nvmem_device *nvmem, int lotr_to)
+{
+	int ret, lotr_from = 0;
+
+	ret = nvmem_device_read(nvmem, BATT_EEPROM_TAG_LOTR_OFFSET,
+				BATT_EEPROM_TAG_LOTR_LEN, &lotr_from);
+	pr_info("google_bms: lotr_from:%d, lotr_to=%d\n", lotr_from, lotr_to);
+	if (ret < 0 || lotr_from == lotr_to)
+		return ret;
+
+	if (lotr_to == GBMS_LOTR_V1 && lotr_from == GBMS_LOTR_DEFAULT)
+		ret = gbms_lotr_update_to_v1(nvmem);
+	else if (lotr_to == GBMS_LOTR_V2 && lotr_from == GBMS_LOTR_DEFAULT)
+		ret = gbms_lotr_update_to_v2(nvmem);
+	else
+		return 0;
 
 	/* TODO: how do we handle backporting? */
 
@@ -469,6 +508,8 @@ static struct gbms_storage_desc *gbms_lotr_2_dsc(int lotr_ver)
 	switch (lotr_ver) {
 	case GBMS_LOTR_V1:
 		return &gbee_storage01_dsc;
+	case GBMS_LOTR_V2:
+		return &gbee_storage02_dsc;
 	default:
 		return &gbee_storage_dsc;
 	}
