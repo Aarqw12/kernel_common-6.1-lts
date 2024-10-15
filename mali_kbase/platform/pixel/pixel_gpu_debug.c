@@ -99,3 +99,28 @@ void gpu_debug_read_pdc_status(struct kbase_device *kbdev, struct pixel_gpu_pdc_
 	gpu_debug_read_sparse_pdcs(kbdev, status->state.stacks, raw_props->stack_present,
 				   PIXEL_STACK_PDC_ADDR, PIXEL_MALI_STACK_COUNT);
 }
+
+void gpu_debug_dump_pdc_status(struct kbase_device *kbdev)
+{
+	struct pixel_gpu_pdc_status status;
+	int i;
+
+	lockdep_assert_held(&kbdev->hwaccess_lock);
+
+	if (!kbdev->pm.backend.gpu_powered) {
+		dev_err(kbdev->dev, "pixel_gpu_debug: GPU not powered to read PDC state.");
+		return;
+	}
+
+	gpu_debug_read_pdc_status(kbdev, &status);
+
+	dev_err(kbdev->dev, "pixel_gpu_debug: pdc coregroup state: 0x%x", status.state.core_group);
+	for (i = 0; i < PIXEL_MALI_SC_COUNT; i++) {
+		dev_err(kbdev->dev, "pixel_gpu_debug: pdc shadercore state: %d=0x%x",
+			i, status.state.shader_cores[i]);
+	}
+	for (i = 0; i < PIXEL_MALI_STACK_COUNT; i++) {
+		dev_err(kbdev->dev, "pixel_gpu_debug: pdc shaderstack state: %d=0x%x",
+			i, status.state.stacks[i]);
+	}
+}

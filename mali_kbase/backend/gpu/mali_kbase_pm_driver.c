@@ -52,6 +52,7 @@
 
 #if MALI_USE_CSF
 #include <linux/delay.h>
+#include "pixel_gpu_debug.h"
 #endif
 
 #include <linux/of.h>
@@ -2633,6 +2634,7 @@ void kbase_gpu_timeout_debug_message(struct kbase_device *kbdev, const char *tim
 		kbase_pm_is_l2_desired(kbdev), kbdev->pm.backend.policy_change_clamp_state_to_off);
 	dev_err(kbdev->dev, "\tL2 sw state = %d\n",
 		kbdev->pm.backend.l2_state);
+	gpu_debug_dump_pdc_status(kbdev);
 	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
 #endif
 	dev_err(kbdev->dev, "Current state :\n");
