@@ -16,18 +16,18 @@ build:use_source_tree_aosp --kernel_package=@//aosp
 build:use_source_tree_aosp_staging --kernel_package=@//aosp-staging
 
 build:download_gki --use_prebuilt_gki
-#build:download_gki --use_signed_prebuilts
-build:download_gki --action_env=KLEAF_DOWNLOAD_BUILD_NUMBER_MAP="gki_prebuilts=11611633"
+build:download_gki --use_signed_prebuilts
+build:download_gki --action_env=KLEAF_DOWNLOAD_BUILD_NUMBER_MAP="gki_prebuilts=12440485"
 build:no_download_gki --use_prebuilt_gki=false
 
 build:download_gki_fips140 --//private/devices/google/common:download_prebuilt_gki_fips140=1
 build:no_download_gki_fips140 --//private/devices/google/common:download_prebuilt_gki_fips140=0
 
 # disable GKI prebuilts by default
-build --config=no_download_gki
+#build --config=no_download_gki
 
 # enable GKI prebuilts by default
-#build --config=download_gki
+build --config=download_gki
 
 # disable download prebuilt GKI fips140.ko by default
 #build --config=no_download_gki_fips140
