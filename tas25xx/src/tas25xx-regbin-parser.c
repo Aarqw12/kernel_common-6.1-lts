@@ -1304,7 +1304,7 @@ static int32_t tas25xx_int_put_idx_value(struct tas25xx_priv *p_tas25xx,
 		dev_info(plat_data->dev, "%s kcontrol=%s with value index=%d", __func__,
 			g_kctrl_data[ctrl_idx].kcontrol.int_type.name, value_idx);
 
-		if (value_idx < count_w) {
+		if (value_idx >= 0 && value_idx < count_w) {
 			switch (g_kctrl_data[ctrl_idx].kcontrol.int_type.reg_type) {
 			case CMD_SINGLE_WRITE:
 				value_w = g_kctrl_data[ctrl_idx].kcontrol.int_type.chardata[value_idx];
