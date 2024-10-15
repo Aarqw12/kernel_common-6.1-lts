@@ -11,5 +11,6 @@ enum mm_hint_mode {
 };
 
 enum mm_hint_mode get_mm_hint_mode(void);
+bool is_file_cache_enough(void);
 
 #endif	/* PIXEL_MM_HINT_H */
