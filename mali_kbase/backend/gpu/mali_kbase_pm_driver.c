@@ -2661,6 +2661,16 @@ void kbase_gpu_timeout_debug_message(struct kbase_device *kbdev, const char *tim
 static void kbase_pm_timed_out(struct kbase_device *kbdev, const char *timeout_msg)
 {
 	kbase_gpu_timeout_debug_message(kbdev, timeout_msg);
+#if IS_ENABLED(CONFIG_SOC_GS201)
+	struct device_node *dpm = of_find_node_by_name(NULL, "dpm");
+	const char *variant = NULL;
+
+	if (dpm && !of_property_read_string(dpm, "variant", &variant) &&
+	    strcmp(variant, "user")) {
+		/* pixel : b/286061575: panic on gs201 non-user builds. */
+		panic("b/286061575: mali: kbase_pm_timed_out\n");
+	}
+#endif
 	/* pixel: If either:
 	 *   1. L2/MCU power transition timed out, or,
 	 *   2. kbase state machine fell out of sync with the hw state,
