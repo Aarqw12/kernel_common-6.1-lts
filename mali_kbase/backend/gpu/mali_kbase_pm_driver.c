@@ -2611,7 +2611,7 @@ void kbase_gpu_timeout_debug_message(struct kbase_device *kbdev, const char *tim
 {
 	unsigned long flags;
 
-	dev_err(kbdev->dev, "%s", timeout_msg);
+	dev_err(kbdev->dev, "[%lluns] %s", ktime_get_raw_ns(), timeout_msg);
 #if !MALI_USE_CSF
 	CSTD_UNUSED(flags);
 	dev_err(kbdev->dev, "Desired state :\n");
