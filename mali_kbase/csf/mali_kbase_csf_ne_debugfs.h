@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  *
- * (C) COPYRIGHT 2022-2024 ARM Limited. All rights reserved.
+ * (C) COPYRIGHT 2018-2024 ARM Limited. All rights reserved.
  *
  * This program is free software and is provided to you under the terms of the
  * GNU General Public License version 2 as published by the Free Software
@@ -18,21 +18,17 @@
  * http://www.gnu.org/licenses/gpl-2.0.html.
  *
  */
+#ifndef _KBASE_CSF_NE_DEBUGFS_H_
+#define _KBASE_CSF_NE_DEBUGFS_H_
+
+struct kbase_device;
 
 /*
- * Dummy Model interface
+ * kbase_csf_ne_debugfs_init - Initialize neural engine debugfs entries.
+ * @kbdev: Kbase device.
+ *
+ * Return: 0 on success, -1 on failure.
  */
+int kbase_csf_ne_control_debugfs_init(struct kbase_device *kbdev);
 
-#ifndef _UAPI_KBASE_MODEL_LINUX_H_
-#define _UAPI_KBASE_MODEL_LINUX_H_
-
-/* Generic model IRQs */
-#define MODEL_LINUX_JOB_IRQ (0x1 << 0)
-#define MODEL_LINUX_GPU_IRQ (0x1 << 1)
-#define MODEL_LINUX_MMU_IRQ (0x1 << 2)
-#define MODEL_LINUX_IRQAW_IRQ (0x1 << 3)
-
-#define MODEL_LINUX_IRQ_MASK \
-	(MODEL_LINUX_JOB_IRQ | MODEL_LINUX_GPU_IRQ | MODEL_LINUX_MMU_IRQ | MODEL_LINUX_IRQAW_IRQ)
-
-#endif /* _UAPI_KBASE_MODEL_LINUX_H_ */
+#endif /* _KBASE_CSF_NE_DEBUGFS_H_ */
