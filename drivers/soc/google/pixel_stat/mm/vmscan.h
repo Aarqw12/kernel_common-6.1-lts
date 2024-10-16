@@ -22,4 +22,5 @@ void vh_vmscan_kswapd_done(
     unsigned int highest_zoneidx,
     unsigned int alloc_order,
     unsigned int reclaim_order);
+void vh_vmscan_tune_swappiness(void *data, int *swappiness);
 #endif
