@@ -772,7 +772,6 @@ struct p9221_charger_platform_data {
 	bool				enable_15w;
 	bool				has_rtx;
 	bool				has_rtx_gpio;
-	bool				rtx_wait_ben;
 	u32				power_mitigate_threshold;
 	u32				power_mitigate_ac_threshold;
 	u32				alignment_scalar_low_current;
