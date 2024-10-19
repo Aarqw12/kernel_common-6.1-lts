@@ -106,16 +106,16 @@ int lwis_i2c_set_state(struct lwis_i2c_device *i2c, const char *state_str)
 {
 	int ret;
 	struct pinctrl_state *state;
-	const char *state_to_set;
 
 	if (!i2c || !i2c->state_pinctrl) {
 		pr_err("Cannot find i2c instance\n");
 		return -ENODEV;
 	}
 
-	state_to_set = i2c->pinctrl_default_state_only ? "default" : state_str;
+	if (!i2c->set_master_pinctrl_state)
+		return 0;
 
-	state = pinctrl_lookup_state(i2c->state_pinctrl, state_to_set);
+	state = pinctrl_lookup_state(i2c->state_pinctrl, state_str);
 	if (IS_ERR_OR_NULL(state)) {
 		dev_err(i2c->base_dev.dev, "State %s not found (%ld)\n", state_str, PTR_ERR(state));
 		return PTR_ERR(state);
