@@ -8,16 +8,22 @@
 #ifndef _UAPI_FTH_HANDLER_H_
 #define _UAPI_FTH_HANDLER_H_
 
-#define FTH_IOCTL_SEND_KEY_EVENT        101
-#define FTH_IOCTL_ACQUIRE_WAKELOCK      107
-#define FTH_IOCTL_RELEASE_WAKELOCK      108
-#define FTH_IOCTL_GET_TOUCH_FD_VERSION  109
-#define FTH_IOCTL_CONFIGURE_TOUCH_FD_V5 114
+#define FTH_IOCTL_SEND_KEY_EVENT             101
+#define FTH_IOCTL_ENABLE_LPTW_EVENT_REPORT   102
+#define FTH_IOCTL_DISABLE_LPTW_EVENT_REPORT  103
+#define FTH_IOCTL_ACQUIRE_WAKELOCK           107
+#define FTH_IOCTL_RELEASE_WAKELOCK           108
+#define FTH_IOCTL_GET_TOUCH_FD_VERSION       109
+//#define FTH_IOCTL_CONFIGURE_TOUCH_FD_V3    112
+//#define FTH_IOCTL_CONFIGURE_TOUCH_FD_V4    113
+//#define FTH_IOCTL_CONFIGURE_TOUCH_FD_V5    114
+#define FTH_IOCTL_CONFIGURE_TOUCH_FD_V6      115
 
-#define FTH_TOUCH_FD_VERSION_5 5
+#define FTH_TOUCH_FD_VERSION_6 6
 
 #define FTH_MAX_FD_EVENTS 128
 
+#define FTH_MAX_FINGERS 10
 /*
  * enum fth_finger_events -
  *      enumeration of fth finger events
@@ -32,13 +38,13 @@ enum fth_finger_events {
 };
 
 /*
- * struct fth_touch_event_v5 -
+ * struct fth_touch_event_v6 -
  *		used to send fd event
  */
-struct fth_touch_event_v5 {
+struct fth_touch_event_v6 {
 	__s64 time_us;
-	__s32 X;
-	__s32 Y;
+	__u16 X[FTH_MAX_FINGERS];
+	__u16 Y[FTH_MAX_FINGERS];
 	__s32 major;
 	__s32 minor;
 	__s32 orientation;
@@ -46,6 +52,7 @@ struct fth_touch_event_v5 {
 	__s32 state;	// 0 = up, 1 = down, 2 = move.
 	__s32 num_fingers;	// number of fingers
 	_Bool touch_valid;
+	_Bool updated[FTH_MAX_FINGERS];
 };
 
 /*
@@ -54,7 +61,7 @@ struct fth_touch_event_v5 {
  */
 struct fth_fd_buf {
 	__u32 num_events;
-	struct fth_touch_event_v5 fd_events[FTH_MAX_FD_EVENTS];
+	struct fth_touch_event_v6 fd_events[FTH_MAX_FD_EVENTS];
 };
 
 /*
@@ -78,7 +85,7 @@ struct fth_touch_fd_version {
 };
 
 /*
- * struct fth_touch_config_v5 -
+ * struct fth_touch_config_v6 -
  *		used to configure touch finger detect
  * @version - touch FD version
  * @touch_fd_enable - flag to enable/disable touch finger detect
@@ -90,7 +97,7 @@ struct fth_touch_fd_version {
  * @rad_x: movement radius in x direction
  * @rad_y: movement radius in y direction
  */
-struct fth_touch_config_v5 {
+struct fth_touch_config_v6 {
 	struct fth_touch_fd_version version;
 	_Bool touch_fd_enable;
 	_Bool rad_filter_enable;
