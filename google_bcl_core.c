@@ -1641,7 +1641,7 @@ static int google_bcl_register_zones_main(struct bcl_device *bcl_dev, void *pdat
 	struct s2mpg10_platform_data *pdata = pdata_main;
 #endif
 
-	const bool register_thermal = !IS_ENABLED(CONFIG_SOC_ZUMAPRO);
+	const bool register_thermal = false;
 
 	ocp_cpu2_pin = pdata->b2_ocp_warn_pin;
 	ocp_cpu2_lvl = pdata->b2_ocp_warn_lvl;
