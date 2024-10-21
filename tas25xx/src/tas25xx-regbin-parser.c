@@ -581,7 +581,7 @@ int32_t tas25xx_process_block(struct tas25xx_priv *p_tas25xx, char *mem, int32_t
 			dev_dbg(plat_data->dev, "ch=%d Cmd = %s delay=%x(%d)\n",
 				chn, CMD_ID[cmd], delay, delay);
 			ret |= 0;
-			msleep(delay);
+			usleep_range(delay*1000, delay*1000);
 			break;
 		}
 	}
