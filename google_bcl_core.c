@@ -649,13 +649,20 @@ static void google_irq_triggered_work(struct work_struct *work)
 		}
 	}
 
-	if (zone->bcl_qos)
+	if (zone->bcl_qos) {
 		google_bcl_qos_update(zone, true);
-
-	mod_delayed_work(bcl_dev->qos_update_wq, &zone->warn_work, msecs_to_jiffies(TIMEOUT_5MS));
+		mod_delayed_work(bcl_dev->qos_update_wq, &zone->warn_work,
+				 msecs_to_jiffies(TIMEOUT_5MS));
+	}
 
 	idx = zone->idx;
 	bcl_dev = zone->parent;
+
+	if (bcl_dev->batt_psy_initialized) {
+		atomic_inc(&zone->bcl_cnt);
+		ocpsmpl_read_stats(bcl_dev, &zone->bcl_stats, bcl_dev->batt_psy);
+		update_tz(zone, idx, true);
+	}
 
 	trace_bcl_zone_stats(zone, 1);
 
@@ -665,12 +672,6 @@ static void google_irq_triggered_work(struct work_struct *work)
 	if (google_bcl_wait_for_response_locked(zone, TIMEOUT_5MS) > 0)
 		return;
 	google_bcl_upstream_state(zone, LIGHT);
-
-	if (bcl_dev->batt_psy_initialized) {
-		atomic_inc(&zone->bcl_cnt);
-		ocpsmpl_read_stats(bcl_dev, &zone->bcl_stats, bcl_dev->batt_psy);
-		update_tz(zone, idx, true);
-	}
 
 	if (zone->irq_type == IF_PMIC)
 		update_irq_start_times(bcl_dev, idx);
