@@ -58,7 +58,6 @@
 #include <max77779_fg.h>
 #include <max777x9_bcl.h>
 
-
 static const struct platform_device_id google_id_table[] = {
 	{.name = "google_mitigation",},
 	{},
@@ -92,14 +91,14 @@ static int zone_read_temp(struct thermal_zone_device *tz, int *val)
 	return 0;
 }
 
-static struct power_supply *google_get_power_supply(struct bcl_device *bcl_dev)
+static struct power_supply *google_get_power_supply(struct bcl_device *bcl_dev, const char *str)
 {
 	static struct power_supply *psy[2];
 	static struct power_supply *batt_psy;
 	int err = 0;
 
 	batt_psy = NULL;
-	err = power_supply_get_by_phandle_array(bcl_dev->device->of_node, "google,power-supply",
+	err = power_supply_get_by_phandle_array(bcl_dev->device->of_node, str,
 						psy, ARRAY_SIZE(psy));
 	if (err > 0)
 		batt_psy = psy[0];
@@ -333,7 +332,7 @@ static int google_bcl_read_soc(struct bcl_device *bcl_dev, int *val)
 	if (!smp_load_acquire(&bcl_dev->enabled))
 		return 0;
 	if (!bcl_dev->batt_psy)
-		bcl_dev->batt_psy = google_get_power_supply(bcl_dev);
+		bcl_dev->batt_psy = google_get_power_supply(bcl_dev, PSY_NAME);
 	if (bcl_dev->batt_psy) {
 		err = power_supply_get_property(bcl_dev->batt_psy,
 						POWER_SUPPLY_PROP_CAPACITY, &ret);
@@ -1238,7 +1237,7 @@ static int intf_pmic_init(struct bcl_device *bcl_dev)
 	u8 val, retval;
 	unsigned int uvlo1_lvl, uvlo2_lvl, batoilo_lvl, batoilo2_lvl, lvl;
 
-	bcl_dev->batt_psy = google_get_power_supply(bcl_dev);
+	bcl_dev->batt_psy = google_get_power_supply(bcl_dev, PSY_NAME);
 	batoilo_reg_read(bcl_dev->intf_pmic_dev, bcl_dev->ifpmic, BATOILO2, &lvl);
 	batoilo2_lvl = BO_STEP * lvl + bcl_dev->batt_irq_conf1.batoilo_lower_limit;
 	batoilo_reg_read(bcl_dev->intf_pmic_dev, bcl_dev->ifpmic, BATOILO1, &lvl);
@@ -1507,6 +1506,14 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 		retval = ret ? BO_LIMIT : retval;
 		bcl_dev->batt_irq_conf2.batoilo_trig_lvl =
 				(retval - bcl_dev->batt_irq_conf2.batoilo_lower_limit) / BO_STEP;
+		ret = of_property_read_u32(np, "batoilo_otg_trig_lvl", &retval);
+		bcl_dev->batt_irq_conf1.batoilo_otg_trig_lvl = ret ?
+				bcl_dev->batt_irq_conf1.batoilo_trig_lvl :
+				(retval - bcl_dev->batt_irq_conf1.batoilo_lower_limit) / BO_STEP;
+		ret = of_property_read_u32(np, "batoilo2_otg_trig_lvl", &retval);
+		bcl_dev->batt_irq_conf2.batoilo_otg_trig_lvl = ret ?
+				bcl_dev->batt_irq_conf2.batoilo_trig_lvl :
+				(retval - bcl_dev->batt_irq_conf2.batoilo_lower_limit) / BO_STEP;
 		ret = of_property_read_u32(np, "batoilo_usb_trig_lvl", &retval);
 		bcl_dev->batt_irq_conf1.batoilo_usb_trig_lvl = ret ?
 				bcl_dev->batt_irq_conf1.batoilo_trig_lvl :
@@ -1523,6 +1530,9 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 		bcl_dev->batt_irq_conf2.batoilo_wlc_trig_lvl = ret ?
 				bcl_dev->batt_irq_conf2.batoilo_trig_lvl :
 				(retval - bcl_dev->batt_irq_conf2.batoilo_lower_limit) / BO_STEP;
+		ret = of_property_read_u32(np, "batoilo_otg_bat_open_to", &retval);
+		bcl_dev->batt_irq_conf1.batoilo_bat_otg_open_to = ret ?
+				BO_BAT_OPEN_TO_DEFAULT : retval;
 		ret = of_property_read_u32(np, "batoilo_bat_open_to", &retval);
 		bcl_dev->batt_irq_conf1.batoilo_bat_open_to = ret ? BO_BAT_OPEN_TO_DEFAULT : retval;
 		ret = of_property_read_u32(np, "batoilo2_bat_open_to", &retval);
@@ -1557,6 +1567,7 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 		ret = of_property_read_u32(np, "evt_cnt_rate", &retval);
 		bcl_dev->evt_cnt.rate = ret ? EVT_CNT_RATE_DEFAULT : retval;
 #endif
+		bcl_dev->usb_otg_conf = of_property_read_bool(np, "usb_otg_conf");
 		bcl_dev->uvlo1_vdrp1_en = of_property_read_bool(np, "uvlo1_vdrp1_en");
 		bcl_dev->uvlo1_vdrp2_en = of_property_read_bool(np, "uvlo1_vdrp2_en");
 		bcl_dev->uvlo2_vdrp1_en = of_property_read_bool(np, "uvlo2_vdrp1_en");
@@ -2263,9 +2274,10 @@ static void google_bcl_init_power_supply(struct bcl_device *bcl_dev)
 	int ret;
 
 	INIT_DELAYED_WORK(&bcl_dev->soc_work, google_bcl_evaluate_soc);
-	bcl_dev->batt_psy = google_get_power_supply(bcl_dev);
+	bcl_dev->batt_psy = google_get_power_supply(bcl_dev, PSY_NAME);
 	bcl_dev->batt_psy_initialized = false;
 	bcl_dev->psy_nb.notifier_call = battery_supply_callback;
+	bcl_dev->otg_psy = google_get_power_supply(bcl_dev, PSY_OTG_NAME);
 	ret = power_supply_reg_notifier(&bcl_dev->psy_nb);
 	if (ret < 0)
 		dev_err(bcl_dev->device, "soc notifier registration error. defer. err:%d\n", ret);
