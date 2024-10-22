@@ -1303,10 +1303,14 @@ static int max1720x_history_empty(struct maxfg_eeprom_history *entry)
 static int max1720x_find_empty(int offset)
 {
 	struct maxfg_eeprom_history temp = { 0 };
-	int ret, index;
+	int ret, index, hist_max_size;
+
+	hist_max_size = gbms_storage_read_data(GBMS_TAG_HIST, NULL, 0, 0);
+	if (hist_max_size <= 0)
+		return -EIO;
 
 	/* recover (last - OVERFLOW_START_ENTRY + 1) entries */
-	for (index = offset; index < BATT_MAX_HIST_CNT; index++) {
+	for (index = offset; index < hist_max_size; index++) {
 		ret = gbms_storage_read_data(GBMS_TAG_HIST, &temp,
 					     sizeof(temp), index);
 		if (ret < 0)
@@ -1316,7 +1320,7 @@ static int max1720x_find_empty(int offset)
 			break;
 	}
 
-	return index == BATT_MAX_HIST_CNT ? -1 : index - offset;
+	return index == hist_max_size ? -1 : index - offset;
 }
 
 static int max1720x_check_history(struct max1720x_chip *chip)
@@ -1846,9 +1850,15 @@ static int max1720x_get_age(struct max1720x_chip *chip)
 static void max1720x_update_timer_base(struct max1720x_chip *chip)
 {
 	struct maxfg_eeprom_history hist = { 0 };
-	int ret, i, time_pre, time_now;
+	int ret, i, time_pre, time_now, hist_max_size;
 
-	for (i = 0; i < BATT_MAX_HIST_CNT; i++) {
+	hist_max_size = gbms_storage_read_data(GBMS_TAG_HIST, NULL, 0, 0);
+	if (hist_max_size <= 0) {
+		dev_err(chip->dev, "failed to get history max size (%d)\n", hist_max_size);
+		return;
+	}
+
+	for (i = 0; i < hist_max_size; i++) {
 		ret = gbms_storage_read_data(GBMS_TAG_HIST, &hist, sizeof(hist), i);
 		if (ret < 0)
 			return;
