@@ -216,7 +216,8 @@ static int8_t *find_block_for_channel(struct tas25xx_priv *p_tas25xx,
 
 	plat_data = p_tas25xx->platform_data;
 
-	if (inp && header_check(p_tas25xx, inp, blk_name))
+	if (inp && (inp + HDR_STR_SZ < p_tas25xx->fw_data + p_tas25xx->fw_size) &&
+		header_check(p_tas25xx, inp, blk_name))
 		return inp;
 
 	/* start from begginging */
