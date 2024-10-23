@@ -22,6 +22,7 @@ static int cmd_count;
 #define DEFAULT_TELEPHONY_MIC PORT_INCALL_TX
 
 #define AOC_CHIRP_BLOCK 9
+#define AOC_ATRIGGER_BLOCK 23
 
 extern struct be_path_cache port_array[PORT_MAX];
 
@@ -4223,6 +4224,25 @@ int aoc_audio_set_chirp_parameter(struct aoc_chip *chip, int key, int value)
 				sizeof(cmd), (uint8_t *)&cmd, chip);
 	if (err < 0)
 		pr_err("ERR:%d in AoC Set Chirp Parameter, key: %d\n", err, key);
+
+	return err < 0 ? err : 0;
+}
+
+int aoc_audio_set_two_one(struct aoc_chip *chip, int enable)
+{
+	int err;
+	struct CMD_AUDIO_OUTPUT_SET_PARAMETER cmd;
+
+	AocCmdHdrSet(&cmd.parent, CMD_AUDIO_OUTPUT_SET_PARAMETER_ID,
+		     sizeof(cmd));
+	cmd.block = AOC_ATRIGGER_BLOCK;
+	cmd.key = 0;
+	cmd.val = enable;
+
+	err = aoc_audio_control(CMD_OUTPUT_CHANNEL, (uint8_t *)&cmd,
+				sizeof(cmd), (uint8_t *)&cmd, chip);
+	if (err < 0)
+		pr_err("ERR:%d setting 2.1 %d\n", err, enable);
 
 	return err < 0 ? err : 0;
 }
