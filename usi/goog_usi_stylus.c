@@ -541,11 +541,11 @@ int goog_usi_report_battery(g_usi_handle_t handle, const u8 *bat)
 
 	if (usi_ctx->stylus_battery != bat[0]) {
 		usi_ctx->stylus_battery = bat[0];
-		set_battery_available(usi_ctx);
 
 		/* notify new battery level received */
 		power_supply_changed(usi_ctx->bat_psy);
 	}
+	set_battery_available(usi_ctx);
 
 	mutex_unlock(&usi_ctx->lock);
 
