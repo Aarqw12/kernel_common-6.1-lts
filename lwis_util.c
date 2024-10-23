@@ -149,7 +149,7 @@ int lwis_set_kthread_priority(struct lwis_device *lwis_dev, struct task_struct *
 		task->static_prio = priority;
 		task->normal_prio = priority;
 	}
-	ret = sched_setscheduler(task, policy, &param);
+	ret = sched_setscheduler_nocheck(task, policy, &param);
 	if (ret) {
 		dev_err(lwis_dev->dev, "Failed to set kthread priority (%d)", ret);
 		return ret;
