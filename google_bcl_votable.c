@@ -70,8 +70,9 @@ static int google_bcl_usb_votable_callback(struct gvotable_election *el,
 	else
 		err = power_supply_get_property(bcl_dev->batt_psy,
 						POWER_SUPPLY_PROP_STATUS, &prop);
-	if ((err == 0) && (prop.intval == POWER_SUPPLY_STATUS_DISCHARGING) && usb_enable &&
+	if ((err == 0) && (prop.intval == POWER_SUPPLY_STATUS_DISCHARGING) &&
 	    bcl_dev->usb_otg_conf) {
+
 		ret = max77779_adjust_batoilo_lvl(bcl_dev, usb_enable,
 						  bcl_dev->batt_irq_conf1.batoilo_otg_trig_lvl,
 						  bcl_dev->batt_irq_conf2.batoilo_otg_trig_lvl);
