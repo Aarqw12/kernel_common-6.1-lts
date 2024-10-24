@@ -548,6 +548,7 @@ static int lwis_top_device_probe(struct platform_device *plat_dev)
 	if (ret) {
 		dev_err(top_dev->base_dev.dev,
 			"Failed to set LWIS top subscription kthread priority (%d)", ret);
+		kthread_stop(top_dev->subscribe_worker_thread);
 		lwis_base_unprobe(&top_dev->base_dev);
 		return ret;
 	}
