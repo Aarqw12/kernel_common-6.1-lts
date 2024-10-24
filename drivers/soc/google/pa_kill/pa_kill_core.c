@@ -189,6 +189,7 @@ retry:
 	 */
 	p = pa_find_lock_task_mm(victim);
 	if (!p) {
+		mutex_unlock(&victim_lookup_lock);
 		/* The process is already existing. Skip it */
 		ret = -EAGAIN;
 		goto release_tsk;
