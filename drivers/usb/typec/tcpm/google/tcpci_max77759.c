@@ -1970,7 +1970,8 @@ static irqreturn_t _max77759_irq_locked(struct max77759_plat *chip, u16 status,
 	}
 
 	if (status & TCPC_ALERT_VBUS_DISCNCT) {
-		LOG(LOG_LVL_DEBUG, log, "TCPC_ALERT_VBUS_DISCNCT");
+		LOG(LOG_LVL_DEBUG, log, "TCPC_ALERT_VBUS_DISCNCT, %umv",
+		    max77759_get_vbus_voltage_mv(chip->client));
 		chip->vbus_present = 0;
 		LOG(LOG_LVL_DEBUG, chip->log,
 		    "[%s]: vbus_present %d", __func__, chip->vbus_present);
@@ -2571,7 +2572,9 @@ static int max77759_get_vbus(struct google_shim_tcpci *tcpci, struct google_shim
 		chip->vbus_present = 1;
 	}
 
-	LOG(LOG_LVL_DEBUG, chip->log, "[%s]: vbus_present %d", __func__, chip->vbus_present);
+	LOG(LOG_LVL_DEBUG, chip->log, "[%s]: chip vbus_present %d, live vbus_present %d, %umv",
+	    __func__, chip->vbus_present, !!(pwr_status & TCPC_POWER_STATUS_VBUS_PRES),
+	    max77759_get_vbus_voltage_mv(chip->client));
 
 	if (chip->toggle_disable_status) {
 		LOG(LOG_LVL_DEBUG, chip->log, "%s: toggle disabled, return Vbus off", __func__);
