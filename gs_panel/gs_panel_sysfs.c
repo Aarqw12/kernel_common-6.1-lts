@@ -732,14 +732,14 @@ static ssize_t force_power_on_store(struct device *dev, struct device_attribute 
 		return ret;
 	}
 
-	mutex_lock(&ctx->mode_lock);
+	drm_modeset_lock(&ctx->bridge.base.lock, NULL);
 	if (force_on && ctx->panel_state == GPANEL_STATE_OFF) {
 		drm_panel_prepare(&ctx->base);
 		ctx->panel_state = GPANEL_STATE_BLANK;
 	}
 
 	ctx->force_power_on = force_on;
-	mutex_unlock(&ctx->mode_lock);
+	drm_modeset_unlock(&ctx->bridge.base.lock);
 
 	return count;
 }
