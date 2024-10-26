@@ -2585,8 +2585,6 @@ trace_dsi_cmd:
 	dsim_dump_cmd(dsim, msg, is_last);
 	DPU_ATRACE_END("dsim_dump_cmd");
 #endif
-	/* TODO(b/278175371): print actual delay time */
-	trace_dsi_tx(msg->type, msg->tx_buf, msg->tx_len, is_last, dsim->tx_delay_ms);
 	dsim_debug(dsim, "%s last command\n", is_last ? "" : "Not");
 #if IS_ENABLED(CONFIG_QUEUE_DDIC_CMD_CALL_BACK)
 	if (funcs && funcs->on_queue_ddic_cmd)
