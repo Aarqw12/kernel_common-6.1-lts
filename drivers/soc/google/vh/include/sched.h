@@ -79,7 +79,7 @@ struct vendor_task_struct {
 	struct list_head node;
 	int queued_to_list;
 	bool uclamp_fork_reset;
-	bool prefer_high_cap;
+	bool auto_prefer_high_cap;
 	int auto_uclamp_max_flags;	// Relative to cpu instead of absolute
 	struct uclamp_filter uclamp_filter;
 	int orig_prio;
@@ -102,6 +102,8 @@ struct vendor_task_struct {
 	bool prefer_idle;
 	bool adpf;
 	bool preempt_wakeup;
+	bool auto_uclamp_max;
+	bool prefer_high_cap;
 
 	/*
 	 * A general field for time measurement in the same process context.

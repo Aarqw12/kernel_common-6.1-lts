@@ -542,19 +542,6 @@ static inline unsigned long cpu_load(struct rq *rq)
 /*                       New Code Section                                    */
 /*****************************************************************************/
 // This part of code is new for this kernel, which are mostly helper functions.
-
-bool get_prefer_high_cap(struct task_struct *p)
-{
-	return vg[get_vendor_group(p)].prefer_high_cap ||
-		get_vendor_task_struct(p)->prefer_high_cap ||
-		get_vendor_inheritance_struct(p)->prefer_high_cap;
-}
-
-inline void set_prefer_high_cap(struct task_struct *p, bool val)
-{
-	get_vendor_task_struct(p)->prefer_high_cap = val;
-}
-
 static inline bool get_task_spreading(struct task_struct *p)
 {
 	return vg[get_vendor_group(p)].task_spreading;
@@ -2151,7 +2138,7 @@ uclamp_tg_restrict_pixel_mod(struct task_struct *p, enum uclamp_id clamp_id)
 	vnd_min = vg[vp->group].uc_req[UCLAMP_MIN].value;
 	vnd_max = is_adpf ?
 		uclamp_none(UCLAMP_MAX) : vg[vp->group].uc_req[UCLAMP_MAX].value;
-	if (vg[vp->group].auto_uclamp_max && !is_adpf) {
+	if (get_auto_uclamp_max(p) && !is_adpf) {
 		vp->auto_uclamp_max_flags |= AUTO_UCLAMP_MAX_FLAG_GROUP;
 		vnd_max = sched_auto_uclamp_max[task_cpu(p)];
 	} else {
@@ -2271,6 +2258,8 @@ void initialize_vendor_group_property(void)
 		vg[i].qos_prefer_fit_enable = false;
 		vg[i].qos_boost_prio_enable = false;
 		vg[i].qos_preempt_wakeup_enable = false;
+		vg[i].qos_auto_uclamp_max_enable = false;
+		vg[i].qos_prefer_high_cap_enable = false;
 	}
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
@@ -2541,7 +2530,7 @@ void rvh_select_task_rq_fair_pixel_mod(void *data, struct task_struct *p, int pr
 	/* sync wake up */
 	cpu = smp_processor_id();
 
-	set_prefer_high_cap(p, sync && cpu >= pixel_cluster_start_cpu[1]);
+	set_auto_prefer_high_cap(p, sync && cpu >= pixel_cluster_start_cpu[1]);
 
 	if (sync && cpu_rq(cpu)->nr_running == 1 && cpumask_test_cpu(cpu, p->cpus_ptr) &&
 	     task_fits_capacity(p, cpu)) {
@@ -2591,7 +2580,7 @@ out:
 						uclamp_eff_value_pixel_mod(p, UCLAMP_MAX),
 						prev_cpu, *target_cpu);
 
-	set_prefer_high_cap(p, false);
+	set_auto_prefer_high_cap(p, false);
 }
 
 void rvh_set_user_nice_locked_pixel_mod(void *data, struct task_struct *p, long *nice)
