@@ -75,3 +75,6 @@ obj-$(CONFIG_PERF_TRACE_CTRS)		+= perf_trace_counters.o
 obj-$(CONFIG_BOOT_CONTROL)	 	+= boot_control/
 
 obj-$(CONFIG_KERNEL_TOP)		+= kernel-top.o
+
+# Modem control interfaces
+obj-$(CONFIG_GOOGLE_MODEMCTL)		+= modemctl/
