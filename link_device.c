@@ -24,7 +24,7 @@
 #include <linux/shm_ipc.h>
 #include "mcu_ipc.h"
 #include <soc/google/cal-if.h>
-#include "modem_notifier.h"
+#include <soc/google/modem_notifier.h>
 #include <linux/soc/samsung/exynos-smc.h>
 #include <trace/events/napi.h>
 #include "modem_prj.h"
