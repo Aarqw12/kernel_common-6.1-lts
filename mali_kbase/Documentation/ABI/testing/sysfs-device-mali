@@ -1,0 +1,11 @@
+What:		/sys/class/misc/mali%u/device/gpu_top
+Date:		Nov 2024
+Contact:	"Renato Grottesi" <otaner@google.com>
+Description:
+		Read only node that prints a list of all the UIDs that
+		ever used the GPU since boot, together with the percentage
+		of GPU usage since the last read of this node.
+		The output consists of multiple "UID,PI.PD" lines where:
+		* UID is an integer with the UID of the process
+		* PI is the integer part of the percentage (from 0 to 100)
+		* PD is the first 2 decimal digits of the percentage
