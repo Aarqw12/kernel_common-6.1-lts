@@ -1880,13 +1880,14 @@ static enum power_supply_property max77779_wcin_props[] = {
 
 static int max77779_wcin_is_valid(struct max77779_chgr_data *data)
 {
-	uint8_t val;
+	uint8_t val = 0;
 	uint8_t wcin_dtls;
 	int ret = 0;
 
-	val = max77779_current_check_mode(data);
-	if (data->uc_data.pogo_vout_en >= 0)
+	if (data->uc_data.pogo_vout_en >= 0) {
+		val = max77779_current_check_mode(data);
 		ret = gpio_get_value_cansleep(data->uc_data.pogo_vout_en);
+	}
 
 	if (val == MAX77779_CHGR_MODE_BOOST_UNO_ON || ret > 0)
 		return 0;
