@@ -8015,7 +8015,9 @@ int dhd_register_net(struct net_device *net, bool need_rtnl_lock)
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
 	if (need_rtnl_lock) {
 		rtnl_lock();
+		wiphy_lock(net->ieee80211_ptr->wiphy);
 		err = cfg80211_register_netdevice(net);
+		wiphy_unlock(net->ieee80211_ptr->wiphy);
 		rtnl_unlock();
 	} else {
 		err = cfg80211_register_netdevice(net);
