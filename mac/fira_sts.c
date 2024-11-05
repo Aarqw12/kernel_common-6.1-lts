@@ -331,7 +331,7 @@ void fira_sts_rotate_keys(struct fira_session *session)
 {
 	const struct fira_session_params *params = &session->params;
 	struct fira_controlee *controlee, *tmp_controlee;
-	u32 next_block = session->block_index + 1;
+	u32 next_block = session->block_index + session->block_stride_len + 1;
 	u32 rotation_period, n_slots_per_block;
 	bool time_to_rotate, rotation_after_resync;
 	int rotation_block_index;
