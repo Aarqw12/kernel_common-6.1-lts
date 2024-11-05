@@ -1058,14 +1058,14 @@ static void decon_wait_earliest_process_time(
 		int32_t delay_until_process;
 		const ktime_t WARNING_THRESHOLD_US = 1000;
 
-		DPU_ATRACE_BEGIN("wait for earliest present time (vsync:%d)", te_freq);
-
 		delay_until_process = (int32_t)ktime_us_delta(earliest_process_time, now);
 		if (delay_until_process > max_delay_us) {
 			delay_until_process = max_delay_us;
 			pr_warn("expected present time seems incorrect(now %llu, earliest %llu)\n",
 					now, earliest_process_time);
 		}
+		DPU_ATRACE_BEGIN("wait for earliest present time (vsync:%d, delay %dus)", te_freq,
+				 delay_until_process);
 		usleep_range(delay_until_process, delay_until_process + 10);
 		DPU_ATRACE_END("wait for earliest process time");
 
@@ -1074,9 +1074,9 @@ static void decon_wait_earliest_process_time(
 			char trace_str[64];
 			static uint64_t failure_times = 0;
 
-			snprintf(trace_str, sizeof(trace_str),
-				 "waiting for expected present time: %d us failure:%llu\n",
-				 delay_until_process, ++failure_times);
+			scnprintf(trace_str, sizeof(trace_str),
+				  "waiting for expected present time: %d us failure:%llu\n",
+				  delay_until_process, ++failure_times);
 			pr_debug("%s", trace_str);
 			DPU_ATRACE_INSTANT(trace_str);
 		}
