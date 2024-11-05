@@ -1530,6 +1530,11 @@ static bool hctl_tiler_power_up_done(struct kbase_device *kbdev)
 	return true;
 }
 
+/* Forward declaration for kbase_pm_request_gpu_cycle_counter_do_request */
+static void kbase_pm_request_gpu_cycle_counter_do_request(struct kbase_device *kbdev);
+
+/* Forward declaration for kbase_pm_release_gpu_cycle_counter_nolock */
+void kbase_pm_release_gpu_cycle_counter_nolock(struct kbase_device *kbdev);
 
 static int kbase_pm_l2_update_state(struct kbase_device *kbdev)
 {
@@ -1538,6 +1543,9 @@ static int kbase_pm_l2_update_state(struct kbase_device *kbdev)
 	u64 tiler_present = kbdev->gpu_props.tiler_present;
 	bool l2_power_up_done;
 	enum kbase_l2_core_state prev_state;
+#if IS_ENABLED(CONFIG_MALI_TRACE_POWER_GPU_WORK_PERIOD) && !MALI_USE_CSF
+	u64 cycle_count, system_time;
+#endif /* IS_ENABLED(CONFIG_MALI_TRACE_POWER_GPU_WORK_PERIOD) && !MALI_USE_CSF */
 
 	lockdep_assert_held(&kbdev->hwaccess_lock);
 
@@ -1705,6 +1713,10 @@ static int kbase_pm_l2_update_state(struct kbase_device *kbdev)
 				kbase_hwcnt_context_enable(kbdev->hwcnt_gpu_ctx);
 				backend->hwcnt_disabled = false;
 			}
+#if IS_ENABLED(CONFIG_MALI_TRACE_POWER_GPU_WORK_PERIOD)
+			/* START the GPU cycle counter*/
+			kbase_pm_request_gpu_cycle_counter_do_request(kbdev);
+#endif /* IS_ENABLED(CONFIG_MALI_TRACE_POWER_GPU_WORK_PERIOD) */
 #endif
 			backend->l2_state = KBASE_L2_ON;
 			break;
@@ -1764,6 +1776,15 @@ static int kbase_pm_l2_update_state(struct kbase_device *kbdev)
 				backend->l2_state = KBASE_L2_ON_HWCNT_ENABLE;
 				break;
 			}
+#if IS_ENABLED(CONFIG_MALI_TRACE_POWER_GPU_WORK_PERIOD) && !MALI_USE_CSF
+			/* Retrieve the cycle count */
+			kbase_backend_get_gpu_time_norequest(
+					kbdev, &cycle_count, &system_time, NULL);
+			/* Store the last seen cycle count */
+			kbdev->last_cycle_count = cycle_count;
+			/* STOP cycle count */
+			kbase_pm_release_gpu_cycle_counter_nolock(kbdev);
+#endif /* IS_ENABLED(CONFIG_MALI_TRACE_POWER_GPU_WORK_PERIOD) & MALI_USE_CSF */
 
 			backend->hwcnt_desired = false;
 			if (!backend->hwcnt_disabled)
