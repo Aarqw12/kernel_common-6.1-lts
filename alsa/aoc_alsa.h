@@ -319,6 +319,7 @@ struct aoc_chip {
 	int mel_enable;
 #endif
 	int multichannel_processor;
+	int two_one_enable;
 
 	bool hotword_supported;
 	bool chre_supported;
@@ -329,6 +330,9 @@ struct aoc_chip {
 	struct CMD_AUDIO_OUTPUT_GET_SIDETONE sidetone_cfg;
 
 	struct gpio_desc *hac_amp_en_gpio;
+#if !(IS_ENABLED(CONFIG_SOC_GS101) || IS_ENABLED(CONFIG_SOC_GS201))
+	struct CMD_AUDIO_OUTPUT_DECODER_CFG_SPEED decoder_cfg_speed;
+#endif
 };
 
 struct aoc_alsa_stream {
@@ -528,6 +532,8 @@ int aoc_displayport_service_free(struct aoc_chip *chip);
 
 int aoc_audio_set_chirp_parameter(struct aoc_chip *chip, int key, int value);
 
+int aoc_audio_set_two_one(struct aoc_chip *chip, int enable);
+
 int aoc_audio_set_chre_src_pdm_gain(struct aoc_chip *chip, int gain);
 int aoc_audio_set_chre_src_aec_gain(struct aoc_chip *chip, int gain);
 int aoc_audio_set_chre_src_aec_timeout(struct aoc_chip *chip, int timeout);
@@ -556,6 +562,10 @@ int aoc_compr_offload_linear_gain_get(struct aoc_chip *chip, long *val);
 int aoc_compr_offload_linear_gain_set(struct aoc_chip *chip, long *val);
 int aoc_compr_offload_reset_io_sample_base(struct aoc_alsa_stream *alsa_stream);
 int aoc_compr_get_position(struct aoc_alsa_stream *alsa_stream, uint64_t *position);
+#if !(IS_ENABLED(CONFIG_SOC_GS101) || IS_ENABLED(CONFIG_SOC_GS201))
+int aoc_compr_offload_playback_rate_get(struct aoc_chip *chip, long *val);
+int aoc_compr_offload_playback_rate_set(struct aoc_chip *chip, long *val);
+#endif
 
 int aoc_mic_loopback(struct aoc_chip *chip, int enable);
 

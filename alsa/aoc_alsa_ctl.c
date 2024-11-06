@@ -23,6 +23,12 @@
 #define COMPRE_OFFLOAD_GAIN_MIN 0
 #define COMPRE_OFFLOAD_GAIN_MAX 8388608 /* 2^23 = 8388608 */
 
+#if !(IS_ENABLED(CONFIG_SOC_GS101) || IS_ENABLED(CONFIG_SOC_GS201))
+#define OFFLOAD_PLAYBACK_RATE_MIN 0
+#define OFFLOAD_PLAYBACK_RATE_MAX 8388608 /* 2^23 = 8388608 */
+#define OFFLOAD_PLAYBACK_RATE_PARAM_SIZES 4
+#endif
+
 /*
  * Redefined the macro from soc.h so that the control value can be negative.
  * In orginal definition, xmin can be a negative value,  but the min control
@@ -1017,6 +1023,38 @@ static int aoc_sidetone_eq_ctl_set(struct snd_kcontrol *kcontrol,
 	return err;
 }
 
+static int two_one_enable_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	struct aoc_chip *chip = snd_kcontrol_chip(kcontrol);
+
+	if (mutex_lock_interruptible(&chip->audio_mutex))
+		return -EINTR;
+
+	ucontrol->value.integer.value[0] = chip->two_one_enable;
+
+	mutex_unlock(&chip->audio_mutex);
+	return 0;
+}
+
+static int two_one_enable_set(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	struct aoc_chip *chip = snd_kcontrol_chip(kcontrol);
+	int err = 0;
+
+	if (mutex_lock_interruptible(&chip->audio_mutex))
+		return -EINTR;
+
+	chip->two_one_enable = ucontrol->value.integer.value[0];
+	err = aoc_audio_set_two_one(chip, chip->two_one_enable);
+	if (err < 0)
+		pr_err("ERR:%d setting 2.1 %d\n", err, chip->two_one_enable);
+
+	mutex_unlock(&chip->audio_mutex);
+	return err;
+}
+
 static int mic_dc_blocker_get(struct snd_kcontrol *kcontrol,
 			      struct snd_ctl_elem_value *ucontrol)
 {
@@ -1113,6 +1151,42 @@ static int aoc_compr_offload_gain_ctl_set(struct snd_kcontrol *kcontrol,
 	mutex_unlock(&chip->audio_mutex);
 	return err;
 }
+
+#if !(IS_ENABLED(CONFIG_SOC_GS101) || IS_ENABLED(CONFIG_SOC_GS201))
+static int aoc_compr_offload_playback_rate_ctl_get(struct snd_kcontrol *kcontrol,
+				     struct snd_ctl_elem_value *ucontrol)
+{
+	struct aoc_chip *chip = snd_kcontrol_chip(kcontrol);
+
+	if (mutex_lock_interruptible(&chip->audio_mutex))
+		return -EINTR;
+
+	ucontrol->value.integer.value[0] = *(long *)&chip->decoder_cfg_speed.speed;
+	ucontrol->value.integer.value[1] = *(long *)&chip->decoder_cfg_speed.pitch;
+	ucontrol->value.integer.value[2] = (long)chip->decoder_cfg_speed.stretch_mode;
+	ucontrol->value.integer.value[3] = (long)chip->decoder_cfg_speed.fallback_mode;
+
+	mutex_unlock(&chip->audio_mutex);
+	return 0;
+}
+
+static int aoc_compr_offload_playback_rate_ctl_set(struct snd_kcontrol *kcontrol,
+				     struct snd_ctl_elem_value *ucontrol)
+{
+	struct aoc_chip *chip = snd_kcontrol_chip(kcontrol);
+	int err = 0;
+
+	if (mutex_lock_interruptible(&chip->audio_mutex))
+		return -EINTR;
+
+	err = aoc_compr_offload_playback_rate_set(chip, &ucontrol->value.integer.value[0]);
+	if (err < 0)
+		pr_err("ERR:%d compr offload playback rate set fail\n", err);
+
+	mutex_unlock(&chip->audio_mutex);
+	return err;
+}
+#endif
 
 static int pcm_wait_time_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
 {
@@ -2746,7 +2820,13 @@ static struct snd_kcontrol_new snd_aoc_ctl[] = {
 					  COMPRE_OFFLOAD_GAIN_MIN, COMPRE_OFFLOAD_GAIN_MAX, 2,
 					  aoc_compr_offload_gain_ctl_get,
 					  aoc_compr_offload_gain_ctl_set, NULL),
-
+#if !(IS_ENABLED(CONFIG_SOC_GS101) || IS_ENABLED(CONFIG_SOC_GS201))
+	SOC_SINGLE_RANGE_EXT_TLV_modified("Compress Offload Playback Rate", SND_SOC_NOPM, 0,
+					  OFFLOAD_PLAYBACK_RATE_MIN, OFFLOAD_PLAYBACK_RATE_MAX,
+					  OFFLOAD_PLAYBACK_RATE_PARAM_SIZES,
+					  aoc_compr_offload_playback_rate_ctl_get,
+					  aoc_compr_offload_playback_rate_ctl_set, NULL),
+#endif
 	SOC_SINGLE_EXT("Voice Call Rx Volume", SND_SOC_NOPM, 0, 100, 0, NULL,
 		       NULL),
 	SOC_SINGLE_EXT("VOIP Rx Volume", SND_SOC_NOPM, 0, 100, 0, NULL, NULL),
@@ -2762,6 +2842,8 @@ static struct snd_kcontrol_new snd_aoc_ctl[] = {
 
 	SOC_SINGLE_EXT("Gapless Offload Enable", SND_SOC_NOPM, 0, 1, 0,
 		       audio_gapless_offload_ctl_get, audio_gapless_offload_ctl_set),
+
+	SOC_SINGLE_EXT("2.1 Enable", SND_SOC_NOPM, 0, 1, 0, two_one_enable_get, two_one_enable_set),
 
 	{
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
