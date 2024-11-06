@@ -220,6 +220,10 @@ static struct gpu_dvfs_metrics_uid_stats *gpu_dvfs_create_uid_stats(struct pixel
 		return ERR_PTR(-ENOMEM);
 	}
 
+	ret->gpu_cycles_last = 0;
+	ret->gpu_active_ns_last = 0;
+	ret->timestamp_ns_last = ktime_get_ns();
+
 	ret->uid = uid;
 
 	return ret;
@@ -260,12 +264,12 @@ int gpu_dvfs_kctx_init(struct kbase_context *kctx)
 	struct kbase_device *kbdev = kctx->kbdev;
 	struct pixel_context *pc = kbdev->platform_context;
 	struct pixel_platform_data *pd = kctx->platform_data;
-
 	struct task_struct *task;
 	struct pid *pid;
 	kuid_t uid;
-
-	struct gpu_dvfs_metrics_uid_stats *entry, *stats;
+	u8 uid_hash;
+	struct gpu_dvfs_metrics_uid_stats *entry;
+	struct gpu_dvfs_metrics_uid_stats *stats = NULL;
 	int ret = 0;
 
 	/* Get UID from task_struct */
@@ -274,35 +278,25 @@ int gpu_dvfs_kctx_init(struct kbase_context *kctx)
 	uid = task->cred->uid;
 	put_task_struct(task);
 	put_pid(pid);
+	uid_hash = gpu_dvfs_hash_uid_stats(__kuid_val(uid));
 
 	mutex_lock(&kbdev->kctx_list_lock);
 
 	/*
 	 * Search through the UIDs we have encountered previously, and either return an already
-	 * created stats block, or create one and insert it such that the linked list is sorted
-	 * by UID.
+	 * created stats block, or create one and insert it to the table before returning it.
 	 */
 	stats = NULL;
-	list_for_each_entry(entry, &pc->dvfs.metrics.uid_stats_list, uid_list_link) {
+
+	hash_for_each_possible(pc->dvfs.metrics.uid_stats_table, entry, uid_list_node, uid_hash) {
 		if (uid_eq(entry->uid, uid)) {
 			/* Already created */
 			stats = entry;
 			break;
-		} else if (uid_gt(entry->uid, uid)) {
-			/* Create and insert in list */
-			stats = gpu_dvfs_create_uid_stats(pc, uid);
-			if (IS_ERR(stats)) {
-				ret = PTR_ERR(stats);
-				goto done;
-			}
-
-			list_add_tail(&stats->uid_list_link, &entry->uid_list_link);
-
-			break;
 		}
 	}
 
-	/* Create and append to the end of the list */
+	/* Create and add to the table */
 	if (stats == NULL) {
 		stats = gpu_dvfs_create_uid_stats(pc, uid);
 		if (IS_ERR(stats)) {
@@ -310,7 +304,7 @@ int gpu_dvfs_kctx_init(struct kbase_context *kctx)
 			goto done;
 		}
 
-		list_add_tail(&stats->uid_list_link, &pc->dvfs.metrics.uid_stats_list);
+		hash_add(pc->dvfs.metrics.uid_stats_table, &stats->uid_list_node, uid_hash);
 	}
 
 	stats->active_kctx_count++;
@@ -370,7 +364,7 @@ int gpu_dvfs_metrics_init(struct kbase_device *kbdev)
 		BLOCKING_INIT_NOTIFIER_HEAD(&pc->dvfs.clks[c].notifier);
 
 	/* Initialize per-UID metrics */
-	INIT_LIST_HEAD(&pc->dvfs.metrics.uid_stats_list);
+	hash_init(pc->dvfs.metrics.uid_stats_table);
 
 	memset(pc->dvfs.metrics.work_uid_stats, 0, sizeof(pc->dvfs.metrics.work_uid_stats));
 
@@ -380,12 +374,14 @@ int gpu_dvfs_metrics_init(struct kbase_device *kbdev)
 void gpu_dvfs_metrics_term(struct kbase_device *kbdev)
 {
 	struct pixel_context *pc = kbdev->platform_context;
-	struct gpu_dvfs_metrics_uid_stats *entry, *tmp;
+	struct gpu_dvfs_metrics_uid_stats *entry;
+	struct hlist_node *tmp;
+	unsigned bkt;
 
 	kfree(pc->dvfs.metrics.transtab);
 
-	list_for_each_entry_safe(entry, tmp, &pc->dvfs.metrics.uid_stats_list, uid_list_link) {
-		list_del(&entry->uid_list_link);
+	hash_for_each_safe(pc->dvfs.metrics.uid_stats_table, bkt, tmp, entry, uid_list_node) {
+		hash_del(&entry->uid_list_node);
 		gpu_dvfs_destroy_uid_stats(entry);
 	}
 
