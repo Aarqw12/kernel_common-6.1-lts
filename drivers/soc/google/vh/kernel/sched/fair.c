@@ -628,6 +628,7 @@ void init_vendor_group_data(void)
 		INIT_LIST_HEAD(&vendor_group_list[i].list);
 		raw_spin_lock_init(&vendor_group_list[i].lock);
 		vendor_group_list[i].cur_iterator = NULL;
+		mutex_init(&vendor_group_list[i].iter_mutex);
 	}
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)

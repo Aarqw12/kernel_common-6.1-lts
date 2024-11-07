@@ -1360,9 +1360,8 @@ static inline struct task_struct *get_next_task(int group, struct list_head *hea
 
 static void apply_uclamp_change(enum vendor_group group, enum uclamp_id clamp_id)
 {
+	struct vendor_group_list *vgl = &vendor_group_list[group];
 	struct task_struct *p;
-	unsigned long irqflags;
-	struct list_head *head = &vendor_group_list[group].list;
 
 	if (trace_clock_set_rate_enabled()) {
 		char trace_name[32] = {0};
@@ -1373,14 +1372,19 @@ static void apply_uclamp_change(enum vendor_group group, enum uclamp_id clamp_id
 				raw_smp_processor_id());
 	}
 
-	raw_spin_lock_irqsave(&vendor_group_list[group].lock, irqflags);
-	vendor_group_list[group].cur_iterator = NULL;
-	raw_spin_unlock_irqrestore(&vendor_group_list[group].lock, irqflags);
+	mutex_lock(&vgl->iter_mutex);
+	if (WARN_ON(vgl->cur_iterator)) {
+		unsigned long irqflags;
+		raw_spin_lock_irqsave(&vendor_group_list[group].lock, irqflags);
+		vgl->cur_iterator = NULL;
+		raw_spin_unlock_irqrestore(&vendor_group_list[group].lock, irqflags);
+	}
 
-	while ((p = get_next_task(group, head))) {
+	while ((p = get_next_task(group, &vgl->list))) {
 		uclamp_update_active(p, clamp_id);
 		put_task_struct(p);
 	}
+	mutex_unlock(&vgl->iter_mutex);
 }
 
 static int update_prefer_idle(const char *buf, bool val)

@@ -243,6 +243,7 @@ struct vendor_group_list {
 	struct list_head list;
 	raw_spinlock_t lock;
 	struct list_head *cur_iterator;
+	struct mutex iter_mutex;
 };
 
 unsigned long apply_dvfs_headroom(unsigned long util, int cpu, bool tapered);
