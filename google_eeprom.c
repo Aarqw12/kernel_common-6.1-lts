@@ -43,6 +43,7 @@
 
 #define BATT_EEPROM_TAG_HIST_OFFSET	0x5E
 #define BATT_EEPROM_TAG_HIST_LEN	BATT_ONE_HIST_LEN
+#define BATT_MAX_HIST_CNT		75
 #define BATT_TOTAL_HIST_LEN		(BATT_ONE_HIST_LEN * BATT_MAX_HIST_CNT)
 
 #define BATT_EEPROM_TAG_EXTRA_START	(BATT_EEPROM_TAG_HIST_OFFSET + BATT_TOTAL_HIST_LEN)
@@ -391,7 +392,7 @@ struct gbms_storage_desc gbee_storage02_dsc = {
 	.iter = gbee_storage_iter,
 	.read = gbee_storage_read,
 	.write = gbee_storage_write,
-	.read_data = gbee_storage_read_data,
+	.read_data = gbee_storage_read_data_02,
 	.write_data = gbee_storage_write_data,
 };
 
