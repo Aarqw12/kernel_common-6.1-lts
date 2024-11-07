@@ -1067,7 +1067,7 @@ static int google_bcl_register_zones_sub(struct bcl_device *bcl_dev, void *pdata
 #elif IS_ENABLED(CONFIG_REGULATOR_S2MPG10)
 	struct s2mpg11_platform_data *pdata = pdata_sub;
 #endif
-	const bool register_thermal = !IS_ENABLED(CONFIG_SOC_ZUMAPRO);
+	const bool register_thermal = false;
 
 	ret = google_bcl_register_zone(bcl_dev, OCP_WARN_GPU, "ocp_gpu",
 				       pdata->b2_ocp_warn_pin,
