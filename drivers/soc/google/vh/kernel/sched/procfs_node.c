@@ -1394,6 +1394,9 @@ static int update_prefer_idle(const char *buf, bool val)
 	if (kstrtoint(buf, 0, &pid) || pid <= 0)
 		return -EINVAL;
 
+	if (!check_cred())
+		return -EPERM;
+
 	rcu_read_lock();
 	p = find_task_by_vpid(pid);
 	if (!p) {
@@ -1402,12 +1405,6 @@ static int update_prefer_idle(const char *buf, bool val)
 	}
 
 	get_task_struct(p);
-
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
 
 	vp = get_vendor_task_struct(p);
 	vp->prefer_idle = val;
@@ -1434,6 +1431,9 @@ static int update_uclamp_fork_reset(const char *buf, bool val)
 	if (kstrtoint(buf, 0, &pid) || pid <= 0)
 		return -EINVAL;
 
+	if (!check_cred())
+		return -EPERM;
+
 	rcu_read_lock();
 	p = find_task_by_vpid(pid);
 
@@ -1441,16 +1441,9 @@ static int update_uclamp_fork_reset(const char *buf, bool val)
 		rcu_read_unlock();
 		return -ESRCH;
 	}
-
 	get_task_struct(p);
-
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
-
 	rcu_read_unlock();
+
 	vp = get_vendor_task_struct(p);
 	rq = task_rq_lock(p, &rf);
 
@@ -1487,6 +1480,9 @@ static int update_boost_prio(const char *buf, bool val)
 	if (kstrtoint(buf, 0, &pid) || pid <= 0)
 		return -EINVAL;
 
+	if (!check_cred())
+		return -EPERM;
+
 	rcu_read_lock();
 	p = find_task_by_vpid(pid);
 	if (!p) {
@@ -1495,12 +1491,6 @@ static int update_boost_prio(const char *buf, bool val)
 	}
 
 	get_task_struct(p);
-
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
 
 	vp = get_vendor_task_struct(p);
 
@@ -1534,6 +1524,9 @@ static int update_prefer_fit(const char *buf, bool val)
 	if (kstrtoint(buf, 0, &pid) || pid <= 0)
 		return -EINVAL;
 
+	if (!check_cred())
+		return -EPERM;
+
 	rcu_read_lock();
 	p = find_task_by_vpid(pid);
 	if (!p) {
@@ -1542,12 +1535,6 @@ static int update_prefer_fit(const char *buf, bool val)
 	}
 
 	get_task_struct(p);
-
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
 
 	vp = get_vendor_task_struct(p);
 	vp->prefer_fit = val;
@@ -1572,6 +1559,9 @@ static int update_adpf(const char *buf, bool val)
 	if (kstrtoint(buf, 0, &pid) || pid <= 0)
 		return -EINVAL;
 
+	if (!check_cred())
+		return -EPERM;
+
 	rcu_read_lock();
 	p = find_task_by_vpid(pid);
 	if (!p) {
@@ -1580,12 +1570,6 @@ static int update_adpf(const char *buf, bool val)
 	}
 
 	get_task_struct(p);
-
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
 
 	vp = get_vendor_task_struct(p);
 	vp->adpf = val;
@@ -1610,6 +1594,9 @@ static int update_preempt_wakeup(const char *buf, bool val)
 	if (kstrtoint(buf, 0, &pid) || pid <= 0)
 		return -EINVAL;
 
+	if (!check_cred())
+		return -EPERM;
+
 	rcu_read_lock();
 	p = find_task_by_vpid(pid);
 	if (!p) {
@@ -1618,12 +1605,6 @@ static int update_preempt_wakeup(const char *buf, bool val)
 	}
 
 	get_task_struct(p);
-
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
 
 	vp = get_vendor_task_struct(p);
 	vp->preempt_wakeup = val;
@@ -1648,6 +1629,9 @@ static int update_auto_uclamp_max(const char *buf, bool val)
 	if (kstrtoint(buf, 0, &pid) || pid <= 0)
 		return -EINVAL;
 
+	if (!check_cred())
+		return -EPERM;
+
 	rcu_read_lock();
 	p = find_task_by_vpid(pid);
 	if (!p) {
@@ -1656,12 +1640,6 @@ static int update_auto_uclamp_max(const char *buf, bool val)
 	}
 
 	get_task_struct(p);
-
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
 
 	vp = get_vendor_task_struct(p);
 	vp->auto_uclamp_max = val;
@@ -1686,6 +1664,9 @@ static int update_prefer_high_cap(const char *buf, bool val)
 	if (kstrtoint(buf, 0, &pid) || pid <= 0)
 		return -EINVAL;
 
+	if (!check_cred())
+		return -EPERM;
+
 	rcu_read_lock();
 	p = find_task_by_vpid(pid);
 	if (!p) {
@@ -1694,12 +1675,6 @@ static int update_prefer_high_cap(const char *buf, bool val)
 	}
 
 	get_task_struct(p);
-
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
 
 	vp = get_vendor_task_struct(p);
 	vp->prefer_high_cap = val;
@@ -1724,6 +1699,9 @@ static int update_rampup_multiplier(const char *buf, bool set, int count)
 	char *str1, *str2, *pid_str, *multiplier_str;
 	int ret = 0;
 
+	if (!check_cred())
+		return -EPERM;
+
 	if (set) {
 		str1 = kstrndup(buf, count, GFP_KERNEL);
 		if (!str1)
@@ -1747,28 +1725,20 @@ static int update_rampup_multiplier(const char *buf, bool set, int count)
 		p = find_task_by_vpid(pid);
 		if (!p) {
 			ret = -ESRCH;
-			goto error_unlock_set;
+			goto error_unlock;
 		}
 
 		get_task_struct(p);
-
-		if (!check_cred(p)) {
-			ret = -EACCES;
-			goto error_put_task_set;
-		}
-
 		vp = get_vendor_task_struct(p);
 		vp->rampup_multiplier = multiplier;
 		vp->sched_qos_user_defined_flag |= SCHED_QOS_RAMPUP_MULTIPLIER_BIT;
-error_put_task_set:
 		put_task_struct(p);
-error_unlock_set:
+error_unlock:
 		rcu_read_unlock();
 error_free:
 		kfree(str1);
 
 	} else {
-
 		if (kstrtoint(buf, 0, &pid) || pid <= 0)
 			return -EINVAL;
 
@@ -1776,22 +1746,15 @@ error_free:
 		p = find_task_by_vpid(pid);
 		if (!p) {
 			ret = -ESRCH;
-			goto error_unlock_clear;
+			goto error_put_task;
 		}
 
 		get_task_struct(p);
-
-		if (!check_cred(p)) {
-			ret = -EACCES;
-			goto error_put_task_clear;
-		}
-
 		vp = get_vendor_task_struct(p);
 		vp->rampup_multiplier = 1;
 		vp->sched_qos_user_defined_flag &= ~SCHED_QOS_RAMPUP_MULTIPLIER_BIT;
-error_put_task_clear:
+error_put_task:
 		put_task_struct(p);
-error_unlock_clear:
 		rcu_read_unlock();
 	}
 
@@ -1832,20 +1795,16 @@ static int update_vendor_group_attribute(const char *buf, enum vendor_group_attr
 	if (kstrtoint(buf, 0, &pid) || pid <= 0)
 		return -EINVAL;
 
+	if (!check_cred())
+		return -EPERM;
+
 	rcu_read_lock();
 	p = find_task_by_vpid(pid);
 	if (!p) {
 		rcu_read_unlock();
 		return -ESRCH;
 	}
-
 	get_task_struct(p);
-
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
 	rcu_read_unlock();
 
 	switch (vta) {
@@ -1957,12 +1916,16 @@ static int update_sched_adpf_adjustment(const char *buf, int count)
 	unsigned int pid;
 	int adj;
 	struct task_struct *p;
+	int ret = 0;
 
 	str1 = kstrndup(buf, count, GFP_KERNEL);
 	str2 = str1;
 
 	if (!str2)
 		return -ENOMEM;
+
+	if (!check_cred())
+		return -EPERM;
 
 	while (1) {
 		tok = strsep(&str2, ",");
@@ -1973,26 +1936,22 @@ static int update_sched_adpf_adjustment(const char *buf, int count)
 		pid_str = strsep(&tok, ":");
 		adj_str = tok;
 
-		if (kstrtouint(pid_str, 0, &pid))
-			goto fail;
-		if (kstrtoint(adj_str, 0, &adj))
-			goto fail;
+		if (kstrtouint(pid_str, 0, &pid)) {
+			ret = -EINVAL;
+			goto error_free;
+		}
+		if (kstrtoint(adj_str, 0, &adj)) {
+			ret = -EINVAL;
+			goto error_free;
+		}
 
 		rcu_read_lock();
 		p = find_task_by_vpid(pid);
 		if (!p) {
-			kfree(str1);
-			rcu_read_unlock();
-			return -ESRCH;
+			ret = -ESRCH;
+			goto error_unlock;
 		}
-
 		get_task_struct(p);
-		if (!check_cred(p)) {
-			kfree(str1);
-			put_task_struct(p);
-			rcu_read_unlock();
-			return -EACCES;
-		}
 		rcu_read_unlock();
 		if (get_uclamp_fork_reset(p, false))
 			apply_adpf_adj_change(p, adj);
@@ -2001,9 +1960,12 @@ static int update_sched_adpf_adjustment(const char *buf, int count)
 
 	kfree(str1);
 	return count;
-fail:
+
+error_unlock:
+	rcu_read_unlock();
+error_free:
 	kfree(str1);
-	return -EINVAL;
+	return ret;
 }
 
 SET_VENDOR_GROUP_STORE(ta, VG_TOPAPP);
@@ -3781,20 +3743,16 @@ static ssize_t is_tgid_system_ui_store(struct file *filp,
 	if (kstrtouint(buf, 0, &val) || val > PID_MAX_LIMIT)
 		return -EINVAL;
 
+	if (!check_cred())
+		return -EPERM;
+
 	rcu_read_lock();
 	p = find_task_by_vpid(val);
 	if (!p) {
 		rcu_read_unlock();
 		return -ESRCH;
 	}
-
 	get_task_struct(p);
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
-
 	strlcpy(tgid_comm, p->comm, TASK_COMM_LEN);
 	put_task_struct(p);
 	rcu_read_unlock();
