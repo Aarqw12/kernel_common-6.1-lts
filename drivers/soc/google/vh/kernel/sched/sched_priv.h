@@ -83,6 +83,7 @@ DECLARE_STATIC_KEY_FALSE(auto_dvfs_headroom_enable);
 
 unsigned long approximate_util_avg(unsigned long util, u64 delta);
 u64 approximate_runtime(unsigned long util);
+inline void __reset_task_affinity(struct task_struct *p);
 
 #define cpu_overutilized(cap, max, cpu)	\
 		((cap) * sched_capacity_margin[cpu] > (max) << SCHED_CAPACITY_SHIFT)
@@ -199,6 +200,8 @@ struct vendor_group_property {
 	bool qos_auto_uclamp_max_enable;
 	bool qos_prefer_high_cap_enable;
 	bool qos_rampup_multiplier_enable;
+
+	bool disable_sched_setaffinity;
 };
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)

@@ -2263,6 +2263,8 @@ void initialize_vendor_group_property(void)
 		vg[i].qos_auto_uclamp_max_enable = false;
 		vg[i].qos_prefer_high_cap_enable = false;
 		vg[i].qos_rampup_multiplier_enable = false;
+
+		vg[i].disable_sched_setaffinity = false;
 	}
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
