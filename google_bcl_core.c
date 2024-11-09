@@ -649,13 +649,20 @@ static void google_irq_triggered_work(struct work_struct *work)
 		}
 	}
 
-	if (zone->bcl_qos)
+	if (zone->bcl_qos) {
 		google_bcl_qos_update(zone, true);
-
-	mod_delayed_work(bcl_dev->qos_update_wq, &zone->warn_work, msecs_to_jiffies(TIMEOUT_5MS));
+		mod_delayed_work(bcl_dev->qos_update_wq, &zone->warn_work,
+				 msecs_to_jiffies(TIMEOUT_5MS));
+	}
 
 	idx = zone->idx;
 	bcl_dev = zone->parent;
+
+	if (bcl_dev->batt_psy_initialized) {
+		atomic_inc(&zone->bcl_cnt);
+		ocpsmpl_read_stats(bcl_dev, &zone->bcl_stats, bcl_dev->batt_psy);
+		update_tz(zone, idx, true);
+	}
 
 	trace_bcl_zone_stats(zone, 1);
 
@@ -665,12 +672,6 @@ static void google_irq_triggered_work(struct work_struct *work)
 	if (google_bcl_wait_for_response_locked(zone, TIMEOUT_5MS) > 0)
 		return;
 	google_bcl_upstream_state(zone, LIGHT);
-
-	if (bcl_dev->batt_psy_initialized) {
-		atomic_inc(&zone->bcl_cnt);
-		ocpsmpl_read_stats(bcl_dev, &zone->bcl_stats, bcl_dev->batt_psy);
-		update_tz(zone, idx, true);
-	}
 
 	if (zone->irq_type == IF_PMIC)
 		update_irq_start_times(bcl_dev, idx);
@@ -1066,7 +1067,7 @@ static int google_bcl_register_zones_sub(struct bcl_device *bcl_dev, void *pdata
 #elif IS_ENABLED(CONFIG_REGULATOR_S2MPG10)
 	struct s2mpg11_platform_data *pdata = pdata_sub;
 #endif
-	const bool register_thermal = !IS_ENABLED(CONFIG_SOC_ZUMAPRO);
+	const bool register_thermal = false;
 
 	ret = google_bcl_register_zone(bcl_dev, OCP_WARN_GPU, "ocp_gpu",
 				       pdata->b2_ocp_warn_pin,
