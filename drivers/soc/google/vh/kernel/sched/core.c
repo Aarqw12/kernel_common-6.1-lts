@@ -259,7 +259,10 @@ void rvh_set_cpus_allowed_by_task(void *data, const struct cpumask *cpu_valid_ma
 
 static void set_latency_sensitive_inheritance(struct task_struct *p, unsigned int type, int val)
 {
+	struct vendor_task_struct *vp = get_vendor_task_struct(p);
 	struct vendor_inheritance_struct *vi = get_vendor_inheritance_struct(p);
+
+	raw_spin_lock(&vp->lock);
 
 	if (task_on_rq_queued(p)) {
 		bool old_uclamp_fork_reset = get_uclamp_fork_reset(p, true);
@@ -272,6 +275,8 @@ static void set_latency_sensitive_inheritance(struct task_struct *p, unsigned in
 			dec_adpf_counter(p, task_rq(p));
 	} else
 		vi_set_latency_sensitive(vi, type, val);
+
+	raw_spin_unlock(&vp->lock);
 }
 
 static void set_performance_inheritance(struct task_struct *p, struct task_struct *pi_task,
