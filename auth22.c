@@ -111,7 +111,7 @@ int run_hdcp2_auth(void)
 			return ret;
 	}
 
-	for (i = 0; i < 5; ++i) {
+	for (i = 0; i < 3; ++i) {
 		hdcp_info("HDCP22 Try (%d)...\n", i);
 
 		SET_HDCP_STATE_OR_RETURN(HDCP2_AUTH_PROGRESS, -EBUSY);
