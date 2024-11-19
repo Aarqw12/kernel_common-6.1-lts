@@ -147,46 +147,29 @@ void gpu_dvfs_governor_term(struct kbase_device *kbdev);
 /**
  * struct gpu_dvfs_metrics_uid_stats - Stores time in state data for a UID
  *
- * @active_kctx_count:  Count of active kernel contexts operating under this UID. Should only be
- *                      accessed while holding the kctx_list lock.
- * @uid:                The UID for this stats block.
- * @active_work_count:  Count of currently executing units of work on the GPU from this UID. Should
- *                      only be accessed while holding the hwaccess lock if using a job manager GPU
- *                      or holding the csf.scheduler.lock for CSF GPUs.
- * @period_start:       The time (in nanoseconds) that the current active period for this UID began
- *                      Should only be accessed while holding the hwaccess lock if using a job
- *                      manager GPU, CSF GPUs require holding the csf.scheduler.lock.
- * @tis_stats:          &struct gpu_dvfs_opp_metrics block storing time in state data for this UID.
- *                      Should only be accessed while holding the hwaccess lock if using a job
- *                      manager GPU, CSF GPUs require holding the csf.scheduler.lock.
- * @gpu_cycles_last:    Accumulates active cycles since last read of the gpu_top sysfs.
- * @gpu_active_ns_last: Accumulates time in ns since last read of the gpu_top sysfs.
- * @timestamp_ns_last:  Timestamp of the last time that the gpu_top sysfs was read,
- *                      or timestamp when this UID's context was created.
- * @uid_list_node:      Index this structure in a kernel hash table by UID.
- *                      Should only be accessed while holding the kctx_list lock.
+ * @uid_list_link:     Node into list of per-UID stats. Should only be accessed while holding the
+ *                     kctx_list lock.
+ * @active_kctx_count: Count of active kernel contexts operating under this UID. Should only be
+ *                     accessed while holding the kctx_list lock.
+ * @uid:               The UID for this stats block.
+ * @active_work_count: Count of currently executing units of work on the GPU from this UID. Should
+ *                     only be accessed while holding the hwaccess lock if using a job manager GPU,
+ *                     CSF GPUs require holding the csf.scheduler.lock.
+ * @period_start:      The time (in nanoseconds) that the current active period for this UID began.
+ *                     Should only be accessed while holding the hwaccess lock if using a job
+ *                     manager GPU, CSF GPUs require holding the csf.scheduler.lock.
+ * @tis_stats:         &struct gpu_dvfs_opp_metrics block storing time in state data for this UID.
+ *                     Should only be accessed while holding the hwaccess lock if using a job
+ *                     manager GPU, CSF GPUs require holding the csf.scheduler.lock.
  */
 struct gpu_dvfs_metrics_uid_stats {
+	struct list_head uid_list_link;
 	int active_kctx_count;
 	kuid_t uid;
 	int active_work_count;
 	u64 period_start;
 	struct gpu_dvfs_opp_metrics *tis_stats;
-	u64 gpu_cycles_last;
-	u64 gpu_active_ns_last;
-	u64 timestamp_ns_last;
-	struct hlist_node uid_list_node;
 };
-
-/**
- * gpu_dvfs_hash_uid_stats - Macro to hash a UID to 8 bits.
- *
- * @uid: The &kuid_t corresponding to hash.
- *
- * Return: The hash of the UID.
- */
-#define gpu_dvfs_hash_uid_stats(uid) \
-	((u8)((uid) & 0xFF))
 
 /**
  * gpu_dvfs_metrics_update() - Updates GPU metrics on level or power change.
