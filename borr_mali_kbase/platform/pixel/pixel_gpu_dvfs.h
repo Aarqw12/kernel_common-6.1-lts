@@ -190,6 +190,46 @@ void gpu_dvfs_metrics_update(struct kbase_device *kbdev, int old_level, int new_
 	bool power_state);
 
 /**
+ * gpu_dvfs_metrics_work_begin() - Notification of when a unit of work starts on
+ *                                 the GPU
+ *
+ * @param:
+ * - If job manager GPU: The &struct kbase_jd_atom that has just been submitted to the GPU.
+ * - If CSF GPU: The &struct kbase_queue_group that has just been submitted to the GPU.
+ *
+ * For job manager GPUs:
+ * This function is called when an atom is submitted to the GPU by way of writing to the
+ * JSn_HEAD_NEXTn register.
+ *
+ * For CSF GPUs:
+ * This function is called when an group resident in a CSG slot starts executing.
+ *
+ * Context: Acquires the dvfs.metrics.lock. May be in IRQ context
+ */
+void gpu_dvfs_metrics_work_begin(void *param);
+
+/**
+ * gpu_dvfs_metrics_work_end() - Notification of when a unit of work stops
+ *                               running on the GPU
+ *
+ * @param:
+ * - If job manager GPU: The &struct kbase_jd_atom that has just stopped running on the GPU
+ * - If CSF GPU: The &struct kbase_queue_group that has just stopped running on the GPU
+ *
+ * This function is called when a unit of work is no longer running on the GPU,
+ * either due to successful completion, failure, preemption, or GPU reset.
+ *
+ * For job manager GPUs, a unit of work refers to an atom.
+ *
+ * For CSF GPUs, it refers to a group resident in a CSG slot, and so this
+ * function is called when a that CSG slot completes or suspends execution of
+ * the group.
+ *
+ * Context: Acquires the dvfs.metrics.lock. May be in IRQ context
+ */
+void gpu_dvfs_metrics_work_end(void *param);
+
+/**
  * gpu_dvfs_metrics_init() - Initializes DVFS metrics.
  *
  * @kbdev: The &struct kbase_device for the GPU.
