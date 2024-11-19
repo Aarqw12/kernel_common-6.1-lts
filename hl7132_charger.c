@@ -543,9 +543,10 @@ static int hl7132_set_vbat_reg(struct hl7132_charger *hl7132,
 }
 
 static int hl7132_set_input_current(struct hl7132_charger *hl7132,
-				     unsigned int iin)
+				    unsigned int iin)
 {
 	int ret, val;
+	unsigned int iin_cfg;
 
 	/* round-up and increase one step */
 	iin = iin + PD_MSG_TA_CUR_STEP;
@@ -555,12 +556,15 @@ static int hl7132_set_input_current(struct hl7132_charger *hl7132,
 	val = val + 1;
 
 	/* If value goes above max, HW clamps to 3.5A */
+	iin_cfg = HL7132_IIN_CFG_MIN + val * HL7132_IIN_CFG_STEP;
+	if (iin_cfg > HL7132_IIN_CFG_MAX)
+		iin_cfg = HL7132_IIN_CFG_MAX;
 
 	ret = regmap_update_bits(hl7132->regmap, HL7132_REG_IIN_REG,
 				 HL7132_BITS_IIN_REG_TH, val);
 
 	dev_info(hl7132->dev, "%s: iin=%d real iin_cfg=%d (%d)\n", __func__,
-		 iin, val * HL7132_IIN_CFG_STEP, ret);
+		 iin, iin_cfg, ret);
 
 	return ret;
 }

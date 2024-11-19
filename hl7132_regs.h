@@ -255,14 +255,17 @@ enum {
 #define HL7132_MAX_REGISTER		0x2A
 
 
-#define HL7132_IIN_CFG_MIN		500000 /* 500mA */
+#define HL7132_IIN_CFG_MIN		1000000 /* 1A */
 #define HL7132_IIN_CFG_MAX              3500000 /* 3.5A */
 
 /* input current step, unit - uA */
-#define HL7132_IIN_CFG_STEP		100000 /* 100mA */
+#define HL7132_IIN_CFG_STEP		50000 /* 50mA */
 
 /* input current, unit - uA */
-#define HL7132_IIN_CFG(input_curr)	((input_curr) / HL7132_IIN_CFG_STEP)
+#define HL7132_IIN_CFG(input_curr) \
+	((input_curr) >= HL7132_IIN_CFG_MIN ? \
+	((input_curr) - HL7132_IIN_CFG_MIN) / HL7132_IIN_CFG_STEP : 0)
+
 /* charging current, uint - uA TODO */
 #define HL7132_ICHG_CFG(_chg_current)	((_chg_current) / 100000)
 /* convert _vbat_reg (uV) to VBAT_REG (mV). 4V is the min value and steps are 10mv */
