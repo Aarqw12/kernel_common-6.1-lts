@@ -835,8 +835,7 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 		return ret;
 	}
 
-	cfg_mask = MAX77779_BVIM_bvim_trig_trig_now_MASK;
-	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_bvim_trig, cfg_mask);
+	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_bvim_trig, 0);
 	if (ret) {
 		dev_err(dev, "Failed to configure vimon trig\n");
 		return ret;
