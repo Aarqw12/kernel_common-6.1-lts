@@ -86,7 +86,7 @@ void gpu_debug_read_pdc_status(struct kbase_device *kbdev, struct pixel_gpu_pdc_
 	/* If there's no external power we skip the register read/writes,
 	 * We know all the PDC signals will be 0 in this case
 	 */
-	if (!kbdev->pm.backend.gpu_powered) {
+	if (!kbase_io_is_gpu_powered(kbdev)) {
 		memset(&status->state, 0, sizeof(status->state));
 		return;
 	}
@@ -107,7 +107,7 @@ void gpu_debug_dump_pdc_status(struct kbase_device *kbdev)
 
 	lockdep_assert_held(&kbdev->hwaccess_lock);
 
-	if (!kbdev->pm.backend.gpu_powered) {
+	if (!kbase_io_is_gpu_powered(kbdev)) {
 		dev_err(kbdev->dev, "pixel_gpu_debug: GPU not powered to read PDC state.");
 		return;
 	}
