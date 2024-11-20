@@ -6,7 +6,6 @@
  * Copyright 2021 Google LLC
  */
 
-#include "linux/vm_event_item.h"
 #include <linux/mm.h>
 #include <linux/types.h>
 #include <linux/kobject.h>
@@ -17,9 +16,6 @@
 #include <linux/swap.h>
 #include "../../vh/include/sched.h"
 #include "../../vh/include/pixel_mm_hint.h"
-
-#define CREATE_TRACE_POINTS
-#include "pixel_mm_trace.h"
 
 #define OOM_SCORE_ADJ_NATIVE -1
 #define OOM_SCORE_ADJ_TOP 0
@@ -302,41 +298,6 @@ err_direct_out:
 	kobject_put(pixel_vmscan_kobj);
 out:
 	return retval;
-}
-
-static unsigned long wake_nr_scanned;
-static unsigned long wake_nr_reclaimed;
-
-void vh_vmscan_kswapd_wake(
-	void *data,
-	int node_id,
-	int highest_zoneidx,
-	int alloc_order)
-{
-	unsigned long events[NR_VM_EVENT_ITEMS];
-
-	all_vm_events(events);
-	wake_nr_scanned = events[PGSCAN_KSWAPD];
-	wake_nr_reclaimed = events[PGSTEAL_KSWAPD];
-
-	trace_pixel_mm_kswapd_wake(0);
-}
-
-void vh_vmscan_kswapd_done(
-	void *data,
-	int node_id,
-	unsigned int highest_zoneidx,
-	unsigned int alloc_order,
-	unsigned int reclaim_order)
-{
-	unsigned long events[NR_VM_EVENT_ITEMS];
-	unsigned long delta_nr_scanned, delta_nr_reclaimed;
-
-	all_vm_events(events);
-	delta_nr_scanned = events[PGSCAN_KSWAPD] - wake_nr_scanned;
-	delta_nr_reclaimed = events[PGSTEAL_KSWAPD] - wake_nr_reclaimed;
-
-	trace_pixel_mm_kswapd_done(delta_nr_scanned, delta_nr_reclaimed);
 }
 
 void vh_vmscan_tune_swappiness(void *data, int *swappiness)
