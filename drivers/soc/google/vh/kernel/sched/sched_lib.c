@@ -124,7 +124,7 @@ void rvh_sched_setaffinity_mod(void *data, struct task_struct *task,
 	if (*res != 0)
 		return;
 
-	if (disable_sched_setaffinity && !check_cred()) {
+	if (disable_sched_setaffinity && !check_cred(task)) {
 		cpuset_cpus_allowed(task, &out_mask);
 		set_cpus_allowed_ptr(task, &out_mask);
 		pr_debug("schedlib setaff tid: %d, mask out: %*pb\n",

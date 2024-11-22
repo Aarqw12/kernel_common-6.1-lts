@@ -700,15 +700,23 @@ static inline void init_vendor_inheritance_struct(struct vendor_inheritance_stru
 }
 
 /*
- * Returns true if current task has privilege to set scheduler attribute.
- * We require CAP_SYS_NICE.
+ * Returns true if task has privilege false otherwise.
  */
-static inline bool check_cred(void)
+static inline bool check_cred(struct task_struct *p)
 {
-	const struct cred *cred;
+	const struct cred *cred, *tcred;
+	bool ret = true;
 
 	cred = current_cred();
-	return ns_capable(cred->user_ns, CAP_SYS_NICE);
+	tcred = get_task_cred(p);
+	if (!uid_eq(cred->euid, GLOBAL_ROOT_UID) &&
+	    !uid_eq(cred->euid, tcred->uid) &&
+	    !uid_eq(cred->euid, tcred->suid) &&
+	    !ns_capable(tcred->user_ns, CAP_SYS_NICE)) {
+		ret = false;
+	}
+	put_cred(tcred);
+	return ret;
 }
 
 static inline void init_vendor_task_struct(struct vendor_task_struct *v_tsk)
