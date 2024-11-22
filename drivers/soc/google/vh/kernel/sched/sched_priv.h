@@ -708,7 +708,10 @@ static inline void init_vendor_inheritance_struct(struct vendor_inheritance_stru
  */
 static inline bool check_cred(void)
 {
-	return capable(CAP_SYS_NICE);
+	const struct cred *cred;
+
+	cred = current_cred();
+	return ns_capable(cred->user_ns, CAP_SYS_NICE);
 }
 
 static inline void init_vendor_task_struct(struct vendor_task_struct *v_tsk)
