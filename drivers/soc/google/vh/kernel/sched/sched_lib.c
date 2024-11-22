@@ -6,6 +6,7 @@
  * Copyright 2021 Google LLC
  */
 
+#include <linux/cpuset.h>
 #include <linux/maple_tree.h>
 #include <linux/sched.h>
 #include <linux/sched/cputime.h>
@@ -119,16 +120,15 @@ void rvh_sched_setaffinity_mod(void *data, struct task_struct *task,
 				const struct cpumask *in_mask, int *res)
 {
 	struct cpumask out_mask;
-	bool block_affinity;
 
 	if (*res != 0)
 		return;
 
-	block_affinity = disable_sched_setaffinity;
-	block_affinity |= vg[get_vendor_group(task)].disable_sched_setaffinity;
-
-	if (block_affinity && !check_cred()) {
-		__reset_task_affinity(task);
+	if (disable_sched_setaffinity && !check_cred()) {
+		cpuset_cpus_allowed(task, &out_mask);
+		set_cpus_allowed_ptr(task, &out_mask);
+		pr_debug("schedlib setaff tid: %d, mask out: %*pb\n",
+			 task_pid_nr(task), cpumask_pr_args(&out_mask));
 		*res = -EPERM;
 		return;
 	}

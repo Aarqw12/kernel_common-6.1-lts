@@ -178,7 +178,6 @@ enum vendor_procfs_type {
 		__PROC_GROUP_ENTRY(qos_auto_uclamp_max_enable, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(qos_prefer_high_cap_enable, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(qos_rampup_multiplier_enable, __group_name, __vg),	\
-		__PROC_GROUP_ENTRY(disable_sched_setaffinity, __group_name, __vg),	\
 		__PROC_SET_GROUP_ENTRY(set_task_group, __group_name, __vg),	\
 		__PROC_SET_GROUP_ENTRY(set_proc_group, __group_name, __vg)
 
@@ -502,8 +501,6 @@ static inline bool check_rampup_multiplier(enum vendor_group group)
 	return true;
 }
 
-static inline bool reset_group_sched_setaffinity(enum vendor_group group);
-
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 #define CREATE_VENDOR_GROUP_UTIL_ATTRIBUTES(__grp, __vg)				\
 	VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(__grp, ug, __vg, check_ug);
@@ -554,8 +551,6 @@ static inline bool reset_group_sched_setaffinity(enum vendor_group group);
 	VENDOR_GROUP_BOOL_ATTRIBUTE(__grp, qos_auto_uclamp_max_enable, __vg);		\
 	VENDOR_GROUP_BOOL_ATTRIBUTE(__grp, qos_prefer_high_cap_enable, __vg);		\
 	VENDOR_GROUP_BOOL_ATTRIBUTE(__grp, qos_rampup_multiplier_enable, __vg);		\
-	VENDOR_GROUP_UINT_ATTRIBUTE_CHECK(__grp, disable_sched_setaffinity, __vg,	\
-					  reset_group_sched_setaffinity);		\
 	CREATE_VENDOR_GROUP_UTIL_ATTRIBUTES(__grp, __vg);
 
 /// ******************************************************************************** ///
@@ -749,48 +744,22 @@ fail:
 	return -EINVAL;
 }
 
-inline void __reset_task_affinity(struct task_struct *p)
-{
-	struct cpumask out_mask;
-
-	if (p->flags & (PF_SUPERPRIV | PF_WQ_WORKER | PF_IDLE | PF_NO_SETAFFINITY | PF_KTHREAD))
-		return;
-
-	cpuset_cpus_allowed(p, &out_mask);
-	set_cpus_allowed_ptr(p, &out_mask);
-}
-
 /*
  * Reset cpumask to task's cpuset for all tasks in the system.
  */
 static inline void reset_sched_setaffinity(void)
 {
 	struct task_struct *p, *t;
-
-	rcu_read_lock();
-	for_each_process_thread(p, t)
-		__reset_task_affinity(t);
-	rcu_read_unlock();
-}
-
-/*
- * Reset cpumask to task's cpuset for all tasks in the group.
- */
-static inline bool reset_group_sched_setaffinity(enum vendor_group group)
-{
-	struct task_struct *p, *t;
-
-	if (!vg[group].disable_sched_setaffinity)
-		return true;
+	struct cpumask out_mask;
 
 	rcu_read_lock();
 	for_each_process_thread(p, t) {
-		if (get_vendor_group(t) == group)
-			__reset_task_affinity(t);
+		if (t->flags & (PF_SUPERPRIV | PF_WQ_WORKER | PF_IDLE | PF_NO_SETAFFINITY | PF_KTHREAD))
+			continue;
+		cpuset_cpus_allowed(t, &out_mask);
+		set_cpus_allowed_ptr(t, &out_mask);
 	}
 	rcu_read_unlock();
-
-	return true;
 }
 
 static inline struct task_struct *get_next_task(int group, struct list_head *head)
@@ -1299,8 +1268,6 @@ static int update_vendor_group_attribute(const char *buf, enum vendor_group_attr
 		}
 		vp->group = new;
 		raw_spin_unlock_irqrestore(&vp->lock, flags);
-		if (vg[new].disable_sched_setaffinity)
-			__reset_task_affinity(p);
 		if (p->prio >= MAX_RT_PRIO) {
 			migrate_boost_prio(p, old, new);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
@@ -1328,8 +1295,6 @@ static int update_vendor_group_attribute(const char *buf, enum vendor_group_attr
 			}
 			vp->group = new;
 			raw_spin_unlock_irqrestore(&vp->lock, flags);
-			if (vg[new].disable_sched_setaffinity)
-				__reset_task_affinity(t);
 			if (p->prio >= MAX_RT_PRIO) {
 				migrate_boost_prio(t, old, new);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
