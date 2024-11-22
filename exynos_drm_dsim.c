@@ -2496,7 +2496,7 @@ static int dsim_write_data_locked(struct dsim_device *dsim, const struct mipi_ds
 {
 	int ret = 0;
 	const u16 flags = msg->flags;
-	bool is_last;
+	bool is_last = false;
 	struct mipi_dsi_packet packet = { .size = 0 };
 
 #if IS_ENABLED(CONFIG_QUEUE_DDIC_CMD_CALL_BACK)
