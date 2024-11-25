@@ -8305,7 +8305,7 @@ static ssize_t health_index_stats_show(struct device *dev,
 	int len = 0, i;
 
 	/* might be POR and FG not ready */
-	if (bhi_data->battery_age <= 0 && bhi_data->cycle_count <= 0)
+	if (bhi_data->cycle_count <= 0)
 		return len;
 
 	mutex_lock(&batt_drv->chg_lock);
