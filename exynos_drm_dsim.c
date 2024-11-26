@@ -2496,7 +2496,7 @@ static int dsim_write_data_locked(struct dsim_device *dsim, const struct mipi_ds
 {
 	int ret = 0;
 	const u16 flags = msg->flags;
-	bool is_last;
+	bool is_last = false;
 	struct mipi_dsi_packet packet = { .size = 0 };
 
 #if IS_ENABLED(CONFIG_QUEUE_DDIC_CMD_CALL_BACK)
@@ -3074,7 +3074,7 @@ static ssize_t hs_clock_store(struct device *dev,
 	/* ddr hs_clock unit: MHz */
 	dsim_info(dsim, "%s: hs clock %u, apply now: %u\n", __func__, hs_clock, apply_now);
 
-	if (dsim->allowed_hs_clks && !dsim->force_set_hs_clk) {
+	if (dsim->allowed_hs_clks && dsim->allowed_hs_clks->hs_clks && !dsim->force_set_hs_clk) {
 		bool hs_clock_allowed = false;
 
 		for (int i = 0; i < dsim->allowed_hs_clks->num_clks; i++) {
