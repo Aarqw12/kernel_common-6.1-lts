@@ -243,6 +243,11 @@ struct max1720x_chip {
 
 	/* buffer for recording learning history */
 	struct maxfg_capture_buf cb_lh;
+
+	/* total number of model loading attempts counter since boot */
+	int ml_cnt;
+	/* total number of model loading failures since boot */
+	int ml_fails;
 };
 
 #define MAX1720_EMPTY_VOLTAGE(profile, temp, cycle) \
@@ -784,6 +789,8 @@ static ssize_t max1720x_model_show_state(struct device *dev,
 			 chip->model_next_update);
 	len += max_m5_model_state_cstr(&buf[len], PAGE_SIZE - len,
 				       chip->model_data);
+	len += scnprintf(&buf[len], PAGE_SIZE - len, "ATT: %d FAIL: %d\n", chip->ml_cnt,
+			 chip->ml_fails);
 	mutex_unlock(&chip->model_lock);
 
 	return len;
@@ -4500,10 +4507,12 @@ static int max1720x_model_load(struct max1720x_chip *chip)
 		/* use the state from the DT when GMSR is invalid */
 	}
 
+	chip->ml_cnt++;
 	/* failure on the gauge: retry as long as model_reload > IDLE */
 	ret = max_m5_load_gauge_model(chip->model_data);
 	if (ret < 0) {
 		dev_err(chip->dev, "Load Model Failed ret=%d\n", ret);
+		chip->ml_fails++;
 		return -EAGAIN;
 	}
 
