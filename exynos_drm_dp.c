@@ -2853,9 +2853,9 @@ static int dp_remap_regs(struct dp_device *dp, struct platform_device *pdev)
 	}
 
 	dp->res.phy_regs = ioremap(res.start, resource_size(&res));
-	if (IS_ERR(dp->res.phy_regs)) {
+	if (!dp->res.phy_regs) {
 		dp_err(dp, "failed to remap USB/DP Combo PHY SFR region\n");
-		ret = PTR_ERR(dp->res.phy_regs);
+		ret = -ENOMEM;
 		goto err;
 	}
 	dp_regs_desc_init(dp->res.phy_regs, res.start, "PHY", REGS_PHY, SST1);
