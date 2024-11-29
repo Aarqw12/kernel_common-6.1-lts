@@ -2333,7 +2333,7 @@ dsim_write_payload(struct dsim_device *dsim, const u8* buf, size_t len)
 		size_t pkt_size = min_t(size_t, 4, end - p);
 
 		if (pkt_size >= 4)
-			payload = p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24;
+			payload = p[0] | p[1] << 8 | p[2] << 16 | (u32)p[3] << 24;
 		else if (pkt_size == 3)
 			payload = p[0] | p[1] << 8 | p[2] << 16;
 		else if (pkt_size == 2)
