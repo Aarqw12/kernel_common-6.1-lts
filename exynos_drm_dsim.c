@@ -1983,9 +1983,9 @@ static int dsim_remap_regs(struct dsim_device *dsim)
 		goto err;
 	}
 	dsim->res.regs = ioremap(res.start, resource_size(&res));
-	if (IS_ERR(dsim->res.regs)) {
+	if (!dsim->res.regs) {
 		dsim_err(dsim, "failed to remap io region\n");
-		ret = PTR_ERR(dsim->res.regs);
+		ret = -ENOMEM;
 		goto err;
 	}
 	dsim_regs_desc_init(dsim->res.regs, res.start, "dsi", REGS_DSIM_DSI, dsim->id);
@@ -1997,9 +1997,9 @@ static int dsim_remap_regs(struct dsim_device *dsim)
 	}
 
 	dsim->res.phy_regs = ioremap(res.start, resource_size(&res));
-	if (IS_ERR(dsim->res.phy_regs)) {
+	if (!dsim->res.phy_regs) {
 		dsim_err(dsim, "failed to remap io region\n");
-		ret = PTR_ERR(dsim->res.regs);
+		ret = -ENOMEM;
 		goto err_dsi;
 	}
 	dsim_regs_desc_init(dsim->res.phy_regs, res.start, "dphy", REGS_DSIM_PHY,
@@ -2011,7 +2011,7 @@ static int dsim_remap_regs(struct dsim_device *dsim)
 		goto err_dsi;
 	}
 	dsim->res.phy_regs_ex = ioremap(res.start, resource_size(&res));
-	if (IS_ERR(dsim->res.phy_regs_ex))
+	if (!dsim->res.phy_regs_ex)
 		dsim_warn(dsim, "failed to remap io region. it's optional\n");
 	dsim_regs_desc_init(dsim->res.phy_regs_ex, res.start, "dphy-extra",
 			REGS_DSIM_PHY_BIAS, dsim->id);
@@ -2025,7 +2025,7 @@ static int dsim_remap_regs(struct dsim_device *dsim)
 	dsim->res.ss_reg_base = ioremap(res.start, resource_size(&res));
 	if (!dsim->res.ss_reg_base) {
 		dsim_err(dsim, "failed to map sysreg-disp address.");
-		ret = PTR_ERR(dsim->res.ss_reg_base);
+		ret = -ENOMEM;
 		goto err_dphy_ext;
 	}
 	dsim_regs_desc_init(dsim->res.ss_reg_base, res.start, np->name, REGS_DSIM_SYS,

@@ -2405,9 +2405,9 @@ static int decon_remap_regs(struct decon_device *decon)
 		goto err;
 	}
 	decon->regs.regs = ioremap(res.start, resource_size(&res));
-	if (IS_ERR(decon->regs.regs)) {
+	if (!decon->regs.regs) {
 		decon_err(decon, "failed decon ioremap\n");
-		ret = PTR_ERR(decon->regs.regs);
+		ret = -ENOMEM;
 		goto err;
 	}
 	decon_regs_desc_init(decon->regs.regs, res.start, "decon", REGS_DECON,
