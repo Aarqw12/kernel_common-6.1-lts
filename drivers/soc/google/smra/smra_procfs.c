@@ -25,8 +25,9 @@ static void smra_footprint_show(struct seq_file *m,
 	struct smra_metadata *metadata;
 
 	list_for_each_entry(metadata, footprint, list) {
-		seq_printf(m, "%lld,%s,%lu\n",
-			   metadata->time, metadata->path, metadata->offset);
+		seq_printf(m, "%lld,%s,%lu,%d\n",
+			   metadata->time, metadata->path,
+			   metadata->offset, metadata->nr_pages);
 	}
 }
 
@@ -48,6 +49,7 @@ static int smra_footprint_proc_show(struct seq_file *m, void *v)
 	err = smra_post_processing(smra_config.target_pids,
 				   smra_config.nr_targets,
 				   smra_config.buffer_size,
+				   smra_config.merge_threshold,
 				   footprints);
 	if (err) {
 		pr_warn("Post process failed, error %d\n", err);

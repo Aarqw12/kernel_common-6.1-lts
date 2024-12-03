@@ -21,6 +21,7 @@ DEFINE_MUTEX(smra_sysfs_lock);
 struct smra_config smra_config = {
 	.recording_on = false,
 	.buffer_has_trace = false,
+	.merge_threshold = SMRA_DEFAULT_MERGE_THRESHOLD,
 	.buffer_size = SMRA_DEFAULT_BUFFER_SIZE,
 	.nr_targets = 0,
 	.target_pids = { [0 ... SMRA_MAX_TARGET_CNT - 1] = -1 },
@@ -87,6 +88,47 @@ static ssize_t buffer_size_store(struct kobject *kobj,
 	return len;
 }
 SMRA_ATTR_RW(buffer_size);
+
+static ssize_t merge_threshold_show(struct kobject *kobj,
+				    struct kobj_attribute *attr,
+				    char *buf)
+{
+	s64 val;
+
+	mutex_lock(&smra_sysfs_lock);
+	val = smra_config.merge_threshold;
+	mutex_unlock(&smra_sysfs_lock);
+
+	return sysfs_emit(buf, "%lld\n", val);
+}
+
+static ssize_t merge_threshold_store(struct kobject *kobj,
+				     struct kobj_attribute *attr,
+				     const char *buf, size_t len)
+{
+
+	s64 threshold;
+
+	mutex_lock(&smra_sysfs_lock);
+	if (!smra_is_reset()) {
+		pr_warn("Cannot change merge_threshold when busy, please make "
+			"sure recording is finished and then reset first\n");
+		mutex_unlock(&smra_sysfs_lock);
+		return -EINVAL;
+	}
+
+	if (kstrtos64(buf, 10, &threshold)) {
+		pr_warn("Receive invalid merge threshold");
+		mutex_unlock(&smra_sysfs_lock);
+		return -EINVAL;
+	}
+
+	smra_config.merge_threshold = threshold;
+	mutex_unlock(&smra_sysfs_lock);
+
+	return len;
+}
+SMRA_ATTR_RW(merge_threshold);
 
 static ssize_t target_pids_show(struct kobject *kobj,
 			       struct kobj_attribute *attr,
@@ -162,6 +204,7 @@ static ssize_t reset_store(struct kobject *kobj,
 	}
 
 	smra_config.buffer_size = SMRA_DEFAULT_BUFFER_SIZE;
+	smra_config.merge_threshold = SMRA_DEFAULT_MERGE_THRESHOLD;
 	smra_config.nr_targets = 0;
 	if (smra_config.buffer_has_trace) {
 		smra_reset();
@@ -241,6 +284,7 @@ static void smra_kobj_release(struct kobject *obj)
 
 static struct attribute *smra_attrs[] = {
 	&buffer_size_attr.attr,
+	&merge_threshold_attr.attr,
 	&target_pids_attr.attr,
 	&reset_attr.attr,
 	&recording_on_attr.attr,

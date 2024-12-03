@@ -8,9 +8,11 @@
 
 #include <linux/file.h>
 #include <linux/ktime.h>
+#include <linux/list_sort.h>
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/sched.h>
+#include <linux/sort.h>
 
 #include <trace/hooks/mm.h>
 
@@ -92,6 +94,62 @@ static void smra_buffer_copy(struct smra_info_buffer *dst,
 }
 
 /*
+ * The compare function for grouping @smra_fault_info by file and offset.
+ * The intention is to group page fault of same file together and sort by
+ * offset-ascending order at the beginning of post processing so that we
+ * can merge multiple page fault of consecutive loclation into one to reduce
+ * overhead when readaheading them using the madvise() syscall.
+ */
+static int info_file_cmp(const void *l, const void *r)
+{
+
+	struct smra_fault_info *l_info = (struct smra_fault_info *)l;
+	struct smra_fault_info *r_info = (struct smra_fault_info *)r;
+
+	if (l_info->inode != r_info->inode)
+		return (unsigned long)l_info->inode >
+			(unsigned long)r_info->inode ? 1 : -1;
+
+	if (l_info->offset != r_info->offset)
+		return l_info->offset > r_info->offset ? 1 : -1;
+
+	return 0;
+}
+
+/*
+ * The compare function for sorting @smra_metadata by timestamp, which is the
+ * last step of post processing. This allows us to "replay" IO metadata by the
+ * order of happening.
+ */
+static int info_time_cmp(void *prev, const struct list_head *l,
+			 const struct list_head *r)
+{
+	struct smra_metadata *l_metadata = container_of(l, struct smra_metadata, list);
+	struct smra_metadata *r_metadata = container_of(r, struct smra_metadata, list);
+
+	if (l_metadata->time == r_metadata->time)
+		return 0;
+
+	return l_metadata->time > r_metadata->time ? 1 : -1;
+}
+
+static void info_swap(void *l, void *r, int size)
+{
+	struct smra_fault_info tmp;
+	struct smra_fault_info *l_info = (struct smra_fault_info *)l;
+	struct smra_fault_info *r_info = (struct smra_fault_info *)r;
+
+	memcpy(&tmp, l_info, size);
+	memcpy(l_info, r_info, size);
+	memcpy(r_info, &tmp, size);
+}
+
+inline static bool ktime_within(ktime_t x, ktime_t y, s64 threshold)
+{
+	return abs(ktime_sub(x, y)) <= threshold;
+}
+
+/*
  * Helper to create new metadata from @info. The d_path() API is used to
  * transfer struct *file to the actual readable path.
  */
@@ -117,23 +175,35 @@ static struct smra_metadata *new_metadata_from_info(struct smra_fault_info *info
 
 	metadata->offset = info->offset;
 	metadata->time = info->time;
+	metadata->nr_pages = 1;
 	metadata->path = path;
 	return metadata;
 }
 
 /*
- * Post-process the trace to generate human-readable metadata.
+ * Post processing by merging @smra_fault_info of consecutive location into
+ * one and sort them by time. The purpose is to reduce overhead when replay
+ * (less metadata, less madvise() syscall is used). Also we sort the final
+ * metadata list by time so that when replaying, the page faults happen first
+ * are readahead first.
+ *
+ * The overall post processing flow is as:
+ * 1. group @smra_fault_info by file and sort them in offset-ascending order
+ * 2. two pointer algorithem to iterate the sorted list to merge faults
+ *    with consecutive location into one @smra_metadata
+ * 3. sort the metadata list by time and return a list of smra_metadata
  *
  * context: This function is used when recording is stop and all pending
  * page faults are finished recorded. When post-processing, @buf is passed with
  * a separate copy of the original buffers. Hence no need to hold the
  * target->buf_lock and we are allowed to allocate memory with sleepable flags.
  */
-static int do_post_processing(struct smra_info_buffer *buf,
+static int do_post_processing(struct smra_info_buffer *buf, s64 merge_threshold,
 			      struct list_head *footprint)
 {
 	struct smra_metadata *metadata, *next;
-	int i, err;
+	int nr_pages = 0, nr_dup_pages = 0, metadata_cnt = 0;
+	int i, j, err;
 
 	if (buf->cur == 0) {
 		pr_warn("Receive empty buffer, nothing to be processed\n");
@@ -144,14 +214,66 @@ static int do_post_processing(struct smra_info_buffer *buf,
 		pr_warn("Buffer is too small, please consider recording "
 			"again with larger buffer\n");
 
-	for (i = 0; i < buf->cur; i++) {
-		metadata = new_metadata_from_info(&buf->fault_info[i]);
+	/*
+	 * Rearrange info based on file and offset, Info of same file
+	 * should be grouped and sorted in offset-ascending order
+	 */
+	sort(buf->fault_info, buf->cur, sizeof(struct smra_fault_info),
+	     info_file_cmp, info_swap);
+
+	metadata = new_metadata_from_info(&buf->fault_info[0]);
+	if (IS_ERR(metadata)) {
+		err = PTR_ERR(metadata);
+		goto cleanup;
+	}
+	list_add_tail(&metadata->list, footprint);
+	metadata_cnt = 1;
+
+	/*
+	 * Two-pointer to merge continuous smra_fault_info into smra_metadata.
+	 * Extend the second pointer every round (e.g. j++) and test if it can
+	 * be merged into the group represented by the first pointer (e.g.
+	 * buf->info[i]). Split the metadata if:
+	 * 1) a new file is detected
+	 * 2) reaching non-continuous offset within the same file
+	 * 3) offset is continuous, but the time gap is larger than
+	 *    @smra_merge_threshold
+	 */
+	for (i = 0, j = 1; j < buf->cur; j++) {
+		if (buf->fault_info[j].inode == buf->fault_info[i].inode &&
+		    buf->fault_info[j].offset == buf->fault_info[j - 1].offset + 1 &&
+		    ktime_within(buf->fault_info[i].time, buf->fault_info[j].time,
+				 merge_threshold)) {
+			metadata->nr_pages++;
+			metadata->time = min(metadata->time, buf->fault_info[j].time);
+			continue;
+		}
+
+		if (buf->fault_info[j].inode == buf->fault_info[i].inode &&
+		    buf->fault_info[j].offset == buf->fault_info[j - 1].offset) {
+			nr_dup_pages++;
+			continue;
+		}
+
+		nr_pages += metadata->nr_pages;
+		metadata = new_metadata_from_info(&buf->fault_info[j]);
 		if (IS_ERR(metadata)) {
 			err = PTR_ERR(metadata);
 			goto cleanup;
 		}
 		list_add_tail(&metadata->list, footprint);
+		metadata_cnt++;
+		i = j;
 	}
+	nr_pages += metadata->nr_pages;
+
+	/*
+	 * Sort metadata by timestamp. When we replay, the earlist page fault
+	 * will be readhead first.
+	 */
+	list_sort(NULL, footprint, info_time_cmp);
+	pr_info("Merge %d pages into %d metadata covering %d pages, %d "
+		"duplicated\n", buf->cur, metadata_cnt, nr_pages, nr_dup_pages);
 
 	return 0;
 
@@ -177,7 +299,7 @@ void smra_post_processing_cleanup(struct list_head footprints[], int nr_targets)
 }
 
 int smra_post_processing(pid_t target_pids[], int nr_targets, int buffer_size,
-			 struct list_head footprints[])
+			 s64 merge_threshold, struct list_head footprints[])
 {
 	struct smra_target *target;
 	int i = 0, err;
@@ -198,7 +320,7 @@ int smra_post_processing(pid_t target_pids[], int nr_targets, int buffer_size,
 
 		pr_info("Start post processing pid %d\n", target_pids[i]);
 
-		err = do_post_processing(buf, &footprints[i]);
+		err = do_post_processing(buf, merge_threshold, &footprints[i]);
 		if (err) {
 			smra_buffer_free(buf);
 			smra_post_processing_cleanup(footprints, i);
@@ -339,6 +461,7 @@ static void rvh_do_read_fault(void *data, struct file *file, pgoff_t pgoff,
 	cur = target->buf->cur;
 	target->buf->fault_info[cur].file = file;
 	target->buf->fault_info[cur].offset = pgoff;
+	target->buf->fault_info[cur].inode = file_inode(file);
 	target->buf->fault_info[cur].time = ktime_get();
 	target->buf->cur++;
 	spin_unlock(&target->buf_lock);
