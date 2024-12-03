@@ -5665,6 +5665,10 @@ int exynos_panel_common_init(struct mipi_dsi_device *dsi,
 	mipi_dsi_set_drvdata(dsi, ctx);
 	ctx->dev = dev;
 	ctx->desc = of_device_get_match_data(dev);
+	if (!ctx->desc) {
+		dev_err(dev, "No device match found, exiting init\n");
+		return -EINVAL;
+	}
 
 	dsi->lanes = ctx->desc->data_lane_cnt;
 	dsi->format = MIPI_DSI_FMT_RGB888;
