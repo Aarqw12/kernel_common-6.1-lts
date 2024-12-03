@@ -3,49 +3,49 @@
 # Copyright (C) 2023 Google LLC
 
 build --flag_alias=kernel_package=//common:kernel_package
+build --flag_alias=download_prebuilt_gki_fips140=//private/devices/google/common:download_prebuilt_gki_fips140
+
+# Prebuilt GKI build number, used when --use_prebuilt_gki=true.
+build --action_env=KLEAF_DOWNLOAD_BUILD_NUMBER_MAP="gki_prebuilts=12670093"
+
+# Use prebuilt GKI
+# build --use_prebuilt_gki=true
+# build --use_signed_prebuilts
+
+# Use prebuilt fips140.ko
+build --download_prebuilt_gki_fips140=true
 
 # Debug configs
 import %workspace%/private/devices/google/common/debug/debug.bazelrc
 
-build:factory --//private/devices/google/common:factory
+# Factory build
 build:factory --config=pixel_debug_common
+build:factory --//private/devices/google/common:factory
 
-# For compatibility. Recommand to use --kernel_package directly.
+# Testing build, enable gcov and kunit
+build:testing --notrim
+build:testing --gcov
+build:testing --//private/devices/google/common:kunit
+
+# Build kunit modules
+build:kunit --notrim
+build:kunit --//private/devices/google/common:kunit
+
+# Build 16k page size kernel
+build:16k --page_size=16k
+build:16k --use_prebuilt_gki=false
+build:16k --download_prebuilt_gki_fips140=false
+
+# For compatibility only. Do no introduce new usage of these configs.
+# Use --kernel_package directly.
 build:aosp_staging --kernel_package=@//aosp-staging
 build:use_source_tree_aosp --kernel_package=@//aosp
 build:use_source_tree_aosp_staging --kernel_package=@//aosp-staging
-
-build:download_gki --use_prebuilt_gki
-#build:download_gki --use_signed_prebuilts
-build:download_gki --action_env=KLEAF_DOWNLOAD_BUILD_NUMBER_MAP="gki_prebuilts=11611633"
-build:no_download_gki --use_prebuilt_gki=false
-
-build:download_gki_fips140 --//private/devices/google/common:download_prebuilt_gki_fips140=1
-build:no_download_gki_fips140 --//private/devices/google/common:download_prebuilt_gki_fips140=0
-
-# disable GKI prebuilts by default
-build --config=no_download_gki
-
-# enable GKI prebuilts by default
-#build --config=download_gki
-
-# disable download prebuilt GKI fips140.ko by default
-#build --config=no_download_gki_fips140
-
-# enable download prebuilt GKI fips140.ko by default
-build --config=download_gki_fips140
-
-# Testing build, enable gcov and kunit
-build:testing --notrim --gcov --//private/devices/google/common:kunit
-
-# Enable kunit only
-build:kunit --notrim --//private/devices/google/common:kunit
-
-# For compatibility, Recommand to use --config=testing or --config=kunit.
+# Use --config=testing or --config=kunit.
 build:pixel_kunit --config=kunit
-
-# Build 16k page size kernel
-build:16k --page_size=16k --config=no_download_gki --config=no_download_gki_fips140
+# Use --download_prebuilt_gki_fips140 directly.
+build:download_gki_fips140 --download_prebuilt_gki_fips140=true
+build:no_download_gki_fips140 --download_prebuilt_gki_fips140=false
 
 # Placeholders for soc specific bazelrc files. Add as many as you need.
 try-import %workspace%/.c1.bazelrc

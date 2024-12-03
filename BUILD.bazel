@@ -20,11 +20,9 @@ label_flag(
     ],
 )
 
-# Do not use this flag directly, use --config=[no_]download_gki_fips140,
-# which will enable this and any necessary dependencies.
 bool_flag(
     name = "download_prebuilt_gki_fips140",
-    build_setting_default = True,
+    build_setting_default = False,
 )
 
 config_setting(
