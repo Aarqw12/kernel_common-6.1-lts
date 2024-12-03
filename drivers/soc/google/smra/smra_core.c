@@ -24,6 +24,28 @@ static LIST_HEAD(smra_targets_list);
 
 static struct kmem_cache *smra_metadata_cachep;
 
+static unsigned long *origin_fault_around_bytes_ptr;
+static unsigned long origin_fault_around_bytes_val;
+
+static inline void fault_around_disable(void)
+{
+	/*
+	 * From should_fault_around() in mm/memory.c, setting @fault_aroud_bytes
+	 * to PAGE_SIZE will disable fault around.
+	 */
+	*origin_fault_around_bytes_ptr = PAGE_SIZE;
+}
+
+static inline void fault_around_enable(void)
+{
+	if (unlikely(*origin_fault_around_bytes_ptr != PAGE_SIZE))
+		pr_warn("fault_around_bytes is modified to %lu by other program"
+			", now smra overwrites it to %lu",
+			*origin_fault_around_bytes_ptr,
+			origin_fault_around_bytes_val);
+	*origin_fault_around_bytes_ptr = origin_fault_around_bytes_val;
+}
+
 /* Protected by target->buf_lock */
 static struct smra_info_buffer *smra_buffer_setup(ssize_t size)
 {
@@ -228,6 +250,7 @@ cleanup:
 void smra_start(void)
 {
 	write_lock(&smra_rwlock);
+	fault_around_disable();
 	smra_enable = true;
 	write_unlock(&smra_rwlock);
 }
@@ -236,6 +259,7 @@ void smra_stop(void)
 {
 	write_lock(&smra_rwlock);
 	smra_enable = false;
+	fault_around_enable();
 	write_unlock(&smra_rwlock);
 }
 
@@ -277,6 +301,16 @@ static void rvh_do_read_fault(void *data, struct file *file, pgoff_t pgoff,
 	int cur;
 	pid_t tgid;
 	struct smra_target *target;
+
+	/*
+	 * Should happen only once when we file page fault the first time. Store
+	 * the pointer and the original value of @fault_around_bytes so that
+	 * we can toggle fault around before/after recording.
+	 */
+	if (unlikely(!origin_fault_around_bytes_ptr)) {
+		origin_fault_around_bytes_ptr = fault_around_bytes;
+		origin_fault_around_bytes_val = *fault_around_bytes;
+	}
 
 	read_lock(&smra_rwlock);
 	/*
