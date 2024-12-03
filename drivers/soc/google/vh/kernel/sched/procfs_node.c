@@ -1320,16 +1320,16 @@ fail:
 
 static inline struct task_struct *get_next_task(int group, struct list_head *head)
 {
-	unsigned long flags;
+	unsigned long irqflags;
 	struct task_struct *p;
 	struct vendor_task_struct *vp;
 	struct list_head *cur;
 
-	raw_spin_lock_irqsave(&vendor_group_list[group].lock, flags);
+	raw_spin_lock_irqsave(&vendor_group_list[group].lock, irqflags);
 
 	if (list_empty(head)) {
 		vendor_group_list[group].cur_iterator = NULL;
-		raw_spin_unlock_irqrestore(&vendor_group_list[group].lock, flags);
+		raw_spin_unlock_irqrestore(&vendor_group_list[group].lock, irqflags);
 		return NULL;
 	}
 
@@ -1341,7 +1341,7 @@ static inline struct task_struct *get_next_task(int group, struct list_head *hea
 	do {
 		if (cur->next == head) {
 			vendor_group_list[group].cur_iterator = NULL;
-			raw_spin_unlock_irqrestore(&vendor_group_list[group].lock, flags);
+			raw_spin_unlock_irqrestore(&vendor_group_list[group].lock, irqflags);
 			return NULL;
 		}
 
@@ -1353,7 +1353,7 @@ static inline struct task_struct *get_next_task(int group, struct list_head *hea
 	get_task_struct(p);
 	vendor_group_list[group].cur_iterator = cur;
 
-	raw_spin_unlock_irqrestore(&vendor_group_list[group].lock, flags);
+	raw_spin_unlock_irqrestore(&vendor_group_list[group].lock, irqflags);
 
 	return p;
 }
@@ -1361,7 +1361,7 @@ static inline struct task_struct *get_next_task(int group, struct list_head *hea
 static void apply_uclamp_change(enum vendor_group group, enum uclamp_id clamp_id)
 {
 	struct task_struct *p;
-	unsigned long flags;
+	unsigned long irqflags;
 	struct list_head *head = &vendor_group_list[group].list;
 
 	if (trace_clock_set_rate_enabled()) {
@@ -1373,9 +1373,9 @@ static void apply_uclamp_change(enum vendor_group group, enum uclamp_id clamp_id
 				raw_smp_processor_id());
 	}
 
-	raw_spin_lock_irqsave(&vendor_group_list[group].lock, flags);
+	raw_spin_lock_irqsave(&vendor_group_list[group].lock, irqflags);
 	vendor_group_list[group].cur_iterator = NULL;
-	raw_spin_unlock_irqrestore(&vendor_group_list[group].lock, flags);
+	raw_spin_unlock_irqrestore(&vendor_group_list[group].lock, irqflags);
 
 	while ((p = get_next_task(group, head))) {
 		uclamp_update_active(p, clamp_id);
@@ -1771,7 +1771,7 @@ static int update_vendor_group_attribute(const char *buf, enum vendor_group_attr
 	struct task_struct *p, *t;
 	enum uclamp_id clamp_id;
 	pid_t pid;
-	unsigned long flags;
+	unsigned long irqflags;
 	int old;
 
 	if (kstrtoint(buf, 0, &pid) || pid <= 0)
@@ -1796,10 +1796,10 @@ static int update_vendor_group_attribute(const char *buf, enum vendor_group_attr
 	switch (vta) {
 	case VTA_TASK_GROUP:
 		vp = get_vendor_task_struct(p);
-		raw_spin_lock_irqsave(&vp->lock, flags);
+		raw_spin_lock_irqsave(&vp->lock, irqflags);
 		old = vp->group;
 		if (old == new || p->flags & PF_EXITING) {
-			raw_spin_unlock_irqrestore(&vp->lock, flags);
+			raw_spin_unlock_irqrestore(&vp->lock, irqflags);
 			break;
 		}
 		if (vp->queued_to_list == LIST_QUEUED) {
@@ -1807,7 +1807,7 @@ static int update_vendor_group_attribute(const char *buf, enum vendor_group_attr
 			add_to_vendor_group_list(&vp->node, new);
 		}
 		vp->group = new;
-		raw_spin_unlock_irqrestore(&vp->lock, flags);
+		raw_spin_unlock_irqrestore(&vp->lock, irqflags);
 		if (p->prio >= MAX_RT_PRIO) {
 			migrate_boost_prio(p, old, new);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
@@ -1822,10 +1822,10 @@ static int update_vendor_group_attribute(const char *buf, enum vendor_group_attr
 		for_each_thread(p, t) {
 			get_task_struct(t);
 			vp = get_vendor_task_struct(t);
-			raw_spin_lock_irqsave(&vp->lock, flags);
+			raw_spin_lock_irqsave(&vp->lock, irqflags);
 			old = vp->group;
 			if (old == new || t->flags & PF_EXITING) {
-				raw_spin_unlock_irqrestore(&vp->lock, flags);
+				raw_spin_unlock_irqrestore(&vp->lock, irqflags);
 				put_task_struct(t);
 				continue;
 			}
@@ -1834,7 +1834,7 @@ static int update_vendor_group_attribute(const char *buf, enum vendor_group_attr
 				add_to_vendor_group_list(&vp->node, new);
 			}
 			vp->group = new;
-			raw_spin_unlock_irqrestore(&vp->lock, flags);
+			raw_spin_unlock_irqrestore(&vp->lock, irqflags);
 			if (p->prio >= MAX_RT_PRIO) {
 				migrate_boost_prio(t, old, new);
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
@@ -1859,7 +1859,7 @@ static int update_vendor_group_attribute(const char *buf, enum vendor_group_attr
 static void apply_adpf_adj_change(struct task_struct *p, int adj)
 {
 	int ucmax, ucmin, pct, pct2util;
-	unsigned long flags;
+	unsigned long irqflags;
 	struct rq_flags rf;
 	struct rq *rq;
 	struct vendor_task_struct *vtp;
@@ -1890,10 +1890,10 @@ static void apply_adpf_adj_change(struct task_struct *p, int adj)
 
 	task_rq_unlock(rq, p, &rf);
 
-	raw_spin_lock_irqsave(&vtp->lock, flags);
+	raw_spin_lock_irqsave(&vtp->lock, irqflags);
 	vtp->real_cap_avg = 0;
 	vtp->real_cap_total_ns = 0;
-	raw_spin_unlock_irqrestore(&vtp->lock, flags);
+	raw_spin_unlock_irqrestore(&vtp->lock, irqflags);
 }
 
 static int update_sched_adpf_adjustment(const char *buf, int count)
@@ -3572,11 +3572,11 @@ PROC_OPS_RW(cpu_skip_mask);
 
 int priority_task_name_show(struct seq_file *m, void *v)
 {
-	unsigned long flags;
+	unsigned long irqflags;
 
-	spin_lock_irqsave(&priority_task_name_lock, flags);
+	spin_lock_irqsave(&priority_task_name_lock, irqflags);
 	seq_printf(m, "%s\n", priority_task_name);
-	spin_unlock_irqrestore(&priority_task_name_lock, flags);
+	spin_unlock_irqrestore(&priority_task_name_lock, irqflags);
 	return 0;
 }
 
@@ -3586,21 +3586,21 @@ int priority_task_name_show(struct seq_file *m, void *v)
 ssize_t priority_task_name_store(struct file *filp, const char __user *ubuf, size_t count,
 				 loff_t *ppos)
 {
-	unsigned long flags;
+	unsigned long irqflags;
 
 	if (count >= sizeof(priority_task_name))
 		return -EINVAL;
 
-	spin_lock_irqsave(&priority_task_name_lock, flags);
+	spin_lock_irqsave(&priority_task_name_lock, irqflags);
 
 	if (copy_from_user(priority_task_name, ubuf, count)) {
 		priority_task_name[0] = '\0';
-		spin_unlock_irqrestore(&priority_task_name_lock, flags);
+		spin_unlock_irqrestore(&priority_task_name_lock, irqflags);
 		return -EFAULT;
 	}
 
 	priority_task_name[count] = '\0';
-	spin_unlock_irqrestore(&priority_task_name_lock, flags);
+	spin_unlock_irqrestore(&priority_task_name_lock, irqflags);
 	return count;
 }
 PROC_OPS_RW(priority_task_name);
