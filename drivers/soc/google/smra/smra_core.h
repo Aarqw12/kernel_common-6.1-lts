@@ -34,9 +34,27 @@ struct smra_target {
 	struct list_head list;
 };
 
+/*
+ * @smra_metadata: The data structure for post-processed metadata.
+ *
+ * The is the structure for showing result to the user.
+ */
+struct smra_metadata {
+	char* path;
+	pgoff_t offset;
+	ktime_t time;
+	char buf[MAX_PATH_LEN];
+	struct list_head list;
+};
+
 int smra_setup(pid_t target_pids[], int nr_targets, int buffer_size);
 void smra_start(void);
 void smra_stop(void);
 void smra_reset(void);
+
+int smra_post_processing(pid_t target_pids[], int nr_targets, int buffer_size,
+			 struct list_head footprints[]);
+void smra_post_processing_cleanup(struct list_head footprints[],
+				  int nr_targets);
 
 #endif

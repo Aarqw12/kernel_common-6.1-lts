@@ -15,11 +15,14 @@
 #include <trace/hooks/mm.h>
 
 #include "smra_core.h"
+#include "smra_procfs.h"
 #include "smra_sysfs.h"
 
 static DEFINE_RWLOCK(smra_rwlock);
 static bool smra_enable = false;
 static LIST_HEAD(smra_targets_list);
+
+static struct kmem_cache *smra_metadata_cachep;
 
 /* Protected by target->buf_lock */
 static struct smra_info_buffer *smra_buffer_setup(ssize_t size)
@@ -50,6 +53,141 @@ static void smra_buffer_free(struct smra_info_buffer *buf)
 {
 	kfree(buf->fault_info);
 	kfree(buf);
+}
+
+/*
+ * Protected by target->buf_lock, This API is used to make a separate copy of
+ * the original recording buffer so that we can work with the data at ease. (
+ * E.g. no need for spin_lock, free to allocate memory with arbitrary flags)
+ */
+static void smra_buffer_copy(struct smra_info_buffer *dst,
+			     struct smra_info_buffer *src)
+{
+	dst->cur = src->cur;
+	dst->size = src->size;
+	memcpy(dst->fault_info, src->fault_info,
+	       src->size * sizeof(struct smra_fault_info));
+}
+
+/*
+ * Helper to create new metadata from @info. The d_path() API is used to
+ * transfer struct *file to the actual readable path.
+ */
+static struct smra_metadata *new_metadata_from_info(struct smra_fault_info *info)
+{
+	struct smra_metadata *metadata;
+	char *path;
+
+	metadata = kmem_cache_alloc(smra_metadata_cachep, GFP_KERNEL);
+	if (!metadata)
+		return ERR_PTR(-ENOMEM);
+
+	/*
+	 * d_path() will return error code if the filepath is too long.
+	 * If the file is deleted, the path name will be prefixed with
+	 * "(deleted)", which would be later filtered by the smra library.
+	 */
+	path = d_path(&info->file->f_path, metadata->buf, MAX_PATH_LEN);
+	if (IS_ERR(path)) {
+		kfree(metadata);
+		return ERR_CAST(path);
+	}
+
+	metadata->offset = info->offset;
+	metadata->time = info->time;
+	metadata->path = path;
+	return metadata;
+}
+
+/*
+ * Post-process the trace to generate human-readable metadata.
+ *
+ * context: This function is used when recording is stop and all pending
+ * page faults are finished recorded. When post-processing, @buf is passed with
+ * a separate copy of the original buffers. Hence no need to hold the
+ * target->buf_lock and we are allowed to allocate memory with sleepable flags.
+ */
+static int do_post_processing(struct smra_info_buffer *buf,
+			      struct list_head *footprint)
+{
+	struct smra_metadata *metadata, *next;
+	int i, err;
+
+	if (buf->cur == 0) {
+		pr_warn("Receive empty buffer, nothing to be processed\n");
+		return 0;
+	}
+
+	if (buf->cur >= buf->size)
+		pr_warn("Buffer is too small, please consider recording "
+			"again with larger buffer\n");
+
+	for (i = 0; i < buf->cur; i++) {
+		metadata = new_metadata_from_info(&buf->fault_info[i]);
+		if (IS_ERR(metadata)) {
+			err = PTR_ERR(metadata);
+			goto cleanup;
+		}
+		list_add_tail(&metadata->list, footprint);
+	}
+
+	return 0;
+
+cleanup:
+	list_for_each_entry_safe(metadata, next, footprint, list) {
+		list_del(&metadata->list);
+		kfree(metadata);
+	}
+	return err;
+}
+
+void smra_post_processing_cleanup(struct list_head footprints[], int nr_targets)
+{
+	struct smra_metadata *metadata, *next;
+	int i;
+
+	for (i = 0; i < nr_targets; i++) {
+		list_for_each_entry_safe(metadata, next, &footprints[i], list) {
+			list_del(&metadata->list);
+			kfree(metadata);
+		}
+	}
+}
+
+int smra_post_processing(pid_t target_pids[], int nr_targets, int buffer_size,
+			 struct list_head footprints[])
+{
+	struct smra_target *target;
+	int i = 0, err;
+
+	struct smra_info_buffer *buf = smra_buffer_setup(buffer_size);
+	if (!buf)
+		return -ENOMEM;
+
+	read_lock(&smra_rwlock);
+	list_for_each_entry(target, &smra_targets_list, list) {
+		BUG_ON(i >= nr_targets);
+		BUG_ON(target->pid != target_pids[i]);
+
+		spin_lock(&target->buf_lock);
+		smra_buffer_copy(buf, target->buf);
+		spin_unlock(&target->buf_lock);
+		read_unlock(&smra_rwlock);
+
+		pr_info("Start post processing pid %d\n", target_pids[i]);
+
+		err = do_post_processing(buf, &footprints[i]);
+		if (err) {
+			smra_buffer_free(buf);
+			smra_post_processing_cleanup(footprints, i);
+			return err;
+		}
+		i++;
+		read_lock(&smra_rwlock);
+	}
+	read_unlock(&smra_rwlock);
+
+	return 0;
 }
 
 /* Setup target pids and their buffers for recording */
@@ -197,6 +335,15 @@ int __init smra_init(void)
 		return err;
 	}
 
+	smra_metadata_cachep = kmem_cache_create("smra_metadata",
+						 sizeof(struct smra_metadata),
+						 0, 0, NULL);
+	if (!smra_metadata_cachep) {
+		pr_err("Failed to create metadata cache\n");
+		return -ENOMEM;
+	}
+
+	smra_procfs_init();
 	smra_sysfs_init();
 
 	return 0;
