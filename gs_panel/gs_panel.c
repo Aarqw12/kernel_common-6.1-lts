@@ -1767,6 +1767,10 @@ int gs_dsi_panel_common_init(struct mipi_dsi_device *dsi, struct gs_panel *ctx)
 	mipi_dsi_set_drvdata(dsi, ctx);
 	ctx->dev = dev;
 	ctx->desc = of_device_get_match_data(dev);
+	if (!ctx->desc) {
+		dev_err(dev, "No device match found, exiting init\n");
+		return -EINVAL;
+	}
 
 	/* Set DSI data */
 	dsi->lanes = ctx->desc->data_lane_cnt;
