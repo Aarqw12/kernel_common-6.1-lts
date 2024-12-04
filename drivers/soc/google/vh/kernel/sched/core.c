@@ -409,6 +409,15 @@ void vh_binder_restore_priority_pixel_mod(void *data, struct binder_transaction 
 	set_performance_inheritance(p, NULL, VI_BINDER);
 }
 
+void vh_binder_proc_transaction_finish(void *data, struct binder_proc *proc,
+		struct binder_transaction *t, struct task_struct *binder_th_task,
+		bool pending_async, bool sync)
+{
+	if (binder_th_task && proc->default_priority.prio < NICE_TO_PRIO(0) &&
+		proc->default_priority.prio >= NICE_TO_PRIO(-20))
+		proc->default_priority.prio = NICE_TO_PRIO(0);
+}
+
 void rvh_rtmutex_prepare_setprio_pixel_mod(void *data, struct task_struct *p,
 	struct task_struct *pi_task)
 {
