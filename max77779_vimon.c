@@ -252,11 +252,6 @@ vimon_start_exit:
 	return ret;
 }
 
-static int max77779_vimon_stop(struct max77779_vimon_data *data)
-{
-	return max77779_vimon_reg_write(data, MAX77779_BVIM_CTRL, 0);
-}
-
 static int max77779_vimon_direct_stop(struct max77779_vimon_data *data)
 {
 	return data->direct_reg_write(data, MAX77779_BVIM_CTRL, 0);
@@ -391,11 +386,8 @@ static void max77779_vimon_handle_data(struct work_struct *work)
 	rd_vi_pairs = umin(rsc, data->clients[client_ind].sample_count);
 	rd_addr_cnt = rd_vi_pairs * MAX77779_VIMON_ENTRIES_PER_VI_PAIR;
 
-	ret = max77779_vimon_stop(data);
-	if (ret)
-		goto vimon_handle_data_exit;
-
 	ret = max77779_vimon_access_buffer(data, bvim_rfap, rd_addr_cnt, data->buf, true);
+
 	if (ret < 0)
 		goto vimon_handle_data_exit;
 
@@ -426,11 +418,9 @@ vimon_handle_data_exit:
 	if (ret)
 		dev_err(data->dev, "Failed to rearm bvim_ctrl (%d).\n", ret);
 
-	ret = regmap_write(data->regmap, MAX77779_BVIM_INT_STS,
-			   MAX77779_BVIM_INT_STS_BVIM_Samples_Rdy_MASK);
+	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_MASK, 0);
 	if (ret)
-		dev_err(data->dev, "Failed to clear INT_STS (%d).\n",
-				ret);
+		dev_err(data->dev, "Failed to clear BVIM_MASK(%d).", ret);
 
 	if (client_ind != MAX77779_VIMON_CLIENT_MAX) {
 		atomic_set(&data->clients[client_ind].active_request, 0);
@@ -779,6 +769,11 @@ static irqreturn_t max77779_vimon_irq(int irq, void *ptr)
 
 	data->state = MAX77779_VIMON_DATA_AVAILABLE;
 
+	ret = regmap_write(data->regmap, MAX77779_BVIM_MASK,
+			   MAX77779_BVIM_MASK_BVIM_Samples_Rdy_m_MASK);
+	if (ret)
+		dev_err(data->dev, "Failed to set BVIM_MASK (%d).", ret);
+
 	schedule_delayed_work(&data->read_data_work,
 			      msecs_to_jiffies(MAX77779_VIMON_DATA_RETRIEVE_DELAY));
 
@@ -793,7 +788,7 @@ vimon_rearm_interrupt:
 	ret = regmap_write(data->regmap, MAX77779_BVIM_INT_STS,
 			   MAX77779_BVIM_INT_STS_BVIM_Samples_Rdy_MASK);
 	if (ret)
-		dev_err(data->dev, "Failed to clear INT_STS (%d).\n", ret);
+		dev_err(data->dev, "Failed to clear INT_STS (%d).", ret);
 
 
 	return IRQ_HANDLED;
