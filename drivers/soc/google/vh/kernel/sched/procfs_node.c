@@ -1420,63 +1420,6 @@ static int update_prefer_idle(const char *buf, bool val)
 	return 0;
 }
 
-static int update_uclamp_fork_reset(const char *buf, bool val)
-{
-	struct vendor_task_struct *vp;
-	struct task_struct *p;
-	struct rq_flags rf;
-	struct rq *rq;
-	pid_t pid;
-	bool old_uclamp_fork_reset;
-
-	if (kstrtoint(buf, 0, &pid) || pid <= 0)
-		return -EINVAL;
-
-	rcu_read_lock();
-	p = find_task_by_vpid(pid);
-
-	if (!p) {
-		rcu_read_unlock();
-		return -ESRCH;
-	}
-
-	get_task_struct(p);
-
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
-
-	rcu_read_unlock();
-	vp = get_vendor_task_struct(p);
-	rq = task_rq_lock(p, &rf);
-
-	if (vp->uclamp_fork_reset != val) {
-		if (vendor_sched_boost_adpf_prio)
-			update_task_prio(p, vp, val);
-
-		raw_spin_lock(&vp->lock);
-
-		old_uclamp_fork_reset = get_uclamp_fork_reset(p, true);
-		vp->uclamp_fork_reset = val;
-
-		if (task_on_rq_queued(p)) {
-			if (old_uclamp_fork_reset && !get_uclamp_fork_reset(p, true))
-				dec_adpf_counter(p, task_rq(p));
-			else if (!old_uclamp_fork_reset && get_uclamp_fork_reset(p, true))
-				inc_adpf_counter(p, task_rq(p));
-		}
-
-		raw_spin_unlock(&vp->lock);
-	}
-
-	task_rq_unlock(rq, p, &rf);
-	put_task_struct(p);
-
-	return 0;
-}
-
 static int update_boost_prio(const char *buf, bool val)
 {
 	struct vendor_task_struct *vp;
@@ -1929,7 +1872,6 @@ SET_VENDOR_GROUP_STORE(fg_wi, VG_FOREGROUND_WINDOW);
 
 // Create per-task attribute nodes
 PER_TASK_BOOL_ATTRIBUTE(prefer_idle);
-PER_TASK_BOOL_ATTRIBUTE(uclamp_fork_reset);
 PER_TASK_BOOL_ATTRIBUTE(boost_prio);
 PER_TASK_BOOL_ATTRIBUTE(prefer_fit);
 PER_TASK_BOOL_ATTRIBUTE(adpf);
@@ -1945,7 +1887,6 @@ static int dump_task_show(struct seq_file *m, void *v)
 	unsigned int uclamp_min, uclamp_max, uclamp_eff_min, uclamp_eff_max;
 	enum vendor_group group;
 	const char *grp_name = "unknown";
-	bool uclamp_fork_reset;
 	bool adpf;
 	bool prefer_idle;
 	bool prefer_fit;
@@ -1956,7 +1897,7 @@ static int dump_task_show(struct seq_file *m, void *v)
 	unsigned int rampup_multiplier;
 
 	seq_printf(m, "pid comm group uclamp_min uclamp_max uclamp_eff_min uclamp_eff_max " \
-		   "uclamp_fork_reset adpf prefer_idle prefer_fit boost_prio " \
+		   "adpf prefer_idle prefer_fit boost_prio " \
 		   "preempt_wakeup auto_uclamp_max prefer_high_cap rampup_multiplier\n");
 
 	rcu_read_lock();
@@ -1971,7 +1912,6 @@ static int dump_task_show(struct seq_file *m, void *v)
 		uclamp_max = t->uclamp_req[UCLAMP_MAX].value;
 		uclamp_eff_min = uclamp_eff_value_pixel_mod(t, UCLAMP_MIN);
 		uclamp_eff_max = uclamp_eff_value_pixel_mod(t, UCLAMP_MAX);
-		uclamp_fork_reset = vp->uclamp_fork_reset;
 		adpf = vp->adpf;
 		prefer_idle = vp->prefer_idle;
 		prefer_fit = vp->prefer_fit;
@@ -1982,10 +1922,11 @@ static int dump_task_show(struct seq_file *m, void *v)
 		rampup_multiplier = vp->rampup_multiplier;
 		put_task_struct(t);
 
-		seq_printf(m, "%u %s %s %u %u %u %u %d %d %d %d %d %d %d %d %u\n", t->pid, t->comm,
-			   grp_name, uclamp_min, uclamp_max, uclamp_eff_min, uclamp_eff_max,
-			   uclamp_fork_reset, adpf, prefer_idle, prefer_fit, boost_prio,
-			   preempt_wakeup, auto_uclamp_max, prefer_high_cap, rampup_multiplier);
+		seq_printf(m, "%u %s %s %u %u %u %u %d %d %d %d %d %d %d %u\n",
+			   t->pid, t->comm, grp_name, uclamp_min, uclamp_max, uclamp_eff_min,
+			   uclamp_eff_max, adpf, prefer_idle,
+			   prefer_fit, boost_prio, preempt_wakeup,
+			   auto_uclamp_max, prefer_high_cap, rampup_multiplier);
 	}
 
 	rcu_read_unlock();
@@ -3753,9 +3694,6 @@ static struct pentry entries[] = {
 	// pmu limit attribute
 	PROC_ENTRY(pmu_poll_time),
 	PROC_ENTRY(pmu_poll_enable),
-	// per-task attribute
-	PROC_ENTRY(uclamp_fork_reset_set),
-	PROC_ENTRY(uclamp_fork_reset_clear),
 #if IS_ENABLED(CONFIG_RVH_SCHED_LIB)
 	// sched lib
 	PROC_ENTRY(sched_lib_mask_out),

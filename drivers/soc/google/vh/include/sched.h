@@ -49,7 +49,6 @@ enum vendor_inheritnace_t {
 
 struct vendor_inheritance_struct {
 	unsigned int uclamp[VI_MAX][UCLAMP_CNT];
-	short int uclamp_fork_reset;
 	short int adpf;
 	short int prefer_idle;
 	short int prefer_fit;
@@ -78,7 +77,6 @@ struct vendor_task_struct {
 	unsigned long direct_reclaim_ts;
 	struct list_head node;
 	int queued_to_list;
-	bool uclamp_fork_reset;
 	bool auto_prefer_high_cap;
 	int auto_uclamp_max_flags;	// Relative to cpu instead of absolute
 	struct uclamp_filter uclamp_filter;
