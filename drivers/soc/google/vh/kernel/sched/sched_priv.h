@@ -652,6 +652,14 @@ static inline bool get_auto_uclamp_max(struct task_struct *p)
 		(vp->auto_uclamp_max && vg[vp->group].qos_auto_uclamp_max_enable));
 }
 
+/* TODO: may use a dedicated qos in the future */
+static inline bool get_power_efficiency(struct task_struct *p)
+{
+	struct vendor_task_struct *vp = get_vendor_task_struct(p);
+
+	return vp->auto_uclamp_max;
+}
+
 static inline bool get_prefer_high_cap(struct task_struct *p)
 {
 	struct vendor_task_struct *vp = get_vendor_task_struct(p);
