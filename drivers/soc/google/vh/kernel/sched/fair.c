@@ -595,7 +595,7 @@ static inline const cpumask_t *get_preferred_idle_mask(struct task_struct *p)
 {
 	int vendor_group = get_vendor_group(p);
 
-	if (p->wake_q_count || get_uclamp_fork_reset(p, false))
+	if (p->wake_q_count || get_adpf(p, false))
 		return cpu_possible_mask;
 
 	if (p->prio <= THREAD_PRIORITY_TOP_APP_BOOST) {
@@ -1589,7 +1589,7 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 
 	p_util_min = max(p_util_min, get_vendor_task_struct(p)->iowait_boost);
 
-	if (get_uclamp_fork_reset(p, true) || get_prefer_fit(p) || get_auto_prefer_fit(p))
+	if (get_prefer_fit(p) || get_auto_prefer_fit(p))
 		prefer_fit = true;
 
 	for (; pd; pd = pd->next) {
@@ -2110,7 +2110,7 @@ uclamp_tg_restrict_pixel_mod(struct task_struct *p, enum uclamp_id clamp_id)
 	struct uclamp_se uc_req = p->uclamp_req[clamp_id];
 	struct vendor_task_struct *vp = get_vendor_task_struct(p);
 	struct vendor_inheritance_struct *vi = get_vendor_inheritance_struct(p);
-	bool is_adpf = get_uclamp_fork_reset(p, true);
+	bool is_adpf = get_adpf(p, true);
 	int i = 0;
 
 #if IS_ENABLED(CONFIG_UCLAMP_TASK_GROUP)
@@ -2283,13 +2283,7 @@ void rvh_check_preempt_wakeup_pixel_mod(void *data, struct rq *rq, struct task_s
 	if (!entity_is_task(se) || !entity_is_task(pse))
 		return;
 
-	/*
-	 * Let ADPF task preempt non-ADPF task.
-	 */
-	if((!get_uclamp_fork_reset(task_of(se), true) &&
-	    get_uclamp_fork_reset(task_of(pse), true)) ||
-	   (!get_uclamp_fork_reset(task_of(se), true) && !get_preempt_wakeup(task_of(se)) &&
-	    get_preempt_wakeup(task_of(pse)))) {
+	if(!get_preempt_wakeup(task_of(se)) && get_preempt_wakeup(task_of(pse))) {
 		if (!next_buddy_marked)
 			set_next_buddy(pse);
 
@@ -2498,7 +2492,7 @@ static inline void uclamp_fork_pixel_mod(struct task_struct *p, struct task_stru
 {
 	enum uclamp_id clamp_id;
 
-	if (likely(!get_uclamp_fork_reset(orig, false)))
+	if (likely(!get_adpf(orig, false) && !get_power_efficiency(p)))
 		return;
 
 	for_each_clamp_id(clamp_id) {
@@ -2574,9 +2568,8 @@ void rvh_select_task_rq_fair_pixel_mod(void *data, struct task_struct *p, int pr
 out:
 	if (trace_sched_select_task_rq_fair_enabled())
 		trace_sched_select_task_rq_fair(p, task_util_est(p),
-						sync_wakeup, prefer_prev,
-						get_uclamp_fork_reset(p, true),
-						get_prefer_high_cap(p),
+						sync_wakeup, get_adpf(p, true), prefer_prev,
+						get_vendor_task_struct(p)->auto_prefer_high_cap,
 						get_vendor_group(p),
 						uclamp_eff_value_pixel_mod(p, UCLAMP_MIN),
 						uclamp_eff_value_pixel_mod(p, UCLAMP_MAX),
@@ -2597,7 +2590,7 @@ void rvh_set_user_nice_locked_pixel_mod(void *data, struct task_struct *p, long 
 		return;
 
 	vp = get_vendor_task_struct(p);
-	if (get_uclamp_fork_reset(p, false) || vp->boost_prio) {
+	if (vp->boost_prio) {
 		raw_spin_lock_irqsave(&vp->lock, flags);
 		p->normal_prio = p->static_prio = vp->orig_prio = NICE_TO_PRIO(*nice);
 		raw_spin_unlock_irqrestore(&vp->lock, flags);
@@ -2621,7 +2614,7 @@ void rvh_setscheduler_pixel_mod(void *data, struct task_struct *p)
 		return;
 
 	vp = get_vendor_task_struct(p);
-	if (get_uclamp_fork_reset(p, false) || vp->boost_prio) {
+	if (vp->boost_prio) {
 		raw_spin_lock_irqsave(&vp->lock, flags);
 		vp->orig_prio = p->static_prio;
 		raw_spin_unlock_irqrestore(&vp->lock, flags);
@@ -2654,7 +2647,7 @@ static struct task_struct *detach_important_task(struct rq *src_rq, int dst_cpu)
 		if (!get_prefer_idle(p))
 			continue;
 
-		if (get_uclamp_fork_reset(p, true))
+		if (get_adpf(p, true))
 			is_ui = true;
 		else if (uclamp_eff_value_pixel_mod(p, UCLAMP_MIN) > 0)
 			is_boost = true;
@@ -2944,7 +2937,7 @@ void rvh_enqueue_task_fair_pixel_mod(void *data, struct rq *rq, struct task_stru
 		}
 	}
 
-	if (get_uclamp_fork_reset(p, true))
+	if (get_adpf(p, true))
 		inc_adpf_counter(p, rq);
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
@@ -2982,7 +2975,7 @@ void rvh_dequeue_task_fair_pixel_mod(void *data, struct rq *rq, struct task_stru
 		vp->prev_util_enqueued = vp->util_enqueued;
 	}
 
-	if (get_uclamp_fork_reset(p, true))
+	if (get_adpf(p, true))
 		dec_adpf_counter(p, rq);
 
 #if IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
