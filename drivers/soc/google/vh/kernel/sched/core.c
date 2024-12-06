@@ -284,11 +284,9 @@ void rvh_set_cpus_allowed_by_task(void *data, const struct cpumask *cpu_valid_ma
 
 static void set_adpf_inheritance(struct task_struct *p, unsigned int type, int val)
 {
-	struct vendor_task_struct *vp = get_vendor_task_struct(p);
 	struct vendor_inheritance_struct *vi = get_vendor_inheritance_struct(p);
-	unsigned long irqflags;
 
-	raw_spin_lock_irqsave(&vp->lock, irqflags);
+	lockdep_assert_held(&p->pi_lock);
 
 	if (task_on_rq_queued(p)) {
 		bool old_adpf = get_adpf(p, true);
@@ -301,8 +299,6 @@ static void set_adpf_inheritance(struct task_struct *p, unsigned int type, int v
 	} else {
 		vi_set_adpf(vi, type, val);
 	}
-
-	raw_spin_unlock_irqrestore(&vp->lock, irqflags);
 }
 
 static void set_performance_inheritance_locked(struct task_struct *p, struct task_struct *pi_task,
