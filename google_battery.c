@@ -8781,7 +8781,10 @@ static void batt_update_charging_policy(struct batt_drv *batt_drv)
 		   batt_drv->charging_policy == CHARGING_POLICY_VOTE_ADAPTIVE_AON)
 		batt_set_health_charge_limit(batt_drv, -1);
 
-	pr_info("update charging_policy: %d -> %d\n", batt_drv->charging_policy, value);
+	gbms_logbuffer_devlog(batt_drv->ttf_stats.ttf_log, batt_drv->device,
+			      LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
+			      "update charging_policy: %d -> %d\n",
+			      batt_drv->charging_policy, value);
 	batt_drv->charging_policy = value;
 
 	gvotable_cast_long_vote(batt_drv->csi_status_votable, "CSI_STATUS_DEFEND_LIMIT",
