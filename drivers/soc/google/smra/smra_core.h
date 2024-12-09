@@ -56,7 +56,7 @@ void smra_start(void);
 void smra_stop(void);
 void smra_reset(void);
 
-int smra_post_processing(pid_t target_pids[], int nr_targets, int buffer_size,
+int smra_post_processing(pid_t target_pids[], int nr_targets,
 			 s64 merge_threshold, struct list_head footprints[]);
 void smra_post_processing_cleanup(struct list_head footprints[],
 				  int nr_targets);

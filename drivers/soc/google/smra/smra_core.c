@@ -82,20 +82,6 @@ static void smra_buffer_free(struct smra_info_buffer *buf)
 }
 
 /*
- * Protected by target->buf_lock, This API is used to make a separate copy of
- * the original recording buffer so that we can work with the data at ease. (
- * E.g. no need for spin_lock, free to allocate memory with arbitrary flags)
- */
-static void smra_buffer_copy(struct smra_info_buffer *dst,
-			     struct smra_info_buffer *src)
-{
-	dst->cur = src->cur;
-	dst->size = src->size;
-	memcpy(dst->fault_info, src->fault_info,
-	       src->size * sizeof(struct smra_fault_info));
-}
-
-/*
  * The compare function for grouping @smra_fault_info by file and offset.
  * The intention is to group page fault of same file together and sort by
  * offset-ascending order at the beginning of post processing so that we
@@ -300,38 +286,33 @@ void smra_post_processing_cleanup(struct list_head footprints[], int nr_targets)
 	}
 }
 
-int smra_post_processing(pid_t target_pids[], int nr_targets, int buffer_size,
+/*
+ * Should be invoked when recording are finished (e.g. recording_on=false
+ * && buffer_has_trace=true) and protected by the smra_sysfs_lock to
+ * guarantee this is the only thread accessing the core data structure.
+
+ * context: sysfs_lock should be hold for exclusive access, rw_lock is not
+ * needed as the data is already synced when recording is finished.
+ */
+int smra_post_processing(pid_t target_pids[], int nr_targets,
 			 s64 merge_threshold, struct list_head footprints[])
 {
 	struct smra_target *target;
 	int i = 0, err;
 
-	struct smra_info_buffer *buf = smra_buffer_setup(buffer_size);
-	if (!buf)
-		return -ENOMEM;
-
-	read_lock(&smra_rwlock);
 	list_for_each_entry(target, &smra_targets_list, list) {
 		BUG_ON(i >= nr_targets);
 		BUG_ON(target->pid != target_pids[i]);
 
-		spin_lock(&target->buf_lock);
-		smra_buffer_copy(buf, target->buf);
-		spin_unlock(&target->buf_lock);
-		read_unlock(&smra_rwlock);
-
 		pr_info("Start post processing pid %d\n", target_pids[i]);
-
-		err = do_post_processing(buf, merge_threshold, &footprints[i]);
+		err = do_post_processing(target->buf, merge_threshold,
+					 &footprints[i]);
 		if (err) {
-			smra_buffer_free(buf);
 			smra_post_processing_cleanup(footprints, i);
 			return err;
 		}
 		i++;
-		read_lock(&smra_rwlock);
 	}
-	read_unlock(&smra_rwlock);
 
 	return 0;
 }

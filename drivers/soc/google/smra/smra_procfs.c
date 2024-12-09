@@ -48,7 +48,6 @@ static int smra_footprint_proc_show(struct seq_file *m, void *v)
 
 	err = smra_post_processing(smra_config.target_pids,
 				   smra_config.nr_targets,
-				   smra_config.buffer_size,
 				   smra_config.merge_threshold,
 				   footprints);
 	if (err) {
