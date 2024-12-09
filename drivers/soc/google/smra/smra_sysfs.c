@@ -17,6 +17,8 @@ extern struct kobject *vendor_mm_kobj;
 static struct kobject *smra_parent_kobj;
 static struct kobject smra_kobj;
 
+extern atomic64_t smra_buffer_overflow_cnt;
+
 DEFINE_MUTEX(smra_sysfs_lock);
 struct smra_config smra_config = {
 	.recording_on = false,
@@ -48,6 +50,15 @@ static inline bool smra_is_reset(void)
 
 #define SMRA_ATTR_RW(_name) \
 	static struct kobj_attribute _name##_attr = __ATTR_RW(_name)
+
+static ssize_t buffer_overflow_cnt_show(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					char *buf)
+{
+	return sysfs_emit(buf, "%llu\n",
+			  atomic64_read(&smra_buffer_overflow_cnt));
+}
+SMRA_ATTR_RO(buffer_overflow_cnt);
 
 static ssize_t buffer_size_show(struct kobject *kobj,
 				struct kobj_attribute *attr,
@@ -283,6 +294,7 @@ static void smra_kobj_release(struct kobject *obj)
 }
 
 static struct attribute *smra_attrs[] = {
+	&buffer_overflow_cnt_attr.attr,
 	&buffer_size_attr.attr,
 	&merge_threshold_attr.attr,
 	&target_pids_attr.attr,

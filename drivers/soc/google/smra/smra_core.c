@@ -29,6 +29,8 @@ static struct kmem_cache *smra_metadata_cachep;
 static unsigned long *origin_fault_around_bytes_ptr;
 static unsigned long origin_fault_around_bytes_val;
 
+atomic64_t smra_buffer_overflow_cnt = ATOMIC_INIT(0);
+
 static inline void fault_around_disable(void)
 {
 	/*
@@ -398,6 +400,7 @@ void smra_reset(void)
 		list_del(&target->list);
 		kfree(target);
 	}
+	atomic64_set(&smra_buffer_overflow_cnt, 0);
 	write_unlock(&smra_rwlock);
 }
 
@@ -449,6 +452,7 @@ static void rvh_do_read_fault(void *data, struct file *file, pgoff_t pgoff,
 
 	spin_lock(&target->buf_lock);
 	if (target->buf->cur >= target->buf->size) {
+		atomic64_inc(&smra_buffer_overflow_cnt);
 		spin_unlock(&target->buf_lock);
 		goto out;
 	}
