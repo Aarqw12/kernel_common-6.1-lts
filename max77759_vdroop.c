@@ -68,3 +68,10 @@ int max77759_vimon_read(struct bcl_device *bcl_dev)
 {
 	return 0;
 }
+
+int max77759_req_vimon_conv(struct bcl_device *bcl_dev, int idx, void (*cb)(struct device *dev,
+									    uint16_t *buf,
+									    int rd_bytes))
+{
+	return 0;
+}

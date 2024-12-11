@@ -8,8 +8,12 @@
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <max77779.h>
+#include <max77779_vimon.h>
 #include <max777x9_bcl.h>
 #include "bcl.h"
+
+#define MAX77779_VIMON_BCL_CLIENT 0
+#define MAX77779_VIMON_BCL_SAMPLE_COUNT 16
 
 int max77779_adjust_bat_open_to(struct bcl_device *bcl_dev, bool enable)
 {
@@ -126,11 +130,37 @@ int max77779_clr_irq(struct bcl_device *bcl_dev, int idx)
 int max77779_vimon_read(struct bcl_device *bcl_dev)
 {
 	int ret = 0;
-#if IS_ENABLED(CONFIG_SOC_ZUMAPRO)
+
+	if (!IS_ENABLED(CONFIG_SOC_ZUMAPRO))
+		return ret;
+
 	ret = max77779_external_vimon_read_buffer(bcl_dev->vimon_dev, bcl_dev->vimon_intf.data,
 						  &bcl_dev->vimon_intf.count, VIMON_BUF_SIZE);
 	if (ret == 0)
 		return bcl_dev->vimon_intf.count;
-#endif
+	return ret;
+}
+
+int max77779_req_vimon_conv(struct bcl_device *bcl_dev, int idx, void (*cb)(struct device *dev,
+									    uint16_t *buf,
+									    int rd_bytes))
+{
+	int ret = 0;
+
+	if (!IS_ENABLED(CONFIG_SOC_ZUMAPRO))
+		return ret;
+
+	switch (idx) {
+	case UVLO1:
+	case UVLO2:
+	case BATOILO1:
+		ret = max77779_external_vimon_request_conv(bcl_dev->vimon_dev, bcl_dev->device,
+							   MAX77779_VIMON_BCL_CLIENT,
+							   MAX77779_VIMON_BCL_SAMPLE_COUNT, cb);
+		break;
+	case BATOILO2:
+		break;
+	}
+
 	return ret;
 }

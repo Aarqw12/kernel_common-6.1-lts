@@ -38,6 +38,9 @@
         max77759_clr_irq(bcl, v) : max77779_clr_irq(bcl, v))
 #define bcl_vimon_read(bcl) (((bcl)->ifpmic == MAX77759) ? \
        max77759_vimon_read(bcl) : max77779_vimon_read(bcl))
+#define bcl_req_vimon_conv(bcl, idx, cb) (((bcl)->ifpmic == MAX77759) ? \
+					max77759_req_vimon_conv(bcl, idx, cb) :\
+					max77779_req_vimon_conv(bcl, idx, cb))
 
 #define DELTA_5MS			(5 * NSEC_PER_MSEC)
 #define DELTA_10MS			(10 * NSEC_PER_MSEC)
@@ -503,6 +506,13 @@ void google_bcl_remove_data_logging(struct bcl_device *bcl_dev);
 void google_bcl_upstream_state(struct bcl_zone *zone, enum MITIGATION_MODE state);
 int max77759_vimon_read(struct bcl_device *bcl_dev);
 int max77779_vimon_read(struct bcl_device *bcl_dev);
+int max77759_req_vimon_conv(struct bcl_device *bcl_dev, int idx, void (*cb)(struct device *dev,
+									    uint16_t *buf,
+									    int rd_bytes));
+int max77779_req_vimon_conv(struct bcl_device *bcl_dev, int idx, void (*cb)(struct device *dev,
+									    uint16_t *buf,
+									    int rd_bytes));
+
 #if IS_ENABLED(CONFIG_SOC_ZUMAPRO)
 int max77779_adjust_bat_open_to(struct bcl_device *bcl_dev, bool enable);
 int max77779_adjust_batoilo_lvl(struct bcl_device *bcl_dev, u8 lower_enable, u8 set_batoilo1_lvl,

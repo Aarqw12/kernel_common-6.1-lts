@@ -608,6 +608,11 @@ int google_set_db(struct bcl_device *data, unsigned int value, enum MPMM_SOURCE 
 }
 EXPORT_SYMBOL_GPL(google_set_db);
 
+static void google_vimon_callback(struct device *dev, uint16_t *buf, int rd_bytes)
+{
+	/* TODO: b/356694140 - implement power reduction */
+}
+
 static void google_irq_triggered_work(struct work_struct *work)
 {
 	struct bcl_zone *zone = container_of(work, struct bcl_zone, irq_triggered_work);
@@ -664,8 +669,10 @@ static void google_irq_triggered_work(struct work_struct *work)
 		return;
 	google_bcl_upstream_state(zone, LIGHT);
 
-	if (zone->irq_type == IF_PMIC)
+	if (zone->irq_type == IF_PMIC) {
 		update_irq_start_times(bcl_dev, idx);
+		bcl_req_vimon_conv(bcl_dev, idx, &google_vimon_callback);
+	}
 
 	if (idx == BATOILO && bcl_dev->config_modem)
 		gpio_set_value(bcl_dev->modem_gpio2_pin, 1);
