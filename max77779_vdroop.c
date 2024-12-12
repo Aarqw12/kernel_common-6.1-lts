@@ -141,22 +141,45 @@ int max77779_vimon_read(struct bcl_device *bcl_dev)
 	return ret;
 }
 
-int max77779_req_vimon_conv(struct bcl_device *bcl_dev, int idx, void (*cb)(struct device *dev,
-									    uint16_t *buf,
-									    int rd_bytes))
+static void max77779_vimon_bcl_callback(struct device *dev, uint16_t *buf, int rd_addr)
+{
+	int i, v_rdback, i_rdback;
+	int16_t i_data;
+	int i_max = 0;
+	struct bcl_device *bcl_dev = dev_get_drvdata(dev);
+
+	for (i = bcl_dev->vimon_pwr_loop_cnt * MAX77779_VIMON_ENTRIES_PER_VI_PAIR; i < rd_addr;
+	     i += MAX77779_VIMON_ENTRIES_PER_VI_PAIR) {
+		v_rdback = ((uint64_t)buf[i] * MAX77779_VIMON_NV_PER_LSB) /
+			   MILLI_UNITS_TO_NANO_UNITS;
+		i_data = (int16_t)buf[i + 1];
+		i_rdback = ((int64_t)i_data * MAX77779_VIMON_NA_PER_LSB) /
+			   MILLI_UNITS_TO_NANO_UNITS;
+		i_max = max(i_max, i_rdback);
+	}
+	if (i_max > bcl_dev->vimon_pwr_loop_thresh)
+		google_pwr_loop_trigger_mitigation(bcl_dev);
+}
+
+int max77779_req_vimon_conv(struct bcl_device *bcl_dev, int idx)
 {
 	int ret = 0;
 
 	if (!IS_ENABLED(CONFIG_SOC_ZUMAPRO))
 		return ret;
 
+	if (!bcl_dev->vimon_pwr_loop_en)
+		return 0;
+
 	switch (idx) {
 	case UVLO1:
 	case UVLO2:
+		break;
 	case BATOILO1:
 		ret = max77779_external_vimon_request_conv(bcl_dev->vimon_dev, bcl_dev->device,
 							   MAX77779_VIMON_BCL_CLIENT,
-							   MAX77779_VIMON_BCL_SAMPLE_COUNT, cb);
+							   MAX77779_VIMON_BCL_SAMPLE_COUNT,
+							   &max77779_vimon_bcl_callback);
 		break;
 	case BATOILO2:
 		break;

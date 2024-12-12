@@ -608,9 +608,10 @@ int google_set_db(struct bcl_device *data, unsigned int value, enum MPMM_SOURCE 
 }
 EXPORT_SYMBOL_GPL(google_set_db);
 
-static void google_vimon_callback(struct device *dev, uint16_t *buf, int rd_bytes)
+int google_pwr_loop_trigger_mitigation(struct bcl_device *bcl_dev)
 {
 	/* TODO: b/356694140 - implement power reduction */
+	return 0;
 }
 
 static void google_irq_triggered_work(struct work_struct *work)
@@ -671,7 +672,7 @@ static void google_irq_triggered_work(struct work_struct *work)
 
 	if (zone->irq_type == IF_PMIC) {
 		update_irq_start_times(bcl_dev, idx);
-		bcl_req_vimon_conv(bcl_dev, idx, &google_vimon_callback);
+		bcl_req_vimon_conv(bcl_dev, idx);
 	}
 
 	if (idx == BATOILO && bcl_dev->config_modem)
@@ -1560,6 +1561,7 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 		bcl_dev->oilo1_vdrp2_en = of_property_read_bool(np, "oilo1_vdrp2_en");
 		bcl_dev->oilo2_vdrp1_en = of_property_read_bool(np, "oilo2_vdrp1_en");
 		bcl_dev->oilo2_vdrp2_en = of_property_read_bool(np, "oilo2_vdrp2_en");
+		bcl_dev->vimon_pwr_loop_en = of_property_read_bool(np, "vimon_pwr_loop_en");
 		ret = of_property_read_u32(np, "uvlo1_lvl", &retval);
 		bcl_dev->uvlo1_lvl = ret ? DEFAULT_SYS_UVLO1_LVL : retval;
 		ret = of_property_read_u32(np, "uvlo2_lvl", &retval);
@@ -1568,6 +1570,10 @@ static int google_set_intf_pmic(struct bcl_device *bcl_dev, struct platform_devi
 		bcl_dev->vdroop_int_mask = ret ? DEFAULT_VDROOP_INT_MASK : retval;
 		ret = of_property_read_u32(np, "intb_int_mask", &retval);
 		bcl_dev->intb_int_mask = ret ? DEFAULT_INTB_MASK : retval;
+		ret = of_property_read_u32(np, "vimon_pwr_loop_cnt", &retval);
+		bcl_dev->vimon_pwr_loop_cnt = ret ? DEFAULT_VIMON_PWR_LOOP_CNT : retval;
+		ret = of_property_read_u32(np, "vimon_pwr_loop_thresh", &retval);
+		bcl_dev->vimon_pwr_loop_thresh = ret ? DEFAULT_VIMON_PWR_LOOP_THRESH : retval;
 	}
 
 	if (bcl_dev->ifpmic == MAX77779) {
