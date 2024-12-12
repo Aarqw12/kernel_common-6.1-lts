@@ -146,3 +146,15 @@ properties:
   evt_cnt_rate:
     description: Event Counter Sampling Rate
     $ref: /schemas/types.yaml#/definitions/uint32
+
+  vimon_pwr_loop_thresh:
+    description: Battery current threshold for vimon power loop
+    $ref: /schemas/types.yaml#/definitions/uint32
+
+  vimon_pwr_loop_cnt:
+    description: vimon sample num to start power loop
+    $ref: /schemas/types.yaml#/definitions/uint32
+
+  vimon_pwr_loop_en:
+    description: vimon power loop enable
+    $ref: /schemas/types.yaml#/definitions/flag
