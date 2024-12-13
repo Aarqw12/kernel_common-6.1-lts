@@ -468,7 +468,7 @@ static int gbms_lotr_update_to_v2(struct nvmem_device *nvmem)
 {
 	int ret;
 	static u8 clr_val[1] = { 0xff };
-	static size_t offset = BATT_EEPROM_TAG_FGST_OFFSET;
+	static size_t offset = BATT_EEPROM_TAG_FCRU_OFFSET;
 	size_t index, size = 0x3FF - offset;
 
 	/* clear space in old version format */
@@ -495,16 +495,18 @@ static int gbms_lotr_update(struct nvmem_device *nvmem, int lotr_to)
 
 	if (lotr_to == GBMS_LOTR_V1 && lotr_from == GBMS_LOTR_DEFAULT)
 		ret = gbms_lotr_update_to_v1(nvmem);
-	else if (lotr_to == GBMS_LOTR_V2 && lotr_from == GBMS_LOTR_DEFAULT)
+	else if (lotr_to == GBMS_LOTR_V2 && lotr_from != GBMS_LOTR_V2)
 		ret = gbms_lotr_update_to_v2(nvmem);
 	else
 		return 0;
 
-	/* TODO: how do we handle backporting? */
+	/* not block the process, wait to clear again in next boot if fail */
+	if (ret < 0)
+		return 0;
 
 	/* now write lotr to the right place */
 	ret = nvmem_device_write(nvmem, BATT_EEPROM_TAG_LOTR_OFFSET,
-				BATT_EEPROM_TAG_LOTR_LEN, &lotr_to);
+				 BATT_EEPROM_TAG_LOTR_LEN, &lotr_to);
 	if (ret == BATT_EEPROM_TAG_LOTR_LEN)
 		pr_info("%s: lotr migrated %d->%d\n", __func__, lotr_from, lotr_to);
 
