@@ -115,6 +115,14 @@ static int fth_touch_connect(struct input_handler *handler,
 	struct fth_drvdata *drvdata;
 	int ret;
 
+	/* Only coonect with the built-in touchscreen device. */
+	if (!(dev->uniq && strncmp(dev->uniq, "google_touchscreen", 18) == 0)) {
+		pr_info("Skip connecting device(name:'%s', uniq:'%s')\n",
+			dev->name ? dev->name : "",
+			dev->uniq ? dev->uniq : "");
+		return 0;
+	}
+
 	drvdata = handler->private;
 
 	handle = kzalloc(sizeof(struct input_handle), GFP_KERNEL);
@@ -137,11 +145,7 @@ static int fth_touch_connect(struct input_handler *handler,
 		return ret;
 	}
 
-	/* Get the specific input device. */
-	if (handle->dev->uniq && strncmp(handle->dev->uniq, "google_touchscreen", 18) == 0) {
-		pr_info("Connected device uniq: %s\n", handle->dev->uniq);
-		drvdata->input_touch_dev = handle->dev;
-	}
+	drvdata->input_touch_dev = handle->dev;
 
 	pr_info("Connected device: %s\n", dev_name(&dev->dev));
 	return ret;
@@ -169,6 +173,9 @@ static void fth_touch_report_event(struct input_handle *handle,
 	struct finger_detect_touch *fd_touch = &drvdata->fd_touch;
 	struct touch_event *event = NULL;
 	static bool report_event = true;
+
+	if (!fd_touch->config.touch_fd_enable)
+		return;
 
 	if (type != EV_SYN && type != EV_ABS)
 		return;
