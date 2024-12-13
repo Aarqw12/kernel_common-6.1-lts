@@ -195,6 +195,7 @@ kernel_module(
         "drivers/soc/google/pt/slc_pmon.ko",
         "drivers/soc/google/pt/slc_pt.ko",
         "drivers/soc/google/s2mpu/s2mpu.ko",
+        "drivers/soc/google/smra/smra.ko",
         "drivers/soc/google/sysrq-hook.ko",
         "drivers/soc/google/vh/kernel/cgroup/vh_cgroup.ko",
         "drivers/soc/google/vh/kernel/fs/vh_fs.ko",
