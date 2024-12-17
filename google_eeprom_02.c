@@ -21,6 +21,8 @@
 #define BATT_TOTAL_HIST_LEN		(BATT_ONE_HIST_LEN * BATT_MAX_HIST_CNT)
 #define BATT_EEPROM_TAG_EXTRA_START	(BATT_EEPROM_TAG_HIST_OFFSET + BATT_TOTAL_HIST_LEN)
 /* 0x9BE is the first free with 200 history entries. Write from end */
+#define BATT_EEPROM_TAG_FCRU_OFFSET	0x1FE2
+#define BATT_EEPROM_TAG_FCRU_LEN	GBMS_FCRU_LEN
 #define BATT_EEPROM_TAG_FGST_OFFSET	0x1FE4
 #define BATT_EEPROM_TAG_FGST_LEN	1
 #define BATT_EEPROM_TAG_AYMD_OFFSET	0x1FE5
@@ -72,6 +74,10 @@ int gbee_storage02_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)
 	case GBMS_TAG_FGST:
 		*addr = BATT_EEPROM_TAG_FGST_OFFSET;
 		*count = BATT_EEPROM_TAG_FGST_LEN;
+		break;
+	case GBMS_TAG_FCRU:
+		*addr = BATT_EEPROM_TAG_FCRU_OFFSET;
+		*count = BATT_EEPROM_TAG_FCRU_LEN;
 		break;
 	default:
 		ret = gbee_storage_info(tag, addr, count, ptr);
