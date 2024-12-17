@@ -2163,6 +2163,10 @@ uclamp_tg_restrict_pixel_mod(struct task_struct *p, enum uclamp_id clamp_id)
 	if (clamp_id == UCLAMP_MIN && get_prefer_high_cap(p))
 		value = max(value, (unsigned int)capacity_orig_of(pixel_cluster_start_cpu[0]) + 1);
 
+	/* Boost tasks during suspend/resume */
+	if (clamp_id == UCLAMP_MIN && cpuhp_tasks_frozen)
+		value = max(value, SCHED_CAPACITY_SCALE/2);
+
 	// For uclamp min, if task has a valid per-task setting that is lower than or equal to its
 	// group value, increase the final uclamp value by 1. This would have effect only on
 	// importance metrics which is used in task placement, and little effect on cpufreq.
