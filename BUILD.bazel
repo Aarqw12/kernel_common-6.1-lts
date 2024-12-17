@@ -52,6 +52,15 @@ filegroup(
 )
 
 filegroup(
+    name = "devices_defconfig_fragments",
+    srcs = [
+        ":defconfig_fragments",
+        "//private/devices/google/bluejay:bluejay_defconfig",
+        "//private/devices/google/raviole:raviole_defconfig",
+    ],
+)
+
+filegroup(
     name = "kernel_sources",
     srcs = [
         # keep sorted
@@ -61,7 +70,11 @@ filegroup(
         "//private/google-modules/display/samsung:display.samsung.kconfig",
         "//private/google-modules/power/mitigation:bcl.kconfig",
         "//private/google-modules/power/reset:reset.kconfig",
+        "//private/google-modules/radio/samsung/s5300:cpif.kconfig",
         "//private/google-modules/soc/gs:gs_soc.kconfig",
+        "//private/google-modules/touch/common:touch.common.kconfig",
+        "//private/google-modules/touch/fts/ftm5_legacy:ftm5.kconfig",
+        "//private/google-modules/touch/sec:sec.kconfig",
         "//private/google-modules/trusty:trusty.kconfig",
     ],
 )
@@ -73,7 +86,7 @@ kernel_build(
     base_kernel = "//common:kernel_aarch64",
     build_config = ":build_config",
     collect_unstripped_modules = True,
-    defconfig_fragments = [":defconfig_fragments"],
+    defconfig_fragments = [":devices_defconfig_fragments"],
     dtstree = ":dtstree",
     kconfig_ext = ":kconfig_ext",
     make_goals = [
@@ -271,29 +284,46 @@ kernel_module_group(
     ],
 )
 
+# Extra modules needed for some (but not all) devices, to be loaded after
+# common ones. Separate so <device> builds can exclude them.
+kernel_module_group(
+    name = "kernel_ext_device_modules",
+    srcs = [
+        # FIXME: SoC modules need to be loaded first or the device will crash.
+        #        Module dependencies should not rely on the order. This needs be fixed.
+        ":kernel_ext_modules",
+        "//private/devices/google/bluejay:kernel_ext_modules",
+        "//private/devices/google/raviole:kernel_ext_modules",
+    ],
+)
+
 kernel_modules_install(
     name = "kernel_modules_install",
     kernel_build = ":kernel",
-    kernel_modules = [":kernel_ext_modules"],
+    kernel_modules = [":kernel_ext_device_modules"],
+)
+
+filegroup(
+    name = "vendor_ramdisk_modules_list",
+    srcs = ["vendor_ramdisk.modules.gs101"],
 )
 
 create_file(
-    name = "vendor_ramdisk_modules_list",
-    srcs = ["vendor_ramdisk.modules.gs101"],
+    name = "vendor_ramdisk_device_modules_list",
+    srcs = [
+        # do not sort
+        ":vendor_ramdisk_modules_list",
+        "vendor_ramdisk.modules.devices",
+    ],
     out = "vendor_ramdisk.modules",
 )
 
+# Note: gs101 devices don't have system_dlkm partition.
 create_file(
     name = "system_dlkm_modules_list",
     out = "system_dlkm.modules",
     # The list is used to filter modules with `grep -w`.
     content = ["^kernel/" + m for m in PIXEL_GKI_MODULES_LIST],
-)
-
-create_file(
-    name = "system_dlkm_props",
-    srcs = ["system_dlkm.props.gs101"],
-    out = "system_dlkm.props",
 )
 
 create_file(
@@ -304,8 +334,27 @@ create_file(
 )
 
 create_file(
+    name = "dlkm_modules_list",
+    srcs = [
+        # do not sort
+        ":system_dlkm_modules_list",
+        ":vendor_dlkm_modules_list",
+    ],
+    out = "dlkm.modules",
+)
+
+filegroup(
     name = "vendor_dlkm_modules_blocklist",
     srcs = ["vendor_dlkm.blocklist.gs101"],
+)
+
+create_file(
+    name = "vendor_dlkm_device_modules_blocklist",
+    srcs = [
+        # do not sort
+        ":vendor_dlkm_modules_blocklist",
+        "vendor_dlkm.blocklist.devices",
+    ],
     out = "vendor_dlkm.blocklist",
 )
 
@@ -315,41 +364,56 @@ create_file(
     out = "vendor_dlkm.props",
 )
 
+filegroup(
+    name = "dtbos",
+    srcs = [
+        "//private/devices/google/bluejay:dtbos",
+        "//private/devices/google/raviole:dtbos",
+    ],
+)
+
 kernel_images(
     name = "kernel_images",
     base_kernel_images = "//common:kernel_aarch64_images",
+    build_dtbo = True,
     build_initramfs = True,
-    build_system_dlkm = True,
     build_vendor_dlkm = True,
+    dtbo_srcs = [":dtbos"],
     kernel_build = ":kernel",
     kernel_modules_install = ":kernel_modules_install",
-    modules_list = ":vendor_ramdisk_modules_list",
+    modules_list = ":vendor_ramdisk_device_modules_list",
     ramdisk_compression = "lz4",
-    system_dlkm_modules_list = ":system_dlkm_modules_list",
-    system_dlkm_props = ":system_dlkm_props",
     vendor_dlkm_archive = True,
-    vendor_dlkm_modules_blocklist = ":vendor_dlkm_modules_blocklist",
-    vendor_dlkm_modules_list = ":vendor_dlkm_modules_list",
+    vendor_dlkm_etc_files = [":insmod_cfgs"],
+    vendor_dlkm_modules_blocklist = ":vendor_dlkm_device_modules_blocklist",
+    vendor_dlkm_modules_list = ":dlkm_modules_list",
     vendor_dlkm_props = ":vendor_dlkm_props",
     deps = ["//private/devices/google/common:sepolicy"],
+)
+
+filegroup(
+    name = "insmod_cfgs",
+    srcs = glob(["insmod_cfg/*.cfg"]),
 )
 
 kernel_unstripped_modules_archive(
     name = "kernel_unstripped_modules_archive",
     kernel_build = ":kernel",
-    kernel_modules = [":kernel_ext_modules"],
+    kernel_modules = [":kernel_ext_device_modules"],
 )
 
 merged_kernel_uapi_headers(
     name = "merged_kernel_uapi_headers",
     kernel_build = ":kernel",
-    kernel_modules = [":kernel_ext_modules"],
+    kernel_modules = [":kernel_ext_device_modules"],
 )
 
 copy_to_dist_dir(
     name = "dist",
     data = [
         # keep sorted
+        ":dtbos",
+        ":insmod_cfgs",
         ":kernel",
         ":kernel_images",
         ":kernel_modules_install",
@@ -359,7 +423,10 @@ copy_to_dist_dir(
         "//common:kernel_aarch64_gki_boot_image",
         "//common:kernel_aarch64_headers",
         "//private/devices/google/common:kernel_gki_modules",
-    ],
+    ] + select({
+        "//private/devices/google/common:enable_download_fips140": ["@gki_prebuilt_fips140//fips140.ko"],
+        "//private/devices/google/common:disable_download_fips140": [],
+    }),
     dist_dir = "out/gs101/dist",
     flat = True,
     log = "info",
