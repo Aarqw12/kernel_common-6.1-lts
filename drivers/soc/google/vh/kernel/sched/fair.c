@@ -2495,7 +2495,7 @@ static inline void uclamp_fork_pixel_mod(struct task_struct *p, struct task_stru
 {
 	enum uclamp_id clamp_id;
 
-	if (likely(!get_adpf(orig, false) && !get_power_efficiency(p)))
+	if (likely(!get_adpf(orig, false)))
 		return;
 
 	for_each_clamp_id(clamp_id) {
