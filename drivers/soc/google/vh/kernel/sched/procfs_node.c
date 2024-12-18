@@ -3590,20 +3590,18 @@ int priority_task_name_show(struct seq_file *m, void *v)
 ssize_t priority_task_name_store(struct file *filp, const char __user *ubuf, size_t count,
 				 loff_t *ppos)
 {
+	char tmp[sizeof(priority_task_name)];
 	unsigned long irqflags;
 
 	if (count >= sizeof(priority_task_name))
 		return -EINVAL;
 
-	spin_lock_irqsave(&priority_task_name_lock, irqflags);
-
-	if (copy_from_user(priority_task_name, ubuf, count)) {
-		priority_task_name[0] = '\0';
-		spin_unlock_irqrestore(&priority_task_name_lock, irqflags);
+	if (copy_from_user(tmp, ubuf, count))
 		return -EFAULT;
-	}
+	tmp[count] = '\0';
 
-	priority_task_name[count] = '\0';
+	spin_lock_irqsave(&priority_task_name_lock, irqflags);
+	strlcpy(priority_task_name, tmp, sizeof(priority_task_name));
 	spin_unlock_irqrestore(&priority_task_name_lock, irqflags);
 	return count;
 }
@@ -3655,19 +3653,17 @@ int prefer_idle_task_name_show(struct seq_file *m, void *v)
 ssize_t prefer_idle_task_name_store(struct file *filp, const char __user *ubuf, size_t count,
 				 loff_t *ppos)
 {
+	char tmp[sizeof(prefer_idle_task_name)];
 
 	if (count >= sizeof(prefer_idle_task_name))
 		return -EINVAL;
 
-	spin_lock(&prefer_idle_task_name_lock);
-
-	if (copy_from_user(prefer_idle_task_name, ubuf, count)) {
-		prefer_idle_task_name[0] = '\0';
-		spin_unlock(&prefer_idle_task_name_lock);
+	if (copy_from_user(tmp, ubuf, count))
 		return -EFAULT;
-	}
+	tmp[count] = '\0';
 
-	prefer_idle_task_name[count] = '\0';
+	spin_lock(&prefer_idle_task_name_lock);
+	strlcpy(prefer_idle_task_name, tmp, sizeof(prefer_idle_task_name));
 	spin_unlock(&prefer_idle_task_name_lock);
 
 	if (set_prefer_idle_task_name())
