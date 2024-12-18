@@ -2807,8 +2807,7 @@ static int aoc_audio_capture_inject_params_check(struct aoc_alsa_stream *alsa_st
 	if (alsa_stream->stream_type == CAP_INJ) {
 		active_capture_stream = find_alsa_stream_by_capture_stream(alsa_stream->chip);
 		if (active_capture_stream == NULL) {
-			pr_err("No valid capture stream to inject\n");
-			return -EINVAL;
+			pr_warn("No active capture stream.\n");
 		}
 		/* Capture injection is replacing the PDM mic data NOT the recording data,
 		 * So it need to compare with the PDM mic format */
@@ -2831,9 +2830,8 @@ static int aoc_audio_capture_inject_params_check(struct aoc_alsa_stream *alsa_st
 				active_mic ++;
 		}
 		if (alsa_stream->channels != active_mic) {
-			pr_err("[CAP_INJ] channels and active mic mismatch %d vs %d\n",
+			pr_warn("[CAP_INJ] channels and active mic mismatch %d vs %d\n",
 				alsa_stream->channels, active_mic);
-			err = -EINVAL;
 		}
 	} else {
 		pr_err("[CAP_INJ] incorrect stream type %d\n", alsa_stream->stream_type);
