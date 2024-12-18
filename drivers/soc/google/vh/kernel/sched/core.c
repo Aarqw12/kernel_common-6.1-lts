@@ -62,6 +62,15 @@ DEFINE_STATIC_KEY_FALSE(auto_migration_margins_enable);
 
 DEFINE_STATIC_KEY_FALSE(skip_inefficient_opps_enable);
 
+#define vi_set_latency_sensitive(vi, type, value) \
+    do { \
+        if (value) { \
+            (vi)->uclamp_fork_reset |= (1 << (type)); \
+        } else { \
+            (vi)->uclamp_fork_reset &= ~(1 << (type)); \
+        } \
+    } while (0)
+
 #define vi_set_adpf(vi, type, value) \
     do { \
         if (value) { \
@@ -282,7 +291,7 @@ void rvh_set_cpus_allowed_by_task(void *data, const struct cpumask *cpu_valid_ma
 	return;
 }
 
-static void set_adpf_inheritance(struct task_struct *p, unsigned int type, int val)
+static void set_latency_sensitive_inheritance(struct task_struct *p, unsigned int type, int val)
 {
 	struct vendor_task_struct *vp = get_vendor_task_struct(p);
 	struct vendor_inheritance_struct *vi = get_vendor_inheritance_struct(p);
@@ -291,14 +300,17 @@ static void set_adpf_inheritance(struct task_struct *p, unsigned int type, int v
 	raw_spin_lock_irqsave(&vp->lock, irqflags);
 
 	if (task_on_rq_queued(p)) {
-		bool old_adpf = get_adpf(p, true);
+		bool old_uclamp_fork_reset = get_uclamp_fork_reset(p, true);
 
+		vi_set_latency_sensitive(vi, type, val);
 		vi_set_adpf(vi, type, val);
-		if (!old_adpf && get_adpf(p, true))
+
+		if (!old_uclamp_fork_reset && get_uclamp_fork_reset(p, true))
 			inc_adpf_counter(p, task_rq(p));
-		else if (old_adpf && !get_adpf(p, true))
+		else if (old_uclamp_fork_reset && !get_uclamp_fork_reset(p, true))
 			dec_adpf_counter(p, task_rq(p));
 	} else {
+		vi_set_latency_sensitive(vi, type, val);
 		vi_set_adpf(vi, type, val);
 	}
 
@@ -343,8 +355,8 @@ static void set_performance_inheritance_locked(struct task_struct *p, struct tas
 		if (p_uclamp_max < pi_uclamp_max || pi_uclamp_min > p_uclamp_max)
 			vi->uclamp[type][UCLAMP_MAX] = pi_uclamp_max;
 
-		if (!!get_adpf(pi_task, true))
-			set_adpf_inheritance(p, type, 1);
+		if (!!get_uclamp_fork_reset(pi_task, true))
+			set_latency_sensitive_inheritance(p, type, 1);
 
 		if (!!get_prefer_idle(pi_task))
 			vi_set_prefer_idle(vi, type, 1);
@@ -361,7 +373,7 @@ static void set_performance_inheritance_locked(struct task_struct *p, struct tas
 		vi->uclamp[type][UCLAMP_MIN] = uclamp_none(UCLAMP_MIN);
 		vi->uclamp[type][UCLAMP_MAX] = uclamp_none(UCLAMP_MAX);
 
-		set_adpf_inheritance(p, type, 0);
+		set_latency_sensitive_inheritance(p, type, 0);
 
 		vi_set_prefer_idle(vi, type, 0);
 

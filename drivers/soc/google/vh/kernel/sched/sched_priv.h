@@ -563,15 +563,16 @@ static inline struct vendor_rq_struct *get_vendor_rq_struct(struct rq *rq)
 	return (struct vendor_rq_struct *)rq->android_vendor_data1;
 }
 
-static inline bool get_adpf(struct task_struct *p, bool inherited)
+static inline bool get_uclamp_fork_reset(struct task_struct *p, bool inherited)
 {
 	struct vendor_task_struct *vp = get_vendor_task_struct(p);
 	struct vendor_inheritance_struct *vi = get_vendor_inheritance_struct(p);
 
 	if (inherited)
-		return (vp->adpf || vi->adpf) && vg[vp->group].qos_adpf_enable;
+		return vp->uclamp_fork_reset || vi->uclamp_fork_reset ||
+		       ((vp->adpf || vi->adpf) && vg[vp->group].qos_adpf_enable);
 	else
-		return vp->adpf && vg[vp->group].qos_adpf_enable;
+		return vp->uclamp_fork_reset || (vp->adpf && vg[vp->group].qos_adpf_enable);
 }
 
 static inline bool is_binder_task(struct task_struct *p)
@@ -615,10 +616,11 @@ static inline bool get_prefer_idle(struct task_struct *p)
 	struct vendor_task_struct *vp = get_vendor_task_struct(p);
 	struct vendor_inheritance_struct *vi = get_vendor_inheritance_struct(p);
 
-	// Always perfer idle for tasks with prefer_idle set explicitly.
+	// Always perfer idle for ADPF tasks or tasks with prefer_idle set explicitly.
 	// In auto_prefer_idle case, only allow high prio tasks of the prefer_idle group,
 	// or high prio task with wake_q_count value greater than 0 in top-app.
-	if ((vp->prefer_idle || vi->prefer_idle) && vg[vp->group].qos_prefer_idle_enable)
+	if (get_uclamp_fork_reset(p, true) ||
+	    ((vp->prefer_idle || vi->prefer_idle) && vg[vp->group].qos_prefer_idle_enable))
 		return true;
 	else if (vendor_sched_auto_prefer_idle)
 		return should_auto_prefer_idle(p, vp->group);
@@ -668,7 +670,7 @@ static inline unsigned int get_rampup_multiplier(struct task_struct *p)
 {
 	struct vendor_task_struct *vp = get_vendor_task_struct(p);
 
-	if (get_adpf(p, true))
+	if (get_uclamp_fork_reset(p, true))
 		return vendor_sched_adpf_rampup_multiplier;
 
 	if (vg[vp->group].qos_rampup_multiplier_enable &&
@@ -691,6 +693,7 @@ static inline void init_vendor_inheritance_struct(struct vendor_inheritance_stru
 		vi->uclamp[i][UCLAMP_MIN] = uclamp_none(UCLAMP_MIN);
 		vi->uclamp[i][UCLAMP_MAX] = uclamp_none(UCLAMP_MAX);
 	}
+	vi->uclamp_fork_reset = 0;
 	vi->adpf = 0;
 	vi->prefer_idle = 0;
 	vi->prefer_high_cap = 0;
@@ -709,6 +712,7 @@ static inline void init_vendor_task_struct(struct vendor_task_struct *v_tsk)
 	v_tsk->direct_reclaim_ts = 0;
 	INIT_LIST_HEAD(&v_tsk->node);
 	v_tsk->queued_to_list = LIST_NOT_QUEUED;
+	v_tsk->uclamp_fork_reset = false;
 	v_tsk->auto_prefer_high_cap = false;
 	v_tsk->auto_uclamp_max_flags = 0;
 	v_tsk->uclamp_filter.uclamp_min_ignored = 0;
@@ -764,7 +768,7 @@ static inline bool uclamp_can_ignore_uclamp_min(struct rq *rq,
 	if (task_on_rq_migrating(p))
 		return false;
 
-	if (get_adpf(p, true))
+	if (get_uclamp_fork_reset(p, true))
 		return false;
 
 	if (p->in_iowait && uclamp_boosted_pixel_mod(p))
@@ -842,7 +846,7 @@ static inline bool uclamp_can_ignore_uclamp_max(struct rq *rq,
 	if (task_on_rq_migrating(p))
 		return false;
 
-	if (get_adpf(p, true))
+	if (get_uclamp_fork_reset(p, true))
 		return false;
 
 	if (p->in_iowait && uclamp_boosted_pixel_mod(p))
