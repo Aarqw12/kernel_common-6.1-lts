@@ -1813,7 +1813,7 @@ static void dp_automated_test_set_lane_req(struct dp_device *dp, u8 *val)
 static int dp_automated_test_irq_handler(struct dp_device *dp)
 {
 	u8 dpcd_test_req = 0, dpcd_test_res = 0;
-	u8 dpcd_req_lane[2], dpcd_phy_test_pattern = 0;
+	u8 dpcd_req_lane[2] = { 0 }, dpcd_phy_test_pattern = 0;
 
 	drm_dp_dpcd_readb(&dp->dp_aux, DP_TEST_REQUEST, &dpcd_test_req);
 
@@ -2070,7 +2070,7 @@ static u8 sysfs_triggered_irq = 0;
 static void dp_work_hpd_irq(struct work_struct *work)
 {
 	struct dp_device *dp = get_dp_drvdata();
-	u8 sink_count;
+	u8 sink_count = 0;
 	u8 irq = 0, irq2 = 0, irq3 = 0;
 	u8 link_status[DP_LINK_STATUS_SIZE];
 
