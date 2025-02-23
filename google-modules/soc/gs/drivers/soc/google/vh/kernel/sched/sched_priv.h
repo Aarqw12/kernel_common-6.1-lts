@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 #include "../../include/sched.h"
-#include "binder_internal.h"
+#include "drivers/android/binder_internal.h"
 #include <asm/atomic.h>
 
 #define UCLAMP_STATS_SLOTS  21
