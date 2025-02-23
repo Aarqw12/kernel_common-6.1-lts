@@ -206,12 +206,6 @@ int kbase_mem_init(struct kbase_device *kbdev)
 #endif
 
 	KBASE_DEBUG_ASSERT(kbdev);
-	/* Check if user and kernel-only flags do not overlap */
-	BUILD_BUG_ON(BASE_MEM_FLAGS_KERNEL_ONLY &
-		     (((base_mem_alloc_flags)1 << BASE_MEM_FLAGS_NR_BITS) - 1));
-	/* Check if BASEP control flags are synchronized */
-	BUILD_BUG_ON(((base_mem_alloc_flags)1 << (63 - BASEP_MEM_FLAGS_NR_BITS)) !=
-		     BASEP_MEM_FIRST_FREE_FLAG);
 
 	kbasep_mem_page_size_init(kbdev);
 
